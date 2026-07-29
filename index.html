@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A static local control plane for auditing and aligning Cloudflare zones.">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self' https://api.cloudflare.com; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <title>Cloudflare Fleet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav class="skip-links" aria-label="Skip links">
+    <a href="#fleet-controls">Skip to fleet controls</a>
+    <a href="#matrix-shell">Skip to comparison matrix</a>
+  </nav>
+
+  <div class="fatal" id="fatal" role="alert" hidden>
+    <p class="eyebrow">Launch required</p>
+    <h1>Open this dashboard from the terminal</h1>
+    <p id="fatal-message">The protected Cloudflare session is unavailable.</p>
+  </div>
+
+  <div id="application" hidden>
+    <header class="hero">
+      <div class="hero-heading">
+        <div>
+          <p class="eyebrow">Cloudflare control plane / live local session</p>
+          <h1>Fleet matrix</h1>
+          <p class="lede">Inspect drift across every readable zone surface, select zones, preview changes, and verify each write against the live API.</p>
+        </div>
+        <div class="session-state" role="status" aria-live="polite" aria-atomic="true">
+          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+          <span id="status-text">Starting</span>
+          <small id="session-mode"></small>
+          <small class="refresh-detail" id="refresh-detail" hidden></small>
+        </div>
+      </div>
+      <div class="summary-grid" role="list" aria-label="Fleet summary">
+        <div class="summary-card" role="listitem"><strong id="zone-count">0</strong><span>Zones</span></div>
+        <div class="summary-card" role="listitem"><strong id="facet-count">0</strong><span>Comparable facets</span></div>
+        <div class="summary-card" role="listitem"><strong id="drift-count">0</strong><span>Facets with drift</span></div>
+        <div class="summary-card" role="listitem"><strong id="hole-count">0</strong><span>Missing cells</span></div>
+      </div>
+      <progress class="load-progress" id="load-progress" max="100" value="0" aria-label="Fleet loading progress" hidden></progress>
+    </header>
+
+    <nav class="toolbar" id="fleet-controls" aria-label="Fleet controls" tabindex="-1">
+      <button class="button button-primary" id="refresh" type="button">Refresh full fleet</button>
+      <label class="sr-only" for="search">Search facets and values</label>
+      <input id="search" type="search" placeholder="Search facets and values" aria-describedby="visible-count" aria-keyshortcuts="/">
+      <label class="sr-only" for="category">Filter by category</label>
+      <select id="category">
+        <option value="">All categories</option>
+      </select>
+      <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Differences only</button>
+      <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
+    </nav>
+
+    <main id="main-content">
+      <section class="write-panel" id="write-panel" hidden>
+        <div>
+          <p class="policy-kicker">Write mode</p>
+          <h2>Select targets or edit a cell</h2>
+          <p>Choose zones for fleet actions; click any outlined cell to edit or fill. Every change is live-validated and reviewed.</p>
+          <p class="write-readiness" id="write-readiness" role="status" aria-live="polite">Loading live state; writes are locked</p>
+        </div>
+        <div class="write-panel-actions">
+          <span id="write-selection-summary" aria-live="polite">No target zones selected</span>
+          <button class="button button-accent" id="choose-targets" type="button" aria-label="Choose target zones">Select targets</button>
+          <button class="button button-primary" id="show-editable-settings" type="button" aria-label="Browse directly editable settings">Edit settings</button>
+        </div>
+      </section>
+
+      <section class="policy-grid" aria-label="Fleet policies">
+        <article class="policy-card">
+          <div>
+            <p class="policy-kicker">Email policy</p>
+            <h2>Email Routing</h2>
+            <p id="email-policy-detail">Loading forwarding consensus</p>
+          </div>
+          <div class="policy-actions">
+            <span class="drift-badge" id="email-policy-drift">0 drifted</span>
+            <button class="button button-accent" id="align-email" type="button" disabled>Align selected</button>
+          </div>
+        </article>
+        <article class="policy-card">
+          <div>
+            <p class="policy-kicker">Firewall policy</p>
+            <h2>Shared WAF rules</h2>
+            <p id="waf-policy-detail">Loading rule consensus</p>
+          </div>
+          <div class="policy-actions">
+            <span class="drift-badge" id="waf-policy-drift">0 drifted</span>
+            <button class="button button-accent" id="align-waf" type="button" disabled>Align selected</button>
+          </div>
+        </article>
+      </section>
+
+      <div class="matrix-tools">
+        <section class="selection-bar" id="selection-bar" aria-label="Zone selection">
+          <span role="status" aria-live="polite" aria-atomic="true"><strong id="selection-count">0</strong> zones selected</span>
+          <button class="button button-quiet" id="select-drifted" type="button">Select policy drift</button>
+          <button class="button button-quiet" id="clear-selection" type="button">Clear</button>
+        </section>
+
+        <aside class="legend" aria-label="Matrix legend">
+          <span class="same">Primary</span>
+          <span class="variant">Variant</span>
+          <span class="hole">Missing</span>
+          <span class="editable">Editable</span>
+          <span class="copyable">Copyable</span>
+          <span class="renameable">Fleet rename</span>
+        </aside>
+        <span class="matrix-shortcuts" aria-hidden="true">/ search | arrows navigate</span>
+      </div>
+
+      <p class="matrix-instructions sr-only" id="matrix-instructions">Filter before navigating this large table. Tab enters matrix controls once; use the arrow keys to move between controls and Enter to activate. When the scroll frame is focused, arrow keys pan the matrix.</p>
+      <a class="keyboard-skip" href="#coverage-heading">Skip past comparison matrix</a>
+      <section class="matrix-shell" id="matrix-shell" aria-label="Cloudflare configuration comparison matrix" aria-describedby="matrix-instructions" tabindex="0">
+        <table id="matrix">
+          <caption class="sr-only">Cloudflare configuration facets by zone. Category and facet headings remain visible while the table scrolls.</caption>
+          <thead id="matrix-head"></thead>
+          <tbody id="matrix-body"></tbody>
+        </table>
+      </section>
+
+      <section class="coverage" aria-labelledby="coverage-heading">
+        <div class="section-heading">
+          <div>
+            <p class="policy-kicker">Audit boundary</p>
+            <h2 id="coverage-heading" tabindex="-1">Inventory coverage</h2>
+          </div>
+          <p>Failures stay visible so an unreadable API surface cannot look like consensus.</p>
+        </div>
+        <ul id="coverage-list"></ul>
+      </section>
+    </main>
+
+    <footer>
+      <span id="snapshot-time">No snapshot loaded</span>
+      <span>No token is rendered, logged, or stored by the dashboard</span>
+    </footer>
+  </div>
+
+  <dialog id="editor-dialog" aria-labelledby="editor-title" aria-describedby="editor-target">
+    <form method="dialog" id="editor-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close editor">&times;</button>
+      <p class="dialog-kicker" id="editor-kind">Desired state editor</p>
+      <h2 id="editor-title">Edit value</h2>
+      <p id="editor-target"></p>
+      <div class="editor-choice" id="editor-choice-row" hidden>
+        <label for="editor-choice">Record in this cell</label>
+        <select id="editor-choice"></select>
+      </div>
+      <label for="editor-value" id="editor-value-label">Desired definition</label>
+      <textarea id="editor-value" spellcheck="false" aria-describedby="editor-target" aria-errormessage="editor-error" required></textarea>
+      <p class="field-error" id="editor-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="editor-review" value="default">Review desired state</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="target-dialog" aria-labelledby="target-title" aria-describedby="target-description">
+    <form method="dialog">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close target selection">&times;</button>
+      <p class="dialog-kicker">Cloudflare write targets</p>
+      <h2 id="target-title">Choose target zones</h2>
+      <p id="target-description">These targets drive Email Routing, shared WAF alignment, and rule-copy actions. Individual cell edits target the value you open, and a rule copy excludes its source zone.</p>
+      <div class="target-tools">
+        <button class="button button-quiet" id="target-select-all" type="button">Select all</button>
+        <button class="button button-quiet" id="target-select-drifted" type="button">Select policy drift</button>
+        <button class="button button-quiet" id="target-clear" type="button">Clear</button>
+      </div>
+      <p class="target-selection-summary" id="target-selection-summary" role="status" aria-live="polite">No target zones selected</p>
+      <div class="target-options" id="target-options"></div>
+      <div class="dialog-actions">
+        <button class="button button-primary" value="done">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="hole-dialog" aria-labelledby="hole-title" aria-describedby="hole-target">
+    <form method="dialog" id="hole-form">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close fleet value selection">&times;</button>
+      <p class="dialog-kicker">Choose a fleet value</p>
+      <h2 id="hole-title">Fill missing configuration</h2>
+      <p id="hole-target"></p>
+      <label for="hole-source">Source variant</label>
+      <select id="hole-source"></select>
+      <details open>
+        <summary>Cached value from the selected source</summary>
+        <pre id="hole-preview"></pre>
+      </details>
+      <p>The destination will be reread before the API plan is shown. No write occurs until the reviewed confirmation is accepted.</p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" value="review">Build live preview</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-summary">
+    <form method="dialog">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close write confirmation">&times;</button>
+      <p class="dialog-kicker">Explicit Cloudflare write</p>
+      <h2 id="confirm-title">Review changes</h2>
+      <p id="confirm-summary"></p>
+      <div class="operation-list" id="confirm-operations" role="list" aria-label="Planned API operations"></div>
+      <details>
+        <summary>Request payloads</summary>
+        <pre id="confirm-preview"></pre>
+      </details>
+      <label class="confirm-check">
+        <input type="checkbox" id="confirm-check">
+        <span>I reviewed the targets and API writes above</span>
+      </label>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-danger" id="confirm-apply" value="apply" disabled>Apply and verify</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="rename-dialog" aria-labelledby="rename-title" aria-describedby="rename-target rename-help">
+    <form method="dialog" id="rename-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close fleet rename">&times;</button>
+      <p class="dialog-kicker">Fleet rule identity</p>
+      <h2 id="rename-title">Rename across fleet</h2>
+      <p>Current matrix name: <strong id="rename-current"></strong></p>
+      <p id="rename-target"></p>
+      <label for="rename-value">New rule name</label>
+      <input id="rename-value" type="text" autocomplete="off" spellcheck="false" aria-describedby="rename-target rename-help" aria-errormessage="rename-error" required>
+      <p id="rename-help">Use <code>{zone}</code> where each zone's own domain should appear. Live rule payloads are preserved; only each description is changed.</p>
+      <p class="field-error" id="rename-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="rename-review" value="review">Review fleet rename</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" hidden>
+    <span id="toast-message" role="status" aria-live="polite" aria-atomic="true"></span>
+    <button class="toast-dismiss" id="toast-dismiss" type="button" aria-label="Dismiss notification">&times;</button>
+  </div>
+
+  <script src="cache.js"></script>
+  <script src="auth.js"></script>
+  <script type="module" src="src/app.mjs"></script>
+</body>
+</html>
