@@ -670,6 +670,29 @@ test("DNS record editor returns a no-op and rejects endpoint-foreign fields", ()
   )
 })
 
+test("DNS record editor preserves MX priority in the update plan", () => {
+  const zone = makeZone("alpha.example")
+  const liveRecord = {
+    content: "route1.mx.cloudflare.net",
+    id: "mx-record-id",
+    locked: false,
+    name: "alpha.example",
+    priority: 10,
+    ttl: 1,
+    type: "MX",
+  }
+  const desired = {
+    ...editableDnsRecordPayload(liveRecord),
+    priority: 20,
+  }
+  const plan = buildDnsRecordEditPlan(zone, liveRecord, desired)
+
+  assert.equal(plan.operations.length, 1)
+  assert.equal(plan.operations[0].method, "PATCH")
+  assert.equal(plan.operations[0].body.priority, 20)
+  assert.equal(plan.operations[0].path, "zones/zone-alpha.example/dns_records/mx-record-id")
+})
+
 test("DNS record editor uses data instead of computed content for structured records", () => {
   const zone = makeZone("alpha.example")
   const liveRecord = {

@@ -510,8 +510,90 @@ test("matrix exposes unlocked DNS records as direct cell edits", () => {
   assert.deepEqual(cell.capability, {
     kind: "direct-edit",
     label: "Direct DNS edit",
-    reason: "Every record in this cell has a type-aware DNS Records API adapter",
+    reason: "Every matching record has a type-aware DNS Records API adapter",
   })
+})
+
+test("matrix links Email DNS MX specifications to their live DNS records", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      dns: [
+        {
+          content: "route1.mx.cloudflare.net",
+          id: "mx-route-1",
+          locked: false,
+          name: "alpha.example",
+          priority: 10,
+          ttl: 1,
+          type: "MX",
+        },
+        {
+          content: "unrelated verification",
+          id: "unrelated-txt",
+          locked: false,
+          name: "alpha.example",
+          ttl: 1,
+          type: "TXT",
+        },
+      ],
+      emailDns: [
+        {
+          content: "route1.mx.cloudflare.net.",
+          name: "alpha.example",
+          priority: 10,
+          ttl: 1,
+          type: "MX",
+        },
+      ],
+    }),
+  ])
+
+  const matrix = buildMatrix(inventory)
+  const row = matrix.rows.find(
+    (entry) => entry.category === "Email DNS specification" && entry.label === "MX @",
+  )
+  const cell = row.cells.get("alpha.example")
+
+  assert.deepEqual(cell.action, {
+    recordIds: ["mx-route-1"],
+    type: "dns-records",
+    zoneId: "zone-alpha.example",
+  })
+  assert.equal(cell.capability.kind, "direct-edit")
+})
+
+test("matrix does not link unrelated DNS records to an Email DNS specification", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      dns: [
+        {
+          content: "unrelated verification",
+          id: "unrelated-txt",
+          locked: false,
+          name: "alpha.example",
+          ttl: 1,
+          type: "TXT",
+        },
+      ],
+      emailDns: [
+        {
+          content: "\"v=spf1 include:_spf.mx.cloudflare.net ~all\"",
+          name: "alpha.example",
+          ttl: 1,
+          type: "TXT",
+        },
+      ],
+    }),
+  ])
+
+  const matrix = buildMatrix(inventory)
+  const row = matrix.rows.find(
+    (entry) => entry.category === "Email DNS specification" && entry.label === "TXT @",
+  )
+  const cell = row.cells.get("alpha.example")
+
+  assert.equal(cell.action, null)
+  assert.match(cell.capability.reason, /no matching live DNS record/)
 })
 
 test("matrix leaves schema-unknown DNS records inspectable but not directly editable", () => {

@@ -14,6 +14,7 @@ import {
 import {
   dnsRecordCopyCapability,
   dnsRecordEditCapability,
+  emailDnsRecordAssociationKey,
   ruleCopyCapability,
 } from "./policies.mjs"
 
@@ -222,8 +223,33 @@ function addEmailRows(rows, inventory) {
 
     const requiredRecords = surfaceResult(zone, "email-dns")
     if (Array.isArray(requiredRecords)) {
+      const actualRecords = surfaceResult(zone, "dns") || []
       const grouped = groupBy(requiredRecords, (record) => `${record.type} ${relativeName(record.name, zone.meta.name)}`)
       for (const [key, records] of grouped) {
+        const requiredCounts = new Map()
+        for (const record of records) {
+          const associationKey = emailDnsRecordAssociationKey(record, zone.meta.name)
+          requiredCounts.set(associationKey, (requiredCounts.get(associationKey) || 0) + 1)
+        }
+        const matchingRecords = []
+        for (const record of actualRecords) {
+          const associationKey = emailDnsRecordAssociationKey(record, zone.meta.name)
+          const remaining = requiredCounts.get(associationKey) || 0
+          if (remaining === 0) continue
+          matchingRecords.push(record)
+          requiredCounts.set(associationKey, remaining - 1)
+        }
+        const unmatchedCount = [...requiredCounts.values()].reduce(
+          (sum, count) => sum + count,
+          0,
+        )
+        const editOptions = dnsRecordEditOptions(matchingRecords, zone)
+        if (unmatchedCount > 0) {
+          editOptions.capability.reason = [
+            editOptions.capability.reason,
+            `${unmatchedCount} expected record${unmatchedCount === 1 ? "" : "s"} has no matching live DNS record; use Email alignment to create it`,
+          ].filter(Boolean).join("; ")
+        }
         addCell(
           rows,
           "Email DNS specification",
@@ -236,11 +262,46 @@ function addEmailRows(rows, inventory) {
             ttl: record.ttl,
           }, zone.meta.name)),
           {
+            ...editOptions,
             resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
           },
         )
       }
     }
+  }
+}
+
+function dnsRecordEditOptions(records, zone) {
+  const capabilities = new Map(
+    records.map((record) => [record, dnsRecordEditCapability(record)]),
+  )
+  const editableRecords = records.filter(
+    (record) => capabilities.get(record).editable,
+  )
+  const blockedReasons = records
+    .filter((record) => !capabilities.get(record).editable)
+    .map((record) => capabilities.get(record).reason)
+  return {
+    action: editableRecords.length > 0
+      ? {
+          recordIds: editableRecords.map((record) => record.id),
+          type: "dns-records",
+          zoneId: zone.meta.id,
+        }
+      : null,
+    capability: editableRecords.length > 0
+      ? {
+          kind: "direct-edit",
+          label: "Direct DNS edit",
+          reason: blockedReasons.length === 0
+            ? "Every matching record has a type-aware DNS Records API adapter"
+            : `${editableRecords.length} record${editableRecords.length === 1 ? "" : "s"} can be edited; ${blockedReasons.join("; ")}`,
+        }
+      : {
+          kind: "not-directly-editable",
+          label: "No direct DNS edit",
+          reason: [...new Set(blockedReasons)].join("; "),
+        },
   }
 }
 
@@ -258,21 +319,12 @@ function addDnsRows(rows, inventory) {
         (record) => `${record.type} ${relativeName(record.name, zone.meta.name)}` === key,
       )
       if (records.length === 0) continue
-      const capabilities = new Map(
-        records.map((record) => [record, dnsRecordEditCapability(record)]),
-      )
       const copyCapabilities = new Map(
         records.map((record) => [record, dnsRecordCopyCapability(record)]),
-      )
-      const editableRecords = records.filter(
-        (record) => capabilities.get(record).editable,
       )
       const copyable = records.every(
         (record) => copyCapabilities.get(record).copyable,
       )
-      const blockedReasons = records
-        .filter((record) => !capabilities.get(record).editable)
-        .map((record) => capabilities.get(record).reason)
       addCell(
         rows,
         "DNS records",
@@ -290,26 +342,7 @@ function addDnsRows(rows, inventory) {
           ttl: record.ttl,
         }, zone.meta.name)),
         {
-          action: editableRecords.length > 0
-            ? {
-                recordIds: editableRecords.map((record) => record.id),
-                type: "dns-records",
-                zoneId: zone.meta.id,
-              }
-            : null,
-          capability: editableRecords.length > 0
-            ? {
-                kind: "direct-edit",
-                label: "Direct DNS edit",
-                reason: blockedReasons.length === 0
-                  ? "Every record in this cell has a type-aware DNS Records API adapter"
-                  : `${editableRecords.length} record${editableRecords.length === 1 ? "" : "s"} can be edited; ${blockedReasons.join("; ")}`,
-              }
-            : {
-                kind: "not-directly-editable",
-                label: "No direct DNS edit",
-                reason: [...new Set(blockedReasons)].join("; "),
-              },
+          ...dnsRecordEditOptions(records, zone),
           resolutionKind: HOLE_RESOLUTION_KIND.DNS_RECORDS,
           resolutionSource: copyable
             ? {

@@ -63,7 +63,7 @@ The dashboard supports these write paths:
 - Align Email Routing with the verified fleet catch-all destination, required DNS records, unlocked record state, plus-addressing, and the unique live SPF and zone-relative DMARC consensus
 - Create or update the two named `[fleet]` WAF rules from the unique live fleet consensus
 - Edit Cloudflare zone settings that the API marks editable
-- Edit existing unlocked DNS records
+- Edit existing unlocked DNS records, including Email DNS specification rows backed by live DNS records
 - Edit rules in zone entrypoint and custom rulesets
 - Copy a self-contained rule from a zone entrypoint to selected zones
 - Fill a missing DNS cell from a type-compatible fleet variant

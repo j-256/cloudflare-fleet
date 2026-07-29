@@ -128,6 +128,15 @@ function normalizeEmailDnsRecord(record, zoneName) {
   }
 }
 
+export function emailDnsRecordAssociationKey(record, zoneName) {
+  const normalized = normalizeEmailDnsRecord(record, zoneName)
+  return stableString({
+    content: normalized.content,
+    name: normalized.name,
+    type: normalized.type,
+  })
+}
+
 function isSpfRecord(record, zoneName) {
   const normalized = normalizeEmailDnsRecord(record, zoneName)
   return normalized.type === "TXT"
