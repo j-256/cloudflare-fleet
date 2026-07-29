@@ -67,6 +67,7 @@ The dashboard supports these write paths:
 - Edit rules in zone entrypoint and custom rulesets
 - Copy a self-contained rule from a zone entrypoint to selected zones
 - Fill a missing DNS cell from a type-compatible fleet variant
+- Fill the same missing DNS facet across selected target zones from one recommended fleet variant
 - Fill a missing portable rule from an existing zone
 - Route a missing Email policy cell through the full Email Routing policy composer
 - Rename every present editable instance of a rule across the fleet

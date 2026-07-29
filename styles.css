@@ -768,7 +768,8 @@ thead .facet-heading {
   color: var(--danger);
 }
 
-.rename-rule {
+.rename-rule,
+.bulk-fill {
   min-height: 24px;
   margin: 0;
   padding: 0 3px;
@@ -782,9 +783,25 @@ thead .facet-heading {
   text-transform: uppercase;
 }
 
+.bulk-fill {
+  border-bottom-color: rgba(89, 215, 196, 0.52);
+  color: var(--accent);
+}
+
 .rename-rule:hover:not(:disabled) {
   border-bottom-color: var(--purple);
   background: rgba(180, 151, 255, 0.10);
+}
+
+.bulk-fill:hover:not(:disabled) {
+  border-bottom-color: var(--accent);
+  background: rgba(89, 215, 196, 0.10);
+}
+
+.bulk-fill:disabled {
+  border-bottom-style: dotted;
+  color: var(--muted);
+  background: transparent;
 }
 
 .matrix-cell {

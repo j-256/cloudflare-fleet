@@ -702,6 +702,56 @@ function fleetRuleRenameCapability(row, inventory, duplicateZoneNames) {
   }
 }
 
+export function dnsTargetFillBatch(row, inventory, selectedZoneIds) {
+  const selected = selectedZoneIds instanceof Set
+    ? selectedZoneIds
+    : new Set(selectedZoneIds || [])
+  const targetZones = inventory.zones.filter(
+    (zone) => selected.has(zone.meta.id) && !row.cells.has(zone.meta.name),
+  )
+  const unavailable = (reason) => ({
+    available: false,
+    candidate: null,
+    reason,
+    targetZoneIds: targetZones.map((zone) => zone.meta.id),
+    targetZoneNames: targetZones.map((zone) => zone.meta.name),
+  })
+  if (row.resolutionKind !== HOLE_RESOLUTION_KIND.DNS_RECORDS) {
+    return unavailable("This facet is not backed by the DNS record copy adapter")
+  }
+  if (targetZones.length === 0) {
+    return unavailable("No selected target zone is missing this facet")
+  }
+
+  let candidate = null
+  for (const zone of targetZones) {
+    const resolution = row.missingResolutions.get(zone.meta.name)
+    if (!resolution?.available) {
+      return unavailable(
+        resolution?.reason || `${zone.meta.name} cannot be filled automatically`,
+      )
+    }
+    const recommended = resolution.candidates.find(
+      (entry) => entry.id === resolution.recommendedCandidateId,
+    )
+    if (!recommended) {
+      return unavailable("Multiple fleet variants are tied; choose a source in each missing cell")
+    }
+    if (candidate && candidate.canonical !== recommended.canonical) {
+      return unavailable("Selected targets do not resolve to one fleet DNS value")
+    }
+    candidate = recommended
+  }
+
+  return {
+    available: true,
+    candidate,
+    reason: "",
+    targetZoneIds: targetZones.map((zone) => zone.meta.id),
+    targetZoneNames: targetZones.map((zone) => zone.meta.name),
+  }
+}
+
 export function buildMatrix(inventory) {
   const rows = new Map()
 

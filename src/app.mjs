@@ -22,6 +22,7 @@ import {
 } from "./inventory.mjs"
 import {
   buildMatrix,
+  dnsTargetFillBatch,
   matrixRenderKey,
 } from "./matrix.mjs"
 import {
@@ -116,6 +117,7 @@ const state = {
 }
 const editActionByCell = new WeakMap()
 const fillActionByCell = new WeakMap()
+const bulkFillRowByButton = new WeakMap()
 const fleetActionByButton = new WeakMap()
 
 const elements = {
@@ -820,6 +822,17 @@ function renderMatrix() {
     if (secondaryActionTypes.has("ruleset-rule-copy")) {
       facetActions.append(createElement("small", { className: "capability-badge copy", text: "Copy rules" }))
     }
+    if (row.resolutionKind === HOLE_RESOLUTION_KIND.DNS_RECORDS && !readOnly) {
+      const bulkFillButton = createElement("button", {
+        className: "cell-action bulk-fill",
+        text: "Fill targets",
+      })
+      bulkFillButton.type = "button"
+      bulkFillButton.hidden = true
+      bulkFillButton.disabled = true
+      bulkFillRowByButton.set(bulkFillButton, row)
+      facetActions.append(bulkFillButton)
+    }
     if (row.fleetAction?.type === FLEET_ACTION_KIND.RULE_RENAME && !readOnly) {
       const renameButton = createElement("button", {
         className: "cell-action rename-rule",
@@ -978,6 +991,33 @@ function updateActionButtons() {
   for (const button of document.querySelectorAll(".fill-hole")) {
     button.disabled = writeLocked
     if (writeLocked) button.title = writeLockReason
+  }
+  for (const button of document.querySelectorAll(".bulk-fill")) {
+    const row = bulkFillRowByButton.get(button)
+    const batch = row
+      ? dnsTargetFillBatch(row, state.inventory, state.selectedZoneIds)
+      : {
+          available: false,
+          reason: "The DNS facet is unavailable",
+          targetZoneIds: [],
+        }
+    const targetCount = batch.targetZoneIds.length
+    button.hidden = targetCount === 0
+    button.disabled = writeLocked || !batch.available
+    button.textContent = batch.available
+      ? `Fill ${targetCount} target${targetCount === 1 ? "" : "s"}`
+      : "Choose per cell"
+    button.title = writeLocked
+      ? writeLockReason
+      : batch.available
+        ? `Build one live DNS plan for ${targetCount} selected target zone${targetCount === 1 ? "" : "s"}`
+        : batch.reason
+    button.setAttribute(
+      "aria-label",
+      batch.available
+        ? `Fill ${row.label} on ${targetCount} selected target zone${targetCount === 1 ? "" : "s"}`
+        : `Bulk fill unavailable for ${row?.label || "this DNS facet"}. ${batch.reason}`,
+    )
   }
   for (const button of document.querySelectorAll(".copy-rule")) {
     const targetCount = state.selectedZoneIds.size
@@ -1436,38 +1476,68 @@ async function reviewRuleRename(event) {
   await renameRuleAcrossFleet(action, desiredName)
 }
 
-async function fillDnsHole(action, candidate) {
+async function fillDnsTargets(label, candidate, targetZoneIds, title) {
   const sourceZoneId = candidate.sourceZoneId
-  const targetZoneId = action.resolution.targetZoneId
   try {
     const liveData = await runWritePreflight(
-      `${action.label} on ${action.resolution.targetZoneName}`,
-      () => executePreflightRead([
-        {
-          sourceZoneId,
-          targetZoneId,
-          type: READ_ACTION.DNS_RECORD_COPY,
-        },
-      ]),
+      `${label} on ${targetZoneIds.length} target zone${targetZoneIds.length === 1 ? "" : "s"}`,
+      () => executePreflightRead(targetZoneIds.map((targetZoneId) => ({
+        sourceZoneId,
+        targetZoneId,
+        type: READ_ACTION.DNS_RECORD_COPY,
+      }))),
     )
     const liveInventory = liveData.inventory
     assertSurfaceReads(liveInventory, ["dns"], "DNS record copy")
-    const [sourceZone, targetZone] = selectedLiveZones(
+    const liveZones = selectedLiveZones(
       liveInventory,
-      [sourceZoneId, targetZoneId],
+      [sourceZoneId, ...targetZoneIds],
     )
-    const plan = buildDnsRecordCopyPlan(
-      sourceZone,
-      targetZone,
-      candidate.sourceAction.recordIds,
+    const zonesById = new Map(liveZones.map((zone) => [zone.meta.id, zone]))
+    const sourceZone = zonesById.get(sourceZoneId)
+    const plans = targetZoneIds.map(
+      (targetZoneId) => buildDnsRecordCopyPlan(
+        sourceZone,
+        zonesById.get(targetZoneId),
+        candidate.sourceAction.recordIds,
+      ),
     )
     await applyPlans(
-      `Fill ${action.label} on ${targetZone.meta.name}`,
-      createLivePlanSet([plan]),
+      title,
+      createLivePlanSet(plans),
     )
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error), "error")
   }
+}
+
+async function fillDnsHole(action, candidate) {
+  await fillDnsTargets(
+    action.label,
+    candidate,
+    [action.resolution.targetZoneId],
+    `Fill ${action.label} on ${action.resolution.targetZoneName}`,
+  )
+}
+
+async function fillDnsTargetsFromRow(button) {
+  if (state.busy || readOnly || !state.transportAvailable) return
+  const row = bulkFillRowByButton.get(button)
+  if (!row) {
+    toast("The DNS facet is no longer available", "error")
+    return
+  }
+  const batch = dnsTargetFillBatch(row, state.inventory, state.selectedZoneIds)
+  if (!batch.available) {
+    toast(batch.reason, "error")
+    return
+  }
+  await fillDnsTargets(
+    row.label,
+    batch.candidate,
+    batch.targetZoneIds,
+    `Fill ${row.label} on selected targets`,
+  )
 }
 
 async function fillHole(action, candidate = null) {
@@ -1957,6 +2027,11 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
+  const bulkFillButton = event.target.closest(".bulk-fill")
+  if (bulkFillButton) {
+    fillDnsTargetsFromRow(bulkFillButton)
+    return
+  }
   const renameButton = event.target.closest(".rename-rule")
   if (renameButton) {
     openRuleRename(renameButton)

@@ -196,6 +196,28 @@ test("DNS hole resolution reads only source and target DNS surfaces", () => {
   })
 })
 
+test("DNS target fills merge one source with every selected destination", () => {
+  const plan = composeActionReadPlan([
+    {
+      sourceZoneId: "source-zone",
+      targetZoneId: "target-one",
+      type: READ_ACTION.DNS_RECORD_COPY,
+    },
+    {
+      sourceZoneId: "source-zone",
+      targetZoneId: "target-two",
+      type: READ_ACTION.DNS_RECORD_COPY,
+    },
+  ])
+
+  assert.deepEqual(plan.inventory, {
+    includeEmailAddresses: false,
+    includeRuleDetails: false,
+    surfaceIds: ["dns"],
+    zoneIds: ["source-zone", "target-one", "target-two"],
+  })
+})
+
 test("rule edits compose to the exact live ruleset resource", () => {
   const action = {
     phase: "http_request_sanitize",

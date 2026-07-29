@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildMatrix,
+  dnsTargetFillBatch,
   matrixRenderKey,
 } from "../src/matrix.mjs"
 import {
@@ -348,6 +349,16 @@ test("matrix distinguishes holes from configuration variants", () => {
     row.missingResolutions.get("beta.example").recommendedCandidateId,
     "variant-1",
   )
+  assert.deepEqual(
+    dnsTargetFillBatch(row, inventory, new Set(["zone-beta.example"])),
+    {
+      available: true,
+      candidate: row.missingResolutions.get("beta.example").candidates[0],
+      reason: "",
+      targetZoneIds: ["zone-beta.example"],
+      targetZoneNames: ["beta.example"],
+    },
+  )
   assert.equal(matrix.summary.missingCells > 0, true)
 })
 
@@ -360,7 +371,7 @@ test("matrix requires a source choice when missing DNS values are tied", () => {
     ttl: 1,
     type: "A",
   })
-  const matrix = buildMatrix(makeInventory([
+  const inventory = makeInventory([
     makeZone("alpha.example", {
       dns: [dnsRecord("alpha.example", "192.0.2.1")],
     }),
@@ -370,7 +381,8 @@ test("matrix requires a source choice when missing DNS values are tied", () => {
     makeZone("gamma.example", {
       dns: [],
     }),
-  ]))
+  ])
+  const matrix = buildMatrix(inventory)
   const row = matrix.rows.find(
     (entry) => entry.category === "DNS records" && entry.label === "A @",
   )
@@ -379,6 +391,10 @@ test("matrix requires a source choice when missing DNS values are tied", () => {
   assert.equal(resolution.available, true)
   assert.equal(resolution.candidates.length, 2)
   assert.equal(resolution.recommendedCandidateId, null)
+  assert.match(
+    dnsTargetFillBatch(row, inventory, new Set(["zone-gamma.example"])).reason,
+    /Multiple fleet variants are tied/,
+  )
 })
 
 test("matrix never turns a DNS coverage failure into a fill action", () => {
