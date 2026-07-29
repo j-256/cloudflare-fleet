@@ -29,6 +29,13 @@ import {
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
 import {
+  DEFAULT_MATRIX_SCOPE,
+  DNS_MATRIX_CATEGORIES,
+  facetMatchesScope,
+  MATRIX_SCOPE,
+  matrixRowMatchesFilters,
+} from "./matrix-filter.mjs"
+import {
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
@@ -86,6 +93,7 @@ const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
+const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 document.title = readOnly ? SESSION_TITLE.READ_ONLY : SESSION_TITLE.READ_WRITE
 const state = {
   abortController: null,
@@ -125,6 +133,7 @@ const elements = {
   confirmTitle: document.querySelector("#confirm-title"),
   coverageList: document.querySelector("#coverage-list"),
   differenceToggle: document.querySelector("#difference-toggle"),
+  dnsType: document.querySelector("#dns-type"),
   driftCount: document.querySelector("#drift-count"),
   emailPolicyDetail: document.querySelector("#email-policy-detail"),
   emailPolicyDrift: document.querySelector("#email-policy-drift"),
@@ -165,6 +174,7 @@ const elements = {
   sessionMode: document.querySelector("#session-mode"),
   showEditableSettings: document.querySelector("#show-editable-settings"),
   snapshotTime: document.querySelector("#snapshot-time"),
+  scope: document.querySelector("#scope"),
   statusDot: document.querySelector("#status-dot"),
   statusText: document.querySelector("#status-text"),
   targetClear: document.querySelector("#target-clear"),
@@ -453,14 +463,85 @@ function renderSummary() {
 
 function renderCategories() {
   const previous = elements.category.value
-  elements.category.replaceChildren(createElement("option", { text: "All categories" }))
+  const counts = new Map()
+  for (const row of state.matrix.rows) {
+    counts.set(row.category, (counts.get(row.category) || 0) + 1)
+  }
+  elements.category.replaceChildren(createElement("option", {
+    text: `All categories (${state.matrix.rows.length})`,
+  }))
   elements.category.firstElementChild.value = ""
   for (const category of state.matrix.categories) {
-    const option = createElement("option", { text: category })
+    const option = createElement("option", {
+      text: `${category} (${counts.get(category) || 0})`,
+    })
     option.value = category
     elements.category.append(option)
   }
   if (state.matrix.categories.includes(previous)) elements.category.value = previous
+}
+
+function renderScopes() {
+  const previous = elements.scope.value || DEFAULT_MATRIX_SCOPE
+  const zoneCount = state.inventory.zones.length
+  const scopes = [
+    [MATRIX_SCOPE.FLEET_PATTERNS, "Fleet patterns", "Present in at least two zones"],
+    [MATRIX_SCOPE.FLEET_WIDE, "Fleet-wide", "Present in every zone"],
+    [MATRIX_SCOPE.ZONE_SPECIFIC, "Zone-specific", "Present in one zone"],
+    [MATRIX_SCOPE.ALL, "Everything", "No coverage filter"],
+  ]
+  elements.scope.replaceChildren(...scopes.map(([value, label, title]) => {
+    const count = state.matrix.rows.filter(
+      (row) => facetMatchesScope(row.presentCount, zoneCount, value),
+    ).length
+    const option = createElement("option", {
+      text: `${label} (${count})`,
+    })
+    option.value = value
+    option.title = title
+    return option
+  }))
+  elements.scope.value = scopes.some(([value]) => value === previous)
+    ? previous
+    : DEFAULT_MATRIX_SCOPE
+}
+
+function renderDnsTypes() {
+  const previous = elements.dnsType.value
+  const counts = new Map()
+  for (const row of state.matrix.rows) {
+    if (!row.recordType) continue
+    counts.set(row.recordType, (counts.get(row.recordType) || 0) + 1)
+  }
+  elements.dnsType.replaceChildren(createElement("option", {
+    text: "All DNS types",
+  }))
+  elements.dnsType.firstElementChild.value = ""
+  for (const [recordType, count] of [...counts].sort(([left], [right]) => left.localeCompare(right))) {
+    const option = createElement("option", {
+      text: `${recordType} (${count})`,
+    })
+    option.value = recordType
+    elements.dnsType.append(option)
+  }
+  if (counts.has(previous)) elements.dnsType.value = previous
+}
+
+function syncDnsTypeAvailability() {
+  const category = elements.category.value
+  const available = !category || DNS_MATRIX_CATEGORY_SET.has(category)
+  elements.dnsType.disabled = !available
+  elements.dnsType.title = available
+    ? "Limit DNS rows to one record type"
+    : "DNS type applies only to DNS categories"
+  if (!available) elements.dnsType.value = ""
+}
+
+function renderMatrixFilters() {
+  renderCategories()
+  renderScopes()
+  renderDnsTypes()
+  syncDnsTypeAvailability()
 }
 
 function renderPolicyCards() {
@@ -708,6 +789,8 @@ function renderMatrix() {
     const tr = document.createElement("tr")
     tr.dataset.category = row.category
     tr.dataset.different = String(row.different)
+    tr.dataset.presentCount = String(row.presentCount)
+    tr.dataset.recordType = row.recordType
     tr.dataset.search = row.search
 
     const categoryCell = createElement("th", { className: "category-cell", text: row.category })
@@ -790,16 +873,25 @@ function renderCoverage() {
 }
 
 function filterRows() {
-  const query = elements.search.value.trim().toLowerCase()
-  const category = elements.category.value
-  const differencesOnly = elements.differenceToggle.getAttribute("aria-pressed") === "true"
   const rows = [...elements.matrixBody.querySelectorAll("tr")]
+  const filters = {
+    category: elements.category.value,
+    differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
+    query: elements.search.value,
+    recordType: elements.dnsType.value,
+    scope: elements.scope.value,
+    zoneCount: state.inventory?.zones.length || 0,
+  }
   let visible = 0
 
   for (const row of rows) {
-    const show = (!query || row.dataset.search.includes(query))
-      && (!category || row.dataset.category === category)
-      && (!differencesOnly || row.dataset.different === "true")
+    const show = matrixRowMatchesFilters({
+      category: row.dataset.category,
+      different: row.dataset.different === "true",
+      presentCount: Number(row.dataset.presentCount),
+      recordType: row.dataset.recordType,
+      search: row.dataset.search,
+    }, filters)
     row.classList.toggle("hidden-row", !show)
     if (show) visible += 1
   }
@@ -933,8 +1025,10 @@ function showTargetDialog() {
 function showEditableSettings() {
   elements.search.value = ""
   elements.category.value = "Zone settings"
+  elements.dnsType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
   elements.differenceToggle.textContent = "All rows"
+  syncDnsTypeAvailability()
   filterRows()
 
   const firstEdit = [...elements.matrixBody.querySelectorAll(".editable-cell")]
@@ -1717,7 +1811,7 @@ function renderInventory(inventory, source) {
   renderSummary()
   renderPolicyCards()
   if (matrixChanged) {
-    renderCategories()
+    renderMatrixFilters()
     renderMatrix()
   }
   renderCoverage()
@@ -1825,7 +1919,12 @@ api.startSessionMonitor({
 installDismissibleDialogs(document)
 elements.refresh.addEventListener("click", () => refreshInventory({ preserveSelection: true }))
 elements.search.addEventListener("input", filterRows)
-elements.category.addEventListener("change", filterRows)
+elements.category.addEventListener("change", () => {
+  syncDnsTypeAvailability()
+  filterRows()
+})
+elements.scope.addEventListener("change", filterRows)
+elements.dnsType.addEventListener("change", filterRows)
 elements.differenceToggle.addEventListener("click", () => {
   const next = elements.differenceToggle.getAttribute("aria-pressed") !== "true"
   elements.differenceToggle.setAttribute("aria-pressed", String(next))

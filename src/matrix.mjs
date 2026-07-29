@@ -11,6 +11,7 @@ import {
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
 } from "./constants.mjs"
+import { DNS_MATRIX_CATEGORIES } from "./matrix-filter.mjs"
 import {
   dnsRecordCopyCapability,
   dnsRecordEditCapability,
@@ -46,6 +47,7 @@ const CATEGORY_ORDER = [
   "TLS inventory",
   "Zone",
 ]
+const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 
 function surfaceResult(zone, surfaceId) {
   const surface = zone.surfaces[surfaceId]
@@ -736,6 +738,9 @@ export function buildMatrix(inventory) {
         missingResolution(rowDefinition, zone, inventory, candidates),
       )
     }
+    const recordType = DNS_MATRIX_CATEGORY_SET.has(row.category)
+      ? row.key.split(" ", 1)[0].toUpperCase()
+      : ""
     return {
       ...rowDefinition,
       description,
@@ -744,10 +749,13 @@ export function buildMatrix(inventory) {
       fleetActionReason: fleetRename.reason,
       missingResolutions,
       missingCount: canonicalValues.filter((value) => value === "__missing__").length,
+      presentCount: row.cells.size,
+      recordType,
       search: [
         row.category,
         row.label,
         description,
+        ...row.cells.keys(),
         ...[...row.cells.values()].map((cell) => cell.full),
       ].join(" ").toLowerCase(),
       variantIndexes: new Map(nonMissing.map((value, index) => [value, index % 6])),
@@ -801,6 +809,8 @@ export function matrixRenderKey(inventory, matrix) {
       missingResolutions: inventory.zones.map(
         (zone) => row.missingResolutions.get(zone.meta.name) || null,
       ),
+      presentCount: row.presentCount,
+      recordType: row.recordType,
     })),
     zones: inventory.zones.map((zone) => ({
       createdOn: zone.meta.created_on,

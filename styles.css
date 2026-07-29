@@ -307,6 +307,22 @@ h1 {
   max-width: 540px;
 }
 
+#category {
+  max-width: 190px;
+}
+
+#scope {
+  max-width: 190px;
+}
+
+#dns-type {
+  max-width: 145px;
+}
+
+.toolbar select:disabled {
+  opacity: 0.45;
+}
+
 .button {
   min-height: 34px;
   padding: 6px 10px;
@@ -1366,16 +1382,33 @@ dialog details > summary {
     max-width: none;
   }
 
-  .toolbar select {
+  #category {
     grid-column: 1;
     grid-row: 3;
     width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  #scope {
+    grid-column: 2;
+    grid-row: 3;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  #dns-type {
+    grid-column: 1;
+    grid-row: 4;
+    width: 100%;
+    max-width: none;
     min-width: 0;
   }
 
   .visible-count {
     grid-column: 2;
-    grid-row: 3;
+    grid-row: 4;
     width: auto;
     margin-left: 0;
     justify-self: end;

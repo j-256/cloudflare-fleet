@@ -512,6 +512,9 @@ test("matrix exposes unlocked DNS records as direct cell edits", () => {
     label: "Direct DNS edit",
     reason: "Every matching record has a type-aware DNS Records API adapter",
   })
+  assert.equal(row.presentCount, 1)
+  assert.equal(row.recordType, "A")
+  assert.match(row.search, /alpha\.example/)
 })
 
 test("matrix links Email DNS MX specifications to their live DNS records", () => {

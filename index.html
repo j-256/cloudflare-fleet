@@ -47,11 +47,22 @@
 
     <nav class="toolbar" id="fleet-controls" aria-label="Fleet controls" tabindex="-1">
       <button class="button button-primary" id="refresh" type="button">Refresh full fleet</button>
-      <label class="sr-only" for="search">Search facets and values</label>
-      <input id="search" type="search" placeholder="Search facets and values" aria-describedby="visible-count" aria-keyshortcuts="/">
+      <label class="sr-only" for="search">Search facets, values, or zones</label>
+      <input id="search" type="search" placeholder="Search facets, values, or zones" aria-describedby="visible-count" aria-keyshortcuts="/">
       <label class="sr-only" for="category">Filter by category</label>
       <select id="category">
         <option value="">All categories</option>
+      </select>
+      <label class="sr-only" for="scope">Filter by fleet coverage</label>
+      <select id="scope" aria-describedby="visible-count">
+        <option value="fleet-patterns" selected>Fleet patterns</option>
+        <option value="fleet-wide">Fleet-wide</option>
+        <option value="zone-specific">Zone-specific</option>
+        <option value="all">Everything</option>
+      </select>
+      <label class="sr-only" for="dns-type">Filter by DNS record type</label>
+      <select id="dns-type" aria-describedby="visible-count">
+        <option value="">All DNS types</option>
       </select>
       <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Differences only</button>
       <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
