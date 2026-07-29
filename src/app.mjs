@@ -179,6 +179,7 @@ const elements = {
   statusText: document.querySelector("#status-text"),
   targetClear: document.querySelector("#target-clear"),
   targetDialog: document.querySelector("#target-dialog"),
+  targetHoles: document.querySelector("#target-holes"),
   targetOptions: document.querySelector("#target-options"),
   targetSelectionSummary: document.querySelector("#target-selection-summary"),
   targetSelectAll: document.querySelector("#target-select-all"),
@@ -789,6 +790,7 @@ function renderMatrix() {
     const tr = document.createElement("tr")
     tr.dataset.category = row.category
     tr.dataset.different = String(row.different)
+    tr.dataset.missingZoneIds = row.missingZoneIds.join(" ")
     tr.dataset.presentCount = String(row.presentCount)
     tr.dataset.recordType = row.recordType
     tr.dataset.search = row.search
@@ -880,6 +882,8 @@ function filterRows() {
     query: elements.search.value,
     recordType: elements.dnsType.value,
     scope: elements.scope.value,
+    targetHolesOnly: elements.targetHoles.getAttribute("aria-pressed") === "true",
+    targetZoneIds: state.selectedZoneIds,
     zoneCount: state.inventory?.zones.length || 0,
   }
   let visible = 0
@@ -888,6 +892,7 @@ function filterRows() {
     const show = matrixRowMatchesFilters({
       category: row.dataset.category,
       different: row.dataset.different === "true",
+      missingZoneIds: row.dataset.missingZoneIds.split(" ").filter(Boolean),
       presentCount: Number(row.dataset.presentCount),
       recordType: row.dataset.recordType,
       search: row.dataset.search,
@@ -902,6 +907,7 @@ function filterRows() {
 
 function updateSelectionStyles() {
   const count = state.selectedZoneIds.size
+  const targetHolesWasActive = elements.targetHoles.getAttribute("aria-pressed") === "true"
   const driftCount = policyDriftZoneIds().length
   const zoneCount = state.inventory?.zones.length || 0
   elements.selectionCount.textContent = String(count)
@@ -916,10 +922,16 @@ function updateSelectionStyles() {
   elements.clearSelection.disabled = count === 0
   elements.selectDrifted.disabled = driftCount === 0
   elements.targetClear.disabled = count === 0
+  elements.targetHoles.disabled = count === 0
   elements.targetSelectAll.disabled = zoneCount > 0 && count === zoneCount
   elements.targetSelectDrifted.disabled = driftCount === 0
+  if (count === 0 && targetHolesWasActive) {
+    elements.targetHoles.setAttribute("aria-pressed", "false")
+    elements.targetHoles.textContent = "Target holes"
+  }
   if (elements.targetDialog.open) updateTargetSelectionSummary()
   updateActionButtons()
+  if (targetHolesWasActive) filterRows()
 }
 
 function syncSelectionControls() {
@@ -1925,6 +1937,12 @@ elements.category.addEventListener("change", () => {
 })
 elements.scope.addEventListener("change", filterRows)
 elements.dnsType.addEventListener("change", filterRows)
+elements.targetHoles.addEventListener("click", () => {
+  const next = elements.targetHoles.getAttribute("aria-pressed") !== "true"
+  elements.targetHoles.setAttribute("aria-pressed", String(next))
+  elements.targetHoles.textContent = next ? "Target holes only" : "Target holes"
+  filterRows()
+})
 elements.differenceToggle.addEventListener("click", () => {
   const next = elements.differenceToggle.getAttribute("aria-pressed") !== "true"
   elements.differenceToggle.setAttribute("aria-pressed", String(next))

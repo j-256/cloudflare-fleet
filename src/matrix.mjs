@@ -741,6 +741,9 @@ export function buildMatrix(inventory) {
     const recordType = DNS_MATRIX_CATEGORY_SET.has(row.category)
       ? row.key.split(" ", 1)[0].toUpperCase()
       : ""
+    const missingZoneIds = inventory.zones
+      .filter((zone) => !row.cells.has(zone.meta.name))
+      .map((zone) => zone.meta.id)
     return {
       ...rowDefinition,
       description,
@@ -749,6 +752,7 @@ export function buildMatrix(inventory) {
       fleetActionReason: fleetRename.reason,
       missingResolutions,
       missingCount: canonicalValues.filter((value) => value === "__missing__").length,
+      missingZoneIds,
       presentCount: row.cells.size,
       recordType,
       search: [
@@ -806,6 +810,7 @@ export function matrixRenderKey(inventory, matrix) {
       key: row.key,
       label: row.label,
       missingCount: row.missingCount,
+      missingZoneIds: row.missingZoneIds,
       missingResolutions: inventory.zones.map(
         (zone) => row.missingResolutions.get(zone.meta.name) || null,
       ),

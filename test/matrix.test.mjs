@@ -514,6 +514,7 @@ test("matrix exposes unlocked DNS records as direct cell edits", () => {
   })
   assert.equal(row.presentCount, 1)
   assert.equal(row.recordType, "A")
+  assert.deepEqual(row.missingZoneIds, [])
   assert.match(row.search, /alpha\.example/)
 })
 

@@ -27,10 +27,16 @@ export function matrixRowMatchesFilters(row, filters) {
     .split(/\s+/)
     .filter(Boolean)
   const search = String(row.search || "").toLowerCase()
+  const targetZoneIds = filters.targetZoneIds instanceof Set
+    ? filters.targetZoneIds
+    : new Set(filters.targetZoneIds || [])
+  const hasTargetHole = !filters.targetHolesOnly
+    || row.missingZoneIds.some((zoneId) => targetZoneIds.has(zoneId))
   return terms.every((term) => search.includes(term))
     && (!filters.category || row.category === filters.category)
     && (!filters.recordType || row.recordType === filters.recordType)
     && (!filters.differencesOnly || row.different)
+    && hasTargetHole
     && facetMatchesScope(
       Number(row.presentCount),
       Number(filters.zoneCount),

@@ -21,6 +21,7 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
   const row = {
     category: "DNS records",
     different: true,
+    missingZoneIds: ["zone-beta.example"],
     presentCount: 3,
     recordType: "CNAME",
     search: "dns records cname cc-dev zone-d.example",
@@ -31,6 +32,8 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
     query: "strangelasers cc-dev",
     recordType: "CNAME",
     scope: MATRIX_SCOPE.FLEET_PATTERNS,
+    targetHolesOnly: true,
+    targetZoneIds: new Set(["zone-beta.example"]),
     zoneCount: 14,
   }
 
@@ -46,5 +49,9 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
   assert.equal(matrixRowMatchesFilters(row, {
     ...filters,
     scope: MATRIX_SCOPE.FLEET_WIDE,
+  }), false)
+  assert.equal(matrixRowMatchesFilters(row, {
+    ...filters,
+    targetZoneIds: new Set(["zone-alpha.example"]),
   }), false)
 })
