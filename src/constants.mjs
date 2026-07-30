@@ -16,6 +16,17 @@ export const EMAIL_POLICY_COMPONENT = Object.freeze({
   SPF: "spf",
 })
 
+export const POLICY_EXCEPTION_KIND = Object.freeze({
+  EMAIL_DNS_RECORD: "email-dns-record",
+})
+
+export const POLICY_EXCEPTION_STATUS = Object.freeze({
+  ACTIVE: "active",
+  ALIGNED: "aligned",
+  UNAVAILABLE: "unavailable",
+  VIOLATED: "violated",
+})
+
 export const HOLE_RESOLUTION_KIND = Object.freeze({
   DNS_RECORDS: "dns-record-copy",
   EMAIL_POLICY: "email-policy",

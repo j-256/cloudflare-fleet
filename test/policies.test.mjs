@@ -18,13 +18,21 @@ import {
   editableDnsRecordPayload,
   editableRulePayload,
   emailIssues,
+  evaluateEmailPolicyExceptions,
+  evaluateFleetEmailPolicyExceptions,
   executePlans,
   portableRulePayload,
   ruleCopyCapability,
   wafIssues,
 } from "../src/policies.mjs"
-import { FLEET_WAF_RULE_DESCRIPTIONS } from "../src/constants.mjs"
-import { emailPolicyExceptionsForZone } from "../src/fleet-policy.mjs"
+import {
+  FLEET_WAF_RULE_DESCRIPTIONS,
+  POLICY_EXCEPTION_STATUS,
+} from "../src/constants.mjs"
+import {
+  configuredEmailPolicyExceptions,
+  emailPolicyExceptionsForZone,
+} from "../src/fleet-policy.mjs"
 import {
   makeInventory,
   makeRule,
@@ -49,6 +57,7 @@ const FLEET_EMAIL_DNS_POLICY = {
     ttl: 60,
   },
 }
+const SFCC_SPF_EXCEPTION = emailPolicyExceptionsForZone("zone-c.example").spf
 
 function dmarcRecord(zoneName, overrides = {}) {
   return {
@@ -56,6 +65,17 @@ function dmarcRecord(zoneName, overrides = {}) {
     id: `dmarc-${zoneName}`,
     name: `_dmarc.${zoneName}`,
     ttl: 60,
+    type: "TXT",
+    ...overrides,
+  }
+}
+
+function sfccSpfRecord(overrides = {}) {
+  return {
+    content: `"${SFCC_SPF_EXCEPTION.expected.content}"`,
+    id: "sandbox-spf",
+    name: "zone-c.example",
+    ttl: SFCC_SPF_EXCEPTION.expected.ttl,
     type: "TXT",
     ...overrides,
   }
@@ -414,16 +434,10 @@ test("email policy plans an explicit SPF update", () => {
   ])
 })
 
-test("email policy preserves the acknowledged zone-c.example SPF variation", () => {
+test("email policy preserves only the exact zone-c.example SPF exception", () => {
   const zone = makeZone("zone-c.example", {
     dns: [
-      {
-        content: "\"v=spf1 include:storefront.example ~all\"",
-        id: "sandbox-spf",
-        name: "zone-c.example",
-        ttl: 300,
-        type: "TXT",
-      },
+      sfccSpfRecord(),
       dmarcRecord("zone-c.example"),
     ],
   })
@@ -447,6 +461,92 @@ test("email policy preserves the acknowledged zone-c.example SPF variation", () 
       options,
     ).operations,
     [],
+  )
+  assert.deepEqual(
+    evaluateEmailPolicyExceptions(
+      zone,
+      FLEET_EMAIL_DNS_POLICY,
+      options.exceptions,
+    ).map((exception) => ({
+      current: exception.current,
+      status: exception.status,
+    })),
+    [
+      {
+        current: SFCC_SPF_EXCEPTION.expected,
+        status: POLICY_EXCEPTION_STATUS.ACTIVE,
+      },
+    ],
+  )
+})
+
+test("email policy treats unexpected zone-c.example SPF content or TTL as drift", () => {
+  for (const overrides of [
+    {
+      content: "\"v=spf1 include:unexpected.example ~all\"",
+    },
+    {
+      ttl: 300,
+    },
+  ]) {
+    const zone = makeZone("zone-c.example", {
+      dns: [
+        sfccSpfRecord(overrides),
+        dmarcRecord("zone-c.example"),
+      ],
+    })
+    const options = {
+      exceptions: emailPolicyExceptionsForZone(zone.meta.name),
+    }
+
+    assert.deepEqual(
+      emailIssues(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY, options),
+      ["SPF value or TTL differs from fleet consensus"],
+    )
+    assert.equal(
+      evaluateEmailPolicyExceptions(
+        zone,
+        FLEET_EMAIL_DNS_POLICY,
+        options.exceptions,
+      )[0].status,
+      POLICY_EXCEPTION_STATUS.VIOLATED,
+    )
+    assert.equal(
+      buildEmailAlignmentPlan(
+        zone,
+        "fleet@example.com",
+        FLEET_EMAIL_DNS_POLICY,
+        options,
+      ).operations[0].label,
+      "Match the fleet SPF value and TTL",
+    )
+  }
+})
+
+test("email policy reports dormant and unavailable configured exceptions", () => {
+  const aligned = makeZone("zone-c.example", {
+    dns: [
+      sfccSpfRecord({
+        content: `"${FLEET_EMAIL_DNS_POLICY.spf.content}"`,
+      }),
+      dmarcRecord("zone-c.example"),
+    ],
+  })
+  assert.equal(
+    evaluateFleetEmailPolicyExceptions(
+      makeInventory([aligned]),
+      FLEET_EMAIL_DNS_POLICY,
+      configuredEmailPolicyExceptions(),
+    )[0].status,
+    POLICY_EXCEPTION_STATUS.ALIGNED,
+  )
+  assert.equal(
+    evaluateFleetEmailPolicyExceptions(
+      makeInventory([]),
+      FLEET_EMAIL_DNS_POLICY,
+      configuredEmailPolicyExceptions(),
+    )[0].status,
+    POLICY_EXCEPTION_STATUS.UNAVAILABLE,
   )
 })
 

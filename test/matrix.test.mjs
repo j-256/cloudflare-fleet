@@ -124,6 +124,10 @@ test("matrix leads with rule names and separates direct edits from copying", () 
     label: "Copy to selected zones",
     reason: "Self-contained zone entrypoint rule",
   })
+  assert.equal(cell.presentation.kind, "rule")
+  assert.equal(cell.presentation.phase, "http_request_dynamic_redirect")
+  assert.equal(cell.presentation.rule.action, "redirect")
+  assert.equal(cell.presentation.rule.expression, "http.host eq \"{zone}\"")
 })
 
 test("matrix exposes dependency-backed rules for editing but not copying", () => {
@@ -474,6 +478,7 @@ test("matrix exposes a destination-owned fill for a portable missing rule", () =
   assert.equal(resolution.available, true)
   assert.equal(resolution.kind, "ruleset-rule-copy")
   assert.equal(resolution.candidates[0].sourceZoneName, "alpha.example")
+  assert.equal(resolution.candidates[0].presentation.kind, "rule")
 })
 
 test("matrix routes missing Email policy cells through the policy composer", () => {

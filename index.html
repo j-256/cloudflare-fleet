@@ -91,7 +91,10 @@
             <p id="email-policy-detail">Loading forwarding consensus</p>
           </div>
           <div class="policy-actions">
-            <span class="drift-badge" id="email-policy-drift">0 drifted</span>
+            <div class="policy-badges">
+              <span class="drift-badge" id="email-policy-drift">0 drifted</span>
+              <button class="policy-exception-badge" id="email-policy-exceptions" type="button" hidden>0 policy exceptions</button>
+            </div>
             <button class="button button-accent" id="align-email" type="button" disabled>Align selected</button>
           </div>
         </article>
@@ -165,8 +168,28 @@
         <label for="editor-choice">Record in this cell</label>
         <select id="editor-choice"></select>
       </div>
-      <label for="editor-value" id="editor-value-label">Desired definition</label>
-      <textarea id="editor-value" spellcheck="false" aria-describedby="editor-target" aria-errormessage="editor-error" required></textarea>
+      <section class="rule-editor" id="rule-editor" aria-labelledby="rule-editor-heading" hidden>
+        <h3 id="rule-editor-heading">Rule definition</h3>
+        <div class="rule-editor-grid">
+          <label for="rule-editor-name">
+            Rule name
+            <input id="rule-editor-name" type="text" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="rule-enabled" for="rule-editor-enabled">
+            <input id="rule-editor-enabled" type="checkbox">
+            <span>Enabled</span>
+          </label>
+        </div>
+        <label for="rule-editor-expression">Matching expression</label>
+        <textarea id="rule-editor-expression" class="rule-expression" spellcheck="false"></textarea>
+        <div id="rule-editor-summary"></div>
+      </section>
+      <details class="editor-json plain" id="editor-json" open>
+        <summary id="editor-json-summary">Desired JSON definition</summary>
+        <p id="editor-json-help" hidden>Use the exact JSON for action parameters, logging, rate limits, or other advanced rule fields. Common fields above stay synchronized with this definition.</p>
+        <label for="editor-value" id="editor-value-label">Desired definition</label>
+        <textarea id="editor-value" spellcheck="false" aria-describedby="editor-target editor-json-help" aria-errormessage="editor-error" required></textarea>
+      </details>
       <p class="field-error" id="editor-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
@@ -202,14 +225,32 @@
       <p id="hole-target"></p>
       <label for="hole-source">Source variant</label>
       <select id="hole-source"></select>
-      <details open>
-        <summary>Cached value from the selected source</summary>
+      <div class="rule-preview" id="hole-structured-preview" hidden></div>
+      <details id="hole-raw-preview" open>
+        <summary id="hole-preview-summary">Cached value from the selected source</summary>
         <pre id="hole-preview"></pre>
       </details>
       <p>The destination will be reread before the API plan is shown. No write occurs until the reviewed confirmation is accepted.</p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
         <button class="button button-primary" value="review">Build live preview</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="policy-exception-dialog" aria-labelledby="policy-exception-title" aria-describedby="policy-exception-summary">
+    <form method="dialog">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close policy exceptions">&times;</button>
+      <p class="dialog-kicker">Fleet policy</p>
+      <h2 id="policy-exception-title">Email policy exceptions</h2>
+      <p id="policy-exception-summary"></p>
+      <div class="policy-exception-list" id="policy-exception-list"></div>
+      <details>
+        <summary>Raw policy definitions</summary>
+        <pre id="policy-exception-raw"></pre>
+      </details>
+      <div class="dialog-actions">
+        <button class="button button-primary" value="done">Done</button>
       </div>
     </form>
   </dialog>

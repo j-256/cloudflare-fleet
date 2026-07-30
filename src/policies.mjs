@@ -2,6 +2,7 @@ import {
   EMAIL_POLICY_COMPONENT,
   FLEET_WAF_RULE_DESCRIPTIONS,
   HTTP_METHOD,
+  POLICY_EXCEPTION_STATUS,
   WAF_PHASE,
 } from "./constants.mjs"
 import {
@@ -285,11 +286,142 @@ function dmarcState(zone, policy) {
   }
 }
 
-function acknowledgedSpfDifference(currentSpf, options) {
-  return Boolean(
-    options?.exceptions?.[EMAIL_POLICY_COMPONENT.SPF]
-      && currentSpf.available
-      && currentSpf.records.length === 1,
+function normalizedSpfRecord(record, zoneName) {
+  const normalized = normalizeEmailDnsRecord(record, zoneName)
+  return {
+    content: normalized.content,
+    ttl: normalized.ttl,
+  }
+}
+
+function sameEmailDnsValue(left, right) {
+  return Boolean(left && right && stableString(left) === stableString(right))
+}
+
+function evaluateSpfException(zone, dnsPolicy, exception) {
+  const records = spfRecordsFor(zone)
+  const baseline = dnsPolicy?.spf?.available
+    ? {
+        content: dnsPolicy.spf.content,
+        ttl: dnsPolicy.spf.ttl,
+      }
+    : null
+  const currentValues = records?.map(
+    (record) => normalizedSpfRecord(record, zone.meta.name),
+  ) || []
+  const common = {
+    baseline,
+    component: exception.component,
+    current: currentValues.length === 1 ? currentValues[0] : currentValues,
+    expected: exception.expected,
+    kind: exception.kind,
+    reason: exception.reason,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+
+  if (records === null) {
+    return {
+      ...common,
+      current: null,
+      detail: "DNS records are unavailable",
+      status: POLICY_EXCEPTION_STATUS.UNAVAILABLE,
+    }
+  }
+  if (!baseline) {
+    return {
+      ...common,
+      detail: dnsPolicy?.spf?.reason || "Fleet SPF policy is unavailable",
+      status: POLICY_EXCEPTION_STATUS.UNAVAILABLE,
+    }
+  }
+  if (records.length === 0) {
+    return {
+      ...common,
+      detail: "SPF record is missing",
+      status: POLICY_EXCEPTION_STATUS.VIOLATED,
+    }
+  }
+  if (records.length > 1) {
+    return {
+      ...common,
+      detail: "Multiple SPF records require manual review",
+      status: POLICY_EXCEPTION_STATUS.VIOLATED,
+    }
+  }
+
+  const current = currentValues[0]
+  if (sameEmailDnsValue(current, baseline)) {
+    return {
+      ...common,
+      detail: "The zone matches the fleet baseline, so this exception is dormant",
+      status: POLICY_EXCEPTION_STATUS.ALIGNED,
+    }
+  }
+  if (sameEmailDnsValue(current, exception.expected)) {
+    return {
+      ...common,
+      detail: "The current record exactly matches the configured exception",
+      status: POLICY_EXCEPTION_STATUS.ACTIVE,
+    }
+  }
+  return {
+    ...common,
+    detail: "The current record matches neither the exception nor the fleet baseline",
+    status: POLICY_EXCEPTION_STATUS.VIOLATED,
+  }
+}
+
+export function evaluateEmailPolicyExceptions(zone, dnsPolicy, exceptions = {}) {
+  const statuses = []
+  const spfException = exceptions[EMAIL_POLICY_COMPONENT.SPF]
+  if (spfException) statuses.push(evaluateSpfException(zone, dnsPolicy, spfException))
+  return statuses
+}
+
+export function evaluateFleetEmailPolicyExceptions(inventory, dnsPolicy, exceptions = []) {
+  const zonesByName = new Map(
+    (inventory?.zones || []).map((zone) => [zone.meta.name, zone]),
+  )
+  return exceptions.flatMap((exception) => {
+    const zone = zonesByName.get(exception.zoneName)
+    if (zone) {
+      return evaluateEmailPolicyExceptions(zone, dnsPolicy, {
+        [exception.component]: exception,
+      })
+    }
+    const baseline = exception.component === EMAIL_POLICY_COMPONENT.SPF
+      && dnsPolicy?.spf?.available
+      ? {
+          content: dnsPolicy.spf.content,
+          ttl: dnsPolicy.spf.ttl,
+        }
+      : null
+    return [
+      {
+        baseline,
+        component: exception.component,
+        current: null,
+        detail: "The configured zone is not present in the fleet inventory",
+        expected: exception.expected,
+        kind: exception.kind,
+        reason: exception.reason,
+        status: POLICY_EXCEPTION_STATUS.UNAVAILABLE,
+        zoneId: "",
+        zoneName: exception.zoneName,
+      },
+    ]
+  })
+}
+
+function activeSpfException(zone, dnsPolicy, options) {
+  return evaluateEmailPolicyExceptions(
+    zone,
+    dnsPolicy,
+    options?.exceptions,
+  ).some(
+    (exception) => exception.component === EMAIL_POLICY_COMPONENT.SPF
+      && exception.status === POLICY_EXCEPTION_STATUS.ACTIVE,
   )
 }
 
@@ -446,7 +578,7 @@ export function emailIssues(zone, destination, dnsPolicy, options = {}) {
   const dnsState = requiredEmailDnsState(zone)
   const currentSpf = spfState(zone, dnsPolicy?.spf)
   const currentDmarc = dmarcState(zone, dnsPolicy?.dmarc)
-  const spfDifferenceAcknowledged = acknowledgedSpfDifference(currentSpf, options)
+  const spfDifferenceAcknowledged = activeSpfException(zone, dnsPolicy, options)
 
   if (!email?.enabled) issues.push("Email Routing is disabled")
   if (email?.status !== "unlocked") issues.push(`DNS records are ${email?.status || "unknown"}`)
@@ -487,7 +619,7 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
   const dnsState = requiredEmailDnsState(zone)
   const currentSpf = spfState(zone, dnsPolicy.spf)
   const currentDmarc = dmarcState(zone, dnsPolicy.dmarc)
-  const spfDifferenceAcknowledged = acknowledgedSpfDifference(currentSpf, options)
+  const spfDifferenceAcknowledged = activeSpfException(zone, dnsPolicy, options)
   const operations = []
   const needsDnsEnable = !email?.enabled || (dnsState.available && dnsState.missing.length > 0)
 

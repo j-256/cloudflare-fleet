@@ -6,12 +6,17 @@ import {
   isCacheRecord,
 } from "./cache.mjs"
 import {
+  EMAIL_POLICY_COMPONENT,
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
+  POLICY_EXCEPTION_STATUS,
   SESSION_TITLE,
   STATIC_LIMITATIONS,
 } from "./constants.mjs"
-import { emailPolicyExceptionsForZone } from "./fleet-policy.mjs"
+import {
+  configuredEmailPolicyExceptions,
+  emailPolicyExceptionsForZone,
+} from "./fleet-policy.mjs"
 import {
   installDismissibleDialogs,
   showDialog,
@@ -51,9 +56,14 @@ import {
   editableDnsRecordPayload,
   editableRulePayload,
   emailIssues,
+  evaluateFleetEmailPolicyExceptions,
   executePlans,
   wafIssues,
 } from "./policies.mjs"
+import {
+  humanizeRuleField,
+  presentRule,
+} from "./rule-presentation.mjs"
 import {
   actionResourceId,
   executeActionReadPlan,
@@ -93,8 +103,18 @@ const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
+const COMPACT_RULE_TEXT_LIMIT = 120
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
+const POLICY_EXCEPTION_COMPONENT_LABELS = Object.freeze({
+  [EMAIL_POLICY_COMPONENT.SPF]: "SPF",
+})
+const POLICY_EXCEPTION_STATUS_LABELS = Object.freeze({
+  [POLICY_EXCEPTION_STATUS.ACTIVE]: "Active",
+  [POLICY_EXCEPTION_STATUS.ALIGNED]: "Dormant",
+  [POLICY_EXCEPTION_STATUS.UNAVAILABLE]: "Unavailable",
+  [POLICY_EXCEPTION_STATUS.VIOLATED]: "Needs review",
+})
 document.title = readOnly ? SESSION_TITLE.READ_ONLY : SESSION_TITLE.READ_WRITE
 const state = {
   abortController: null,
@@ -103,6 +123,7 @@ const state = {
   editor: null,
   emailDestination: null,
   emailDnsPolicy: null,
+  emailPolicyExceptionStatuses: [],
   inventory: null,
   inventorySource: null,
   matrix: null,
@@ -139,12 +160,16 @@ const elements = {
   driftCount: document.querySelector("#drift-count"),
   emailPolicyDetail: document.querySelector("#email-policy-detail"),
   emailPolicyDrift: document.querySelector("#email-policy-drift"),
+  emailPolicyExceptions: document.querySelector("#email-policy-exceptions"),
   editorChoice: document.querySelector("#editor-choice"),
   editorChoiceRow: document.querySelector("#editor-choice-row"),
   editorDialog: document.querySelector("#editor-dialog"),
   editorError: document.querySelector("#editor-error"),
   editorForm: document.querySelector("#editor-form"),
   editorKind: document.querySelector("#editor-kind"),
+  editorJson: document.querySelector("#editor-json"),
+  editorJsonHelp: document.querySelector("#editor-json-help"),
+  editorJsonSummary: document.querySelector("#editor-json-summary"),
   editorReview: document.querySelector("#editor-review"),
   editorTarget: document.querySelector("#editor-target"),
   editorTitle: document.querySelector("#editor-title"),
@@ -155,12 +180,19 @@ const elements = {
   holeDialog: document.querySelector("#hole-dialog"),
   holeForm: document.querySelector("#hole-form"),
   holePreview: document.querySelector("#hole-preview"),
+  holePreviewSummary: document.querySelector("#hole-preview-summary"),
+  holeRawPreview: document.querySelector("#hole-raw-preview"),
   holeSource: document.querySelector("#hole-source"),
+  holeStructuredPreview: document.querySelector("#hole-structured-preview"),
   holeTarget: document.querySelector("#hole-target"),
   holeTitle: document.querySelector("#hole-title"),
   loadProgress: document.querySelector("#load-progress"),
   matrixBody: document.querySelector("#matrix-body"),
   matrixHead: document.querySelector("#matrix-head"),
+  policyExceptionDialog: document.querySelector("#policy-exception-dialog"),
+  policyExceptionList: document.querySelector("#policy-exception-list"),
+  policyExceptionRaw: document.querySelector("#policy-exception-raw"),
+  policyExceptionSummary: document.querySelector("#policy-exception-summary"),
   refresh: document.querySelector("#refresh"),
   refreshDetail: document.querySelector("#refresh-detail"),
   renameCurrent: document.querySelector("#rename-current"),
@@ -170,6 +202,11 @@ const elements = {
   renameReview: document.querySelector("#rename-review"),
   renameTarget: document.querySelector("#rename-target"),
   renameValue: document.querySelector("#rename-value"),
+  ruleEditor: document.querySelector("#rule-editor"),
+  ruleEditorEnabled: document.querySelector("#rule-editor-enabled"),
+  ruleEditorExpression: document.querySelector("#rule-editor-expression"),
+  ruleEditorName: document.querySelector("#rule-editor-name"),
+  ruleEditorSummary: document.querySelector("#rule-editor-summary"),
   search: document.querySelector("#search"),
   selectDrifted: document.querySelector("#select-drifted"),
   selectionCount: document.querySelector("#selection-count"),
@@ -345,6 +382,115 @@ function createElement(tag, options = {}) {
   if (options.className) node.className = options.className
   if (options.text !== undefined) node.textContent = options.text
   return node
+}
+
+function structuredValueElement(value) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return createElement("span", { text: "None" })
+    const list = createElement("ul", { className: "structured-list" })
+    for (const entry of value) {
+      const item = document.createElement("li")
+      item.append(structuredValueElement(entry))
+      list.append(item)
+    }
+    return list
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+    if (entries.length === 0) return createElement("span", { text: "None" })
+    const fields = createElement("dl", { className: "structured-object" })
+    for (const [key, entry] of entries) {
+      fields.append(
+        createElement("dt", { text: humanizeRuleField(key) }),
+        createElement("dd"),
+      )
+      fields.lastElementChild.append(structuredValueElement(entry))
+    }
+    return fields
+  }
+  if (typeof value === "boolean") {
+    return createElement("span", { text: value ? "Yes" : "No" })
+  }
+  if (value === null || value === undefined || value === "") {
+    return createElement("span", { text: "None" })
+  }
+  return createElement("code", { text: String(value) })
+}
+
+function createRuleSummary(rule, phase = "", options = {}) {
+  const omittedFields = new Set(options.omitFields || [])
+  const presentation = presentRule(rule, phase)
+  const root = createElement("div", {
+    className: `rule-summary${options.compact ? " compact" : ""}`,
+  })
+  const visibleFields = presentation.fields.filter(
+    (field) => !omittedFields.has(field.key),
+  )
+  if (visibleFields.length > 0) {
+    const facts = createElement("dl", { className: "rule-facts" })
+    for (const field of visibleFields) {
+      const rawValue = String(field.value)
+      const fieldValue = options.compact && rawValue.length > COMPACT_RULE_TEXT_LIMIT
+        ? `${rawValue.slice(0, COMPACT_RULE_TEXT_LIMIT - 3)}...`
+        : rawValue
+      const value = createElement("dd", {
+        className: `rule-field-${field.key}`,
+      })
+      value.append(
+        createElement(field.kind === "code" ? "code" : "span", {
+          text: fieldValue,
+        }),
+      )
+      if (field.token && field.token !== field.value) {
+        value.append(
+          createElement("code", {
+            className: "rule-token",
+            text: field.token,
+          }),
+        )
+      }
+      facts.append(
+        createElement("dt", {
+          className: `rule-field-${field.key}`,
+          text: field.label,
+        }),
+        value,
+      )
+    }
+    root.append(facts)
+  }
+  for (const section of presentation.sections) {
+    const container = createElement("section", { className: "rule-section" })
+    container.append(
+      createElement("h4", { text: section.label }),
+      structuredValueElement(section.value),
+    )
+    root.append(container)
+  }
+  return root
+}
+
+function policyExceptionComponentLabel(component) {
+  return POLICY_EXCEPTION_COMPONENT_LABELS[component]
+    || humanizeRuleField(component)
+}
+
+function dnsPolicyValueElement(value) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return createElement("span", { text: "No record" })
+    const list = createElement("div", { className: "dns-policy-value" })
+    for (const entry of value) list.append(dnsPolicyValueElement(entry))
+    return list
+  }
+  if (!value) return createElement("span", { text: "Unavailable" })
+  const container = createElement("div", { className: "dns-policy-value" })
+  container.append(
+    createElement("code", { text: value.content || "No content" }),
+    createElement("small", {
+      text: Number.isFinite(value.ttl) ? `TTL ${value.ttl} seconds` : "TTL unavailable",
+    }),
+  )
+  return container
 }
 
 function prefersReducedMotion() {
@@ -550,6 +696,11 @@ function renderMatrixFilters() {
 function renderPolicyCards() {
   state.emailDestination = deriveEmailDestination(state.inventory)
   state.emailDnsPolicy = deriveEmailDnsPolicy(state.inventory)
+  state.emailPolicyExceptionStatuses = evaluateFleetEmailPolicyExceptions(
+    state.inventory,
+    state.emailDnsPolicy,
+    configuredEmailPolicyExceptions(),
+  )
   state.wafPolicies = deriveFleetWafPolicies(state.inventory)
   const zoneCount = state.inventory.zones.length
 
@@ -566,24 +717,6 @@ function renderPolicyCards() {
         ).length > 0,
       )
     : []
-  const acknowledgedEmailZones = emailPolicyReady
-    ? state.inventory.zones.filter((zone) => {
-        const rawIssues = emailIssues(
-          zone,
-          state.emailDestination.email,
-          state.emailDnsPolicy,
-        )
-        const actionableIssues = emailIssues(
-          zone,
-          state.emailDestination.email,
-          state.emailDnsPolicy,
-          {
-            exceptions: emailPolicyExceptionsForZone(zone.meta.name),
-          },
-        )
-        return rawIssues.length > actionableIssues.length
-      })
-    : []
   const wafPolicyReady = [...state.wafPolicies.values()].every((policy) => policy.available)
   const wafDrift = wafPolicyReady
     ? state.inventory.zones.filter((zone) => wafIssues(zone, state.wafPolicies).length > 0)
@@ -597,9 +730,30 @@ function renderPolicyCards() {
       state.emailDnsPolicy.available ? "" : state.emailDnsPolicy.reason,
     ].filter(Boolean).join("; ")
   }
-  elements.emailPolicyDrift.textContent = acknowledgedEmailZones.length === 0
-    ? `${emailDrift.length} drifted`
-    : `${emailDrift.length} drifted | ${acknowledgedEmailZones.length} acknowledged`
+  elements.emailPolicyDrift.textContent = `${emailDrift.length} drifted`
+  const exceptionCount = state.emailPolicyExceptionStatuses.length
+  const activeExceptionCount = state.emailPolicyExceptionStatuses.filter(
+    (exception) => exception.status === POLICY_EXCEPTION_STATUS.ACTIVE,
+  ).length
+  const exceptionReviewCount = state.emailPolicyExceptionStatuses.filter(
+    (exception) => exception.status === POLICY_EXCEPTION_STATUS.UNAVAILABLE
+      || exception.status === POLICY_EXCEPTION_STATUS.VIOLATED,
+  ).length
+  elements.emailPolicyExceptions.hidden = exceptionCount === 0
+  elements.emailPolicyExceptions.textContent = `${exceptionCount} policy exception${exceptionCount === 1 ? "" : "s"}`
+  elements.emailPolicyExceptions.classList.toggle(
+    "needs-review",
+    exceptionReviewCount > 0,
+  )
+  elements.emailPolicyExceptions.setAttribute(
+    "aria-label",
+    `Inspect ${exceptionCount} email policy exception${exceptionCount === 1 ? "" : "s"}. ${activeExceptionCount} active and ${exceptionReviewCount} requiring review.`,
+  )
+  elements.emailPolicyExceptions.title = exceptionReviewCount > 0
+    ? `${exceptionReviewCount} configured exception${exceptionReviewCount === 1 ? "" : "s"} requires review`
+    : activeExceptionCount > 0
+      ? `${activeExceptionCount} configured exception${activeExceptionCount === 1 ? "" : "s"} currently preserves an intentional difference`
+      : "The configured email policy exceptions are dormant"
 
   if (wafPolicyReady) {
     const counts = [...state.wafPolicies.values()].map((policy) => policy.count)
@@ -615,6 +769,142 @@ function renderPolicyCards() {
   elements.selectDrifted.dataset.zoneIds = JSON.stringify(
     [...new Set([...emailDrift, ...wafDrift].map((zone) => zone.meta.id))],
   )
+}
+
+function policyExceptionEffect(exception) {
+  if (exception.status === POLICY_EXCEPTION_STATUS.ACTIVE) {
+    return "This exact variant is excluded from actionable drift and preserved during Email Routing alignment"
+  }
+  if (exception.status === POLICY_EXCEPTION_STATUS.ALIGNED) {
+    return "The zone follows the fleet baseline, so the configured exception has no effect"
+  }
+  if (exception.status === POLICY_EXCEPTION_STATUS.VIOLATED) {
+    return "The current value is not allowed by this exception and remains actionable drift"
+  }
+  return "The exception cannot be applied until its zone, inventory, and fleet baseline are available"
+}
+
+function appendPolicyExceptionField(fields, label, value) {
+  const detail = createElement("dd")
+  detail.append(value instanceof Node ? value : document.createTextNode(String(value)))
+  fields.append(
+    createElement("dt", { text: label }),
+    detail,
+  )
+}
+
+function showPolicyExceptionInMatrix(exception) {
+  elements.policyExceptionDialog.close()
+  requestAnimationFrame(() => {
+    elements.search.value = exception.component === EMAIL_POLICY_COMPONENT.SPF
+      ? `${exception.zoneName} v=spf1 @`
+      : `${exception.zoneName} ${exception.component}`
+    elements.category.value = "DNS records"
+    elements.scope.value = MATRIX_SCOPE.ALL
+    elements.dnsType.value = "TXT"
+    elements.differenceToggle.setAttribute("aria-pressed", "false")
+    elements.differenceToggle.textContent = "All rows"
+    elements.targetHoles.setAttribute("aria-pressed", "false")
+    elements.targetHoles.textContent = "Target holes"
+    syncDnsTypeAvailability()
+    filterRows()
+
+    const rows = [...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)")]
+    const targetFacet = exception.component === EMAIL_POLICY_COMPONENT.SPF
+      ? "TXT @"
+      : ""
+    const row = rows.find((candidate) => candidate.dataset.facetKey === targetFacet)
+      || rows[0]
+    if (!row) {
+      elements.search.focus()
+      return
+    }
+    const cell = exception.zoneId
+      ? row.querySelector(`[data-zone-id="${CSS.escape(exception.zoneId)}"]`)
+      : null
+    const action = cell?.querySelector(MATRIX_CONTROL_SELECTOR)
+    if (action && !action.disabled) {
+      focusMatrixAction(action)
+    } else {
+      row.scrollIntoView({
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+        block: "center",
+      })
+      elements.search.focus({ preventScroll: true })
+    }
+  })
+}
+
+function openPolicyExceptionDialog() {
+  const statuses = state.emailPolicyExceptionStatuses
+  if (statuses.length === 0) return
+  const activeCount = statuses.filter(
+    (exception) => exception.status === POLICY_EXCEPTION_STATUS.ACTIVE,
+  ).length
+  const reviewCount = statuses.filter(
+    (exception) => exception.status === POLICY_EXCEPTION_STATUS.UNAVAILABLE
+      || exception.status === POLICY_EXCEPTION_STATUS.VIOLATED,
+  ).length
+  const dormantCount = statuses.filter(
+    (exception) => exception.status === POLICY_EXCEPTION_STATUS.ALIGNED,
+  ).length
+  const statusParts = [
+    activeCount > 0 ? `${activeCount} active` : "",
+    dormantCount > 0 ? `${dormantCount} dormant` : "",
+    reviewCount > 0 ? `${reviewCount} requiring review` : "",
+  ].filter(Boolean)
+  elements.policyExceptionSummary.textContent = `${statuses.length} configured exception${statuses.length === 1 ? "" : "s"}: ${statusParts.join(", ")}.`
+
+  const fragment = document.createDocumentFragment()
+  for (const exception of statuses) {
+    const needsReview = exception.status === POLICY_EXCEPTION_STATUS.UNAVAILABLE
+      || exception.status === POLICY_EXCEPTION_STATUS.VIOLATED
+    const item = createElement("article", {
+      className: `policy-exception${needsReview ? " needs-review" : ""}`,
+    })
+    const header = createElement("div", { className: "policy-exception-header" })
+    header.append(
+      createElement("h3", { text: exception.zoneName }),
+      createElement("span", {
+        className: `exception-status ${exception.status}`,
+        text: POLICY_EXCEPTION_STATUS_LABELS[exception.status] || exception.status,
+      }),
+    )
+    const fields = createElement("dl", { className: "policy-exception-fields" })
+    appendPolicyExceptionField(
+      fields,
+      "Component",
+      policyExceptionComponentLabel(exception.component),
+    )
+    appendPolicyExceptionField(fields, "Reason", exception.reason)
+    appendPolicyExceptionField(fields, "Allowed variant", dnsPolicyValueElement(exception.expected))
+    appendPolicyExceptionField(fields, "Current value", dnsPolicyValueElement(exception.current))
+    appendPolicyExceptionField(fields, "Fleet baseline", dnsPolicyValueElement(exception.baseline))
+    appendPolicyExceptionField(fields, "Evaluation", exception.detail)
+    appendPolicyExceptionField(fields, "Effect", policyExceptionEffect(exception))
+    item.append(header, fields)
+    if (exception.zoneId) {
+      const actions = createElement("div", { className: "policy-exception-actions" })
+      const show = createElement("button", {
+        className: "button button-quiet",
+        text: "Show in matrix",
+      })
+      show.type = "button"
+      show.addEventListener("click", () => showPolicyExceptionInMatrix(exception))
+      actions.append(show)
+      item.append(actions)
+    }
+    fragment.append(item)
+  }
+  elements.policyExceptionList.replaceChildren(fragment)
+  elements.policyExceptionRaw.textContent = JSON.stringify(
+    configuredEmailPolicyExceptions(),
+    null,
+    2,
+  )
+  showDialog(elements.policyExceptionDialog, {
+    initialFocus: elements.policyExceptionDialog.querySelector("[data-dialog-close]"),
+  })
 }
 
 function zoneHeading(zone) {
@@ -698,7 +988,27 @@ function matrixCell(row, zone) {
 
   td.classList.add(`variant-${row.variantIndexes.get(cell.canonical) || 0}`)
   const directlyEditable = Boolean(cell.action && !readOnly)
-  if (cell.full !== cell.display && !directlyEditable) {
+  if (cell.presentation?.kind === "rule" && !directlyEditable) {
+    const details = document.createElement("details")
+    const raw = document.createElement("details")
+    raw.append(
+      createElement("summary", { text: "Raw rule JSON" }),
+      createElement("pre", { text: cell.full }),
+    )
+    details.append(
+      createElement("summary", { text: cell.display }),
+      createRuleSummary(
+        cell.presentation.rule,
+        cell.presentation.phase,
+        {
+          compact: true,
+          omitFields: ["description", "enabled"],
+        },
+      ),
+      raw,
+    )
+    td.append(details)
+  } else if (cell.full !== cell.display && !directlyEditable) {
     const details = document.createElement("details")
     details.append(
       createElement("summary", { text: cell.display }),
@@ -792,6 +1102,7 @@ function renderMatrix() {
     const tr = document.createElement("tr")
     tr.dataset.category = row.category
     tr.dataset.different = String(row.different)
+    tr.dataset.facetKey = row.key
     tr.dataset.missingZoneIds = row.missingZoneIds.join(" ")
     tr.dataset.presentCount = String(row.presentCount)
     tr.dataset.recordType = row.recordType
@@ -1109,6 +1420,24 @@ function operationPreview(plans) {
   }))
 }
 
+function operationRuleDefinitions(operation) {
+  if (Array.isArray(operation.body?.rules)) {
+    return operation.body.rules.map((rule) => ({
+      phase: operation.body.phase || "",
+      rule,
+    }))
+  }
+  if (operation.body?.action && operation.body.expression !== undefined) {
+    return [
+      {
+        phase: "",
+        rule: operation.body,
+      },
+    ]
+  }
+  return []
+}
+
 function createLivePlanSet(plans) {
   return Object.freeze({
     [LIVE_PLAN_SET]: true,
@@ -1142,6 +1471,21 @@ function confirmPlans(title, planSet) {
       createElement("span", { text: operation.path }),
       createElement("small", { text: `${operation.zone}: ${operation.label}` }),
     )
+    const rules = operationRuleDefinitions(operation)
+    if (rules.length > 0) {
+      const summary = createElement("div", { className: "operation-rule-summary" })
+      for (const [index, definition] of rules.entries()) {
+        if (rules.length > 1) {
+          summary.append(
+            createElement("h4", {
+              text: `Rule ${index + 1}: ${definition.rule.description || definition.rule.ref || definition.rule.action}`,
+            }),
+          )
+        }
+        summary.append(createRuleSummary(definition.rule, definition.phase))
+      }
+      item.append(summary)
+    }
     elements.confirmOperations.append(item)
   }
   elements.confirmPreview.textContent = JSON.stringify(operations, null, 2)
@@ -1576,6 +1920,21 @@ function selectedHoleCandidate() {
 function renderHoleCandidate() {
   const candidate = selectedHoleCandidate()
   elements.holePreview.textContent = candidate?.full || "No source value selected"
+  const isRule = candidate?.presentation?.kind === "rule"
+  elements.holeStructuredPreview.hidden = !isRule
+  elements.holeStructuredPreview.replaceChildren()
+  elements.holeRawPreview.open = !isRule
+  elements.holePreviewSummary.textContent = isRule
+    ? "Raw source rule JSON"
+    : "Cached value from the selected source"
+  if (isRule) {
+    elements.holeStructuredPreview.append(
+      createRuleSummary(
+        candidate.presentation.rule,
+        candidate.presentation.phase,
+      ),
+    )
+  }
 }
 
 function openHoleResolution(cell) {
@@ -1645,6 +2004,37 @@ function editorRecordLabel(record) {
   return `${record.type} ${record.name}${shortened ? ` | ${shortened}` : ""}`
 }
 
+function renderRuleEditorDefinition(definition, phase) {
+  elements.ruleEditorName.value = typeof definition.description === "string"
+    ? definition.description
+    : ""
+  elements.ruleEditorEnabled.checked = definition.enabled !== false
+  elements.ruleEditorExpression.value = typeof definition.expression === "string"
+    ? definition.expression
+    : ""
+  elements.ruleEditorSummary.replaceChildren(
+    createRuleSummary(definition, phase, {
+      omitFields: ["description", "enabled", "expression"],
+    }),
+  )
+}
+
+function setEditorPresentation(entry) {
+  const isRule = entry?.presentation?.kind === "rule"
+  elements.ruleEditor.hidden = !isRule
+  elements.editorJson.classList.toggle("plain", !isRule)
+  elements.editorJson.open = !isRule
+  elements.editorJsonHelp.hidden = !isRule
+  elements.editorJsonSummary.textContent = isRule
+    ? "Advanced JSON definition"
+    : "Desired JSON definition"
+  if (isRule) {
+    renderRuleEditorDefinition(entry.value, entry.presentation.phase)
+  } else {
+    elements.ruleEditorSummary.replaceChildren()
+  }
+}
+
 function renderSelectedEditorEntry() {
   const entry = state.editor?.entries.find(
     (candidate) => candidate.id === elements.editorChoice.value,
@@ -1652,6 +2042,64 @@ function renderSelectedEditorEntry() {
   if (!entry) return
   elements.editorChoice.value = entry.id
   elements.editorValue.value = JSON.stringify(entry.value, null, 2)
+  setEditorPresentation(entry)
+  clearFieldError(elements.editorValue, elements.editorError)
+}
+
+function syncRuleEditorFromJson() {
+  const entry = state.editor?.entries.find(
+    (candidate) => candidate.id === elements.editorChoice.value,
+  ) || state.editor?.entries[0]
+  if (entry?.presentation?.kind !== "rule") return
+  try {
+    const definition = JSON.parse(elements.editorValue.value)
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) return
+    renderRuleEditorDefinition(definition, entry.presentation.phase)
+  } catch {
+    return
+  }
+}
+
+function syncJsonFromRuleEditor() {
+  const entry = state.editor?.entries.find(
+    (candidate) => candidate.id === elements.editorChoice.value,
+  ) || state.editor?.entries[0]
+  if (entry?.presentation?.kind !== "rule") return
+  let definition
+  try {
+    definition = JSON.parse(elements.editorValue.value)
+  } catch (error) {
+    elements.editorJson.open = true
+    showFieldError(
+      elements.editorValue,
+      elements.editorError,
+      `Fix the advanced JSON before editing common fields: ${error.message}`,
+    )
+    return
+  }
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+    elements.editorJson.open = true
+    showFieldError(
+      elements.editorValue,
+      elements.editorError,
+      "The advanced rule definition must be a JSON object",
+    )
+    return
+  }
+
+  if (elements.ruleEditorName.value.length > 0) {
+    definition.description = elements.ruleEditorName.value
+  } else {
+    delete definition.description
+  }
+  definition.enabled = elements.ruleEditorEnabled.checked
+  definition.expression = elements.ruleEditorExpression.value
+  elements.editorValue.value = JSON.stringify(definition, null, 2)
+  elements.ruleEditorSummary.replaceChildren(
+    createRuleSummary(definition, entry.presentation.phase, {
+      omitFields: ["description", "enabled", "expression"],
+    }),
+  )
   clearFieldError(elements.editorValue, elements.editorError)
 }
 
@@ -1713,6 +2161,10 @@ function openCellEditor(cell) {
       {
         id: cached.rule.id,
         label: rowLabel || cached.rule.description || cached.rule.ref || cached.rule.id,
+        presentation: {
+          kind: "rule",
+          phase: action.phase,
+        },
         value: editableRulePayload(cached.rule),
       },
     ]
@@ -1741,12 +2193,16 @@ function openCellEditor(cell) {
   }))
   elements.editorChoiceRow.hidden = entries.length <= 1
   renderSelectedEditorEntry()
+  const initialFocus = entries[0]?.presentation?.kind === "rule"
+    ? elements.ruleEditorName
+    : elements.editorValue
   showDialog(elements.editorDialog, {
-    initialFocus: elements.editorValue,
+    initialFocus,
   })
 }
 
 function editorError(error) {
+  if (!elements.ruleEditor.hidden) elements.editorJson.open = true
   showFieldError(elements.editorValue, elements.editorError, error)
 }
 
@@ -2103,7 +2559,11 @@ elements.toast.addEventListener("focusout", resumeToastTimer)
 elements.editorChoice.addEventListener("change", renderSelectedEditorEntry)
 elements.editorValue.addEventListener("input", () => {
   clearFieldError(elements.editorValue, elements.editorError)
+  syncRuleEditorFromJson()
 })
+elements.ruleEditorName.addEventListener("input", syncJsonFromRuleEditor)
+elements.ruleEditorEnabled.addEventListener("change", syncJsonFromRuleEditor)
+elements.ruleEditorExpression.addEventListener("input", syncJsonFromRuleEditor)
 elements.editorDialog.addEventListener("close", () => {
   state.editor = null
 })
@@ -2120,6 +2580,7 @@ elements.renameValue.addEventListener("input", () => {
   clearFieldError(elements.renameValue, elements.renameError)
 })
 elements.renameForm.addEventListener("submit", reviewRuleRename)
+elements.emailPolicyExceptions.addEventListener("click", openPolicyExceptionDialog)
 document.addEventListener("click", followSkipLink)
 document.addEventListener("keydown", handleGlobalShortcut)
 

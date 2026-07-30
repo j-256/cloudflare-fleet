@@ -495,6 +495,13 @@ dialog h2 {
   min-width: max-content;
 }
 
+.policy-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
 .drift-badge {
   padding: 2px 6px;
   border: 1px solid rgba(255, 180, 84, 0.4);
@@ -503,6 +510,28 @@ dialog h2 {
   background: rgba(255, 180, 84, 0.08);
   font-size: 10px;
   font-weight: 700;
+}
+
+.policy-exception-badge {
+  padding: 2px 6px;
+  border: 1px solid rgba(90, 169, 255, 0.46);
+  border-radius: 99px;
+  color: var(--blue);
+  background: rgba(90, 169, 255, 0.09);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.policy-exception-badge:hover {
+  border-color: var(--blue);
+  background: rgba(90, 169, 255, 0.16);
+}
+
+.policy-exception-badge.needs-review {
+  border-color: rgba(255, 107, 120, 0.56);
+  color: var(--danger);
+  background: rgba(255, 107, 120, 0.10);
 }
 
 .matrix-tools {
@@ -962,6 +991,120 @@ pre {
   font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.rule-summary {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rule-facts {
+  display: grid;
+  grid-template-columns: minmax(104px, 0.34fr) minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0;
+}
+
+.rule-facts dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.rule-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.rule-facts code,
+.rule-section code {
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.rule-token {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+.rule-section {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.rule-section h4 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.structured-object {
+  display: grid;
+  grid-template-columns: minmax(118px, 0.38fr) minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 0;
+}
+
+.structured-object dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.structured-object dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.structured-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.matrix-cell .rule-summary {
+  margin: 7px 0 3px;
+}
+
+.matrix-cell .rule-facts,
+.matrix-cell .structured-object {
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 3px 7px;
+}
+
+.matrix-cell .rule-summary.compact .rule-field-expression code {
+  display: block;
+  max-height: 115px;
+  overflow: auto;
+}
+
+.matrix-cell .rule-summary.compact .structured-object {
+  display: block;
+}
+
+.matrix-cell .rule-summary.compact .structured-object dt {
+  margin-top: 7px;
+}
+
+.matrix-cell .rule-summary.compact .structured-object dt:first-child {
+  margin-top: 0;
+}
+
+.matrix-cell .rule-summary.compact .structured-object dd {
+  margin-top: 2px;
+  padding-left: 7px;
+  border-left: 1px solid var(--line);
+}
+
+.matrix-cell .rule-summary.compact .rule-section {
+  max-height: 150px;
+  overflow: auto;
+}
+
 .variant-0 {
   background: rgba(119, 208, 143, 0.10);
 }
@@ -1149,6 +1292,169 @@ dialog details > summary {
   cursor: pointer;
 }
 
+.editor-json.plain > summary {
+  display: none;
+}
+
+.editor-json > p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rule-editor {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0d161f;
+}
+
+.rule-editor h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.rule-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.rule-editor label {
+  margin-top: 12px !important;
+}
+
+.rule-enabled {
+  display: flex !important;
+  gap: 8px;
+  min-height: 42px;
+  align-items: center;
+  margin-bottom: 0 !important;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink) !important;
+  background: #0b131c;
+  cursor: pointer;
+}
+
+.rule-enabled input {
+  accent-color: var(--accent);
+}
+
+dialog .rule-expression {
+  min-height: 105px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.rule-editor #rule-editor-summary {
+  margin-top: 14px;
+}
+
+.rule-preview {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #0d161f;
+}
+
+.policy-exception-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.policy-exception {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: 9px;
+  background: #0d161f;
+}
+
+.policy-exception.needs-review {
+  border-left-color: var(--danger);
+}
+
+.policy-exception-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.policy-exception-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.exception-status {
+  padding: 2px 6px;
+  border: 1px solid rgba(90, 169, 255, 0.46);
+  border-radius: 99px;
+  color: var(--blue);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.exception-status.aligned {
+  border-color: rgba(119, 208, 143, 0.48);
+  color: var(--green);
+}
+
+.exception-status.unavailable,
+.exception-status.violated {
+  border-color: rgba(255, 107, 120, 0.52);
+  color: var(--danger);
+}
+
+.policy-exception-fields {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 7px 10px;
+  margin: 0;
+}
+
+.policy-exception-fields dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.policy-exception-fields dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.dns-policy-value {
+  display: grid;
+  gap: 3px;
+}
+
+.dns-policy-value code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dns-policy-value small {
+  color: var(--muted);
+}
+
+.policy-exception-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .field-error {
   color: var(--danger);
   font-size: 12px;
@@ -1193,6 +1499,22 @@ dialog details > summary {
 .operation small {
   grid-column: 2;
   color: var(--muted);
+}
+
+.operation .operation-rule-summary {
+  grid-column: 1 / -1;
+  margin-top: 7px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.operation-rule-summary > h4 {
+  margin: 10px 0 7px;
+  font-size: 11px;
+}
+
+.operation-rule-summary > h4:first-child {
+  margin-top: 0;
 }
 
 .target-tools {
@@ -1477,6 +1799,27 @@ dialog details > summary {
 
   .target-options {
     grid-template-columns: 1fr;
+  }
+
+  .rule-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rule-enabled {
+    width: fit-content;
+  }
+
+  dialog .rule-facts,
+  dialog .structured-object,
+  .policy-exception-fields {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  dialog .rule-facts dd,
+  dialog .structured-object dd,
+  .policy-exception-fields dd {
+    margin-bottom: 7px;
   }
 
   .matrix-shortcuts {

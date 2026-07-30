@@ -89,6 +89,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     capability: options.capability || null,
     display: options.display ?? shortDisplay(normalized),
     full: options.full ?? displayJson(normalized),
+    presentation: options.presentation || null,
     resolutionSource: options.resolutionSource || null,
     secondaryAction: options.secondaryAction || null,
   })
@@ -425,6 +426,11 @@ function addRulesetRows(rows, inventory) {
               copy_capability: capability.copyable ? "copy to selected zones" : capability.reason,
               rule: normalizedRule,
             }),
+            presentation: {
+              kind: "rule",
+              phase,
+              rule: normalizedRule,
+            },
             secondaryAction: capability.copyable
               ? {
                   phase,
@@ -541,6 +547,7 @@ function resolutionCandidates(row, inventory) {
         count: 0,
         display: cell.display,
         full: cell.full,
+        presentation: cell.presentation,
         sources: [],
       })
     }
@@ -562,6 +569,7 @@ function resolutionCandidates(row, inventory) {
       count: variant.count,
       display: variant.display,
       full: variant.full,
+      presentation: variant.presentation,
       sourceAction: variant.sources[0].action,
       sourceZoneId: variant.sources[0].zoneId,
       sourceZoneName: variant.sources[0].zoneName,
