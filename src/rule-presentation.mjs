@@ -1,3 +1,5 @@
+import { humanizeValueField } from "./value-editor.mjs"
+
 const RULE_ACTION_LABELS = Object.freeze({
   block: "Block",
   challenge: "Challenge",
@@ -32,27 +34,6 @@ const RULE_PHASE_LABELS = Object.freeze({
   http_response_headers_transform: "Response header transforms",
 })
 
-const RULE_FIELD_LABELS = Object.freeze({
-  action_parameters: "Action parameters",
-  exposed_credential_check: "Exposed credential check",
-  from_value: "Redirect settings",
-  host_header: "Host header",
-  hotlink_protection: "Hotlink protection",
-  id: "ID",
-  ip: "IP",
-  logging: "Logging",
-  preserve_query_string: "Preserve query string",
-  ratelimit: "Rate limit",
-  request_fields: "Request fields",
-  response: "Custom response",
-  response_fields: "Response fields",
-  security_level: "Security level",
-  status_code: "Status code",
-  target_url: "Target URL",
-  uri: "URI",
-  url: "URL",
-})
-
 const PRIMARY_RULE_FIELDS = new Set([
   "action",
   "description",
@@ -68,24 +49,8 @@ const RULE_SECTION_FIELDS = Object.freeze([
   "exposed_credential_check",
 ])
 
-function sentenceCase(words) {
-  if (words.length === 0) return ""
-  return `${words[0].charAt(0).toUpperCase()}${words[0].slice(1)}${words.length > 1 ? ` ${words.slice(1).join(" ")}` : ""}`
-}
-
 export function humanizeRuleField(field) {
-  const normalized = String(field || "").trim()
-  if (!normalized) return "Value"
-  if (RULE_FIELD_LABELS[normalized]) return RULE_FIELD_LABELS[normalized]
-  const words = normalized
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((word) => {
-      const lower = word.toLowerCase()
-      return RULE_FIELD_LABELS[lower] || lower
-    })
-  return sentenceCase(words)
+  return humanizeValueField(field)
 }
 
 export function ruleActionLabel(action) {

@@ -58,6 +58,11 @@ function rowId(category, key) {
   return `${category}\u0000${key}`
 }
 
+function inspectionValue(value) {
+  const serialized = JSON.stringify(value)
+  return serialized === undefined ? null : JSON.parse(serialized)
+}
+
 function addCell(rows, category, key, label, zone, value, options = {}) {
   const id = rowId(category, key)
   if (!rows.has(id)) {
@@ -83,12 +88,16 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
 
   if (row.cells.has(zone.meta.name)) row.duplicateZoneNames.add(zone.meta.name)
   const normalized = options.normalized ?? normalizeValue(value, zone.meta.name, options)
+  const inspected = Object.prototype.hasOwnProperty.call(options, "inspectionValue")
+    ? options.inspectionValue
+    : normalized
   row.cells.set(zone.meta.name, {
     action: options.action || null,
     canonical: stableString(normalized),
     capability: options.capability || null,
     display: options.display ?? shortDisplay(normalized),
     full: options.full ?? displayJson(normalized),
+    inspectionValue: inspectionValue(inspected),
     presentation: options.presentation || null,
     resolutionSource: options.resolutionSource || null,
     secondaryAction: options.secondaryAction || null,
@@ -159,6 +168,7 @@ function addSettingRows(rows, inventory) {
             source: "Zone Settings API",
             value: normalizeValue(setting.value, zone.meta.name),
           }),
+          inspectionValue: normalizeValue(setting.value, zone.meta.name),
         },
       )
     }
@@ -431,6 +441,7 @@ function addRulesetRows(rows, inventory) {
               phase,
               rule: normalizedRule,
             },
+            inspectionValue: normalizedRule,
             secondaryAction: capability.copyable
               ? {
                   phase,
@@ -547,6 +558,7 @@ function resolutionCandidates(row, inventory) {
         count: 0,
         display: cell.display,
         full: cell.full,
+        inspectionValue: cell.inspectionValue,
         presentation: cell.presentation,
         sources: [],
       })
@@ -569,6 +581,7 @@ function resolutionCandidates(row, inventory) {
       count: variant.count,
       display: variant.display,
       full: variant.full,
+      inspectionValue: variant.inspectionValue,
       presentation: variant.presentation,
       sourceAction: variant.sources[0].action,
       sourceZoneId: variant.sources[0].zoneId,

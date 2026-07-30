@@ -61,8 +61,8 @@ import {
   wafIssues,
 } from "./policies.mjs"
 import {
-  humanizeRuleField,
   presentRule,
+  rulePhaseLabel,
 } from "./rule-presentation.mjs"
 import {
   actionResourceId,
@@ -72,6 +72,19 @@ import {
   rulesetPhaseResourceId,
   rulesetResourceId,
 } from "./read-composer.mjs"
+import {
+  appendArrayItemAtPath,
+  defaultValueForKind,
+  humanizeValueField,
+  JSON_VALUE_KIND,
+  jsonValueKind,
+  orderedValueEntries,
+  parseScalarControl,
+  removeArrayItemAtPath,
+  replaceValueAtPath,
+  valueAtPath,
+  valueControlDescriptor,
+} from "./value-editor.mjs"
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
@@ -129,6 +142,7 @@ const state = {
   matrix: null,
   matrixRenderKey: null,
   holeResolution: null,
+  inlineEditor: null,
   ruleRename: null,
   selectedZoneIds: new Set(),
   startupCacheLoadedAt: null,
@@ -168,8 +182,6 @@ const elements = {
   editorForm: document.querySelector("#editor-form"),
   editorKind: document.querySelector("#editor-kind"),
   editorJson: document.querySelector("#editor-json"),
-  editorJsonHelp: document.querySelector("#editor-json-help"),
-  editorJsonSummary: document.querySelector("#editor-json-summary"),
   editorReview: document.querySelector("#editor-review"),
   editorTarget: document.querySelector("#editor-target"),
   editorTitle: document.querySelector("#editor-title"),
@@ -202,11 +214,6 @@ const elements = {
   renameReview: document.querySelector("#rename-review"),
   renameTarget: document.querySelector("#rename-target"),
   renameValue: document.querySelector("#rename-value"),
-  ruleEditor: document.querySelector("#rule-editor"),
-  ruleEditorEnabled: document.querySelector("#rule-editor-enabled"),
-  ruleEditorExpression: document.querySelector("#rule-editor-expression"),
-  ruleEditorName: document.querySelector("#rule-editor-name"),
-  ruleEditorSummary: document.querySelector("#rule-editor-summary"),
   search: document.querySelector("#search"),
   selectDrifted: document.querySelector("#select-drifted"),
   selectionCount: document.querySelector("#selection-count"),
@@ -226,6 +233,9 @@ const elements = {
   toast: document.querySelector("#toast"),
   toastDismiss: document.querySelector("#toast-dismiss"),
   toastMessage: document.querySelector("#toast-message"),
+  valueEditor: document.querySelector("#value-editor"),
+  valueEditorContext: document.querySelector("#value-editor-context"),
+  valueEditorFields: document.querySelector("#value-editor-fields"),
   visibleCount: document.querySelector("#visible-count"),
   wafPolicyDetail: document.querySelector("#waf-policy-detail"),
   wafPolicyDrift: document.querySelector("#waf-policy-drift"),
@@ -401,7 +411,7 @@ function structuredValueElement(value) {
     const fields = createElement("dl", { className: "structured-object" })
     for (const [key, entry] of entries) {
       fields.append(
-        createElement("dt", { text: humanizeRuleField(key) }),
+        createElement("dt", { text: humanizeValueField(key) }),
         createElement("dd"),
       )
       fields.lastElementChild.append(structuredValueElement(entry))
@@ -415,6 +425,30 @@ function structuredValueElement(value) {
     return createElement("span", { text: "None" })
   }
   return createElement("code", { text: String(value) })
+}
+
+function formattedJson(value) {
+  const serialized = JSON.stringify(value, null, 2)
+  return serialized === undefined ? String(value) : serialized
+}
+
+function createRawValueDetails(value, label = "Raw value JSON") {
+  const raw = document.createElement("details")
+  raw.className = "raw-value"
+  raw.append(
+    createElement("summary", { text: label }),
+    createElement("pre", { text: formattedJson(value) }),
+  )
+  return raw
+}
+
+function createGenericValueInspection(value) {
+  const inspection = createElement("div", { className: "cell-value-inspection" })
+  inspection.append(
+    structuredValueElement(value),
+    createRawValueDetails(value),
+  )
+  return inspection
 }
 
 function createRuleSummary(rule, phase = "", options = {}) {
@@ -472,7 +506,7 @@ function createRuleSummary(rule, phase = "", options = {}) {
 
 function policyExceptionComponentLabel(component) {
   return POLICY_EXCEPTION_COMPONENT_LABELS[component]
-    || humanizeRuleField(component)
+    || humanizeValueField(component)
 }
 
 function dnsPolicyValueElement(value) {
@@ -579,6 +613,11 @@ function isTextEntry(element) {
 
 function handleGlobalShortcut(event) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
+  if (event.key === "Escape" && state.inlineEditor?.form.contains(event.target)) {
+    event.preventDefault()
+    closeInlineEditor()
+    return
+  }
   if (event.key === "/" && !isTextEntry(event.target)
     && !document.querySelector("dialog[open]")) {
     event.preventDefault()
@@ -988,13 +1027,11 @@ function matrixCell(row, zone) {
 
   td.classList.add(`variant-${row.variantIndexes.get(cell.canonical) || 0}`)
   const directlyEditable = Boolean(cell.action && !readOnly)
-  if (cell.presentation?.kind === "rule" && !directlyEditable) {
+  const structuredValue = cell.inspectionValue !== null
+    && typeof cell.inspectionValue === "object"
+  if (cell.presentation?.kind === "rule") {
     const details = document.createElement("details")
-    const raw = document.createElement("details")
-    raw.append(
-      createElement("summary", { text: "Raw rule JSON" }),
-      createElement("pre", { text: cell.full }),
-    )
+    details.className = "cell-value-details"
     details.append(
       createElement("summary", { text: cell.display }),
       createRuleSummary(
@@ -1005,14 +1042,15 @@ function matrixCell(row, zone) {
           omitFields: ["description", "enabled"],
         },
       ),
-      raw,
+      createRawValueDetails(cell.inspectionValue, "Raw rule JSON"),
     )
     td.append(details)
-  } else if (cell.full !== cell.display && !directlyEditable) {
+  } else if (structuredValue) {
     const details = document.createElement("details")
+    details.className = "cell-value-details"
     details.append(
       createElement("summary", { text: cell.display }),
-      createElement("pre", { text: cell.full }),
+      createGenericValueInspection(cell.inspectionValue),
     )
     td.append(details)
   } else {
@@ -1025,8 +1063,7 @@ function matrixCell(row, zone) {
   if (directlyEditable) {
     const label = editActionLabel(cell.action, row, zone)
     td.classList.add("actionable-cell", "editable-cell")
-    td.title = `${label}; the desired state may expand into multiple API operations`
-    td.dataset.editTitle = td.title
+    td.dataset.editTitle = `${label}; the desired state may expand into multiple API operations`
     editActionByCell.set(td, cell.action)
   }
 
@@ -1302,6 +1339,9 @@ function updateActionButtons() {
   for (const button of document.querySelectorAll(".fill-hole")) {
     button.disabled = writeLocked
     if (writeLocked) button.title = writeLockReason
+  }
+  if (state.inlineEditor) {
+    setInlineEditorDisabled(state.inlineEditor, writeLocked)
   }
   for (const button of document.querySelectorAll(".bulk-fill")) {
     const row = bulkFillRowByButton.get(button)
@@ -1919,20 +1959,26 @@ function selectedHoleCandidate() {
 
 function renderHoleCandidate() {
   const candidate = selectedHoleCandidate()
-  elements.holePreview.textContent = candidate?.full || "No source value selected"
+  elements.holePreview.textContent = candidate
+    ? formattedJson(candidate.inspectionValue)
+    : "No source value selected"
   const isRule = candidate?.presentation?.kind === "rule"
-  elements.holeStructuredPreview.hidden = !isRule
+  elements.holeStructuredPreview.hidden = !candidate
   elements.holeStructuredPreview.replaceChildren()
-  elements.holeRawPreview.open = !isRule
+  elements.holeRawPreview.open = false
   elements.holePreviewSummary.textContent = isRule
     ? "Raw source rule JSON"
-    : "Cached value from the selected source"
+    : "Raw source value JSON"
   if (isRule) {
     elements.holeStructuredPreview.append(
       createRuleSummary(
         candidate.presentation.rule,
         candidate.presentation.phase,
       ),
+    )
+  } else if (candidate) {
+    elements.holeStructuredPreview.append(
+      structuredValueElement(candidate.inspectionValue),
     )
   }
 }
@@ -2004,103 +2050,513 @@ function editorRecordLabel(record) {
   return `${record.type} ${record.name}${shortened ? ` | ${shortened}` : ""}`
 }
 
-function renderRuleEditorDefinition(definition, phase) {
-  elements.ruleEditorName.value = typeof definition.description === "string"
-    ? definition.description
-    : ""
-  elements.ruleEditorEnabled.checked = definition.enabled !== false
-  elements.ruleEditorExpression.value = typeof definition.expression === "string"
-    ? definition.expression
-    : ""
-  elements.ruleEditorSummary.replaceChildren(
-    createRuleSummary(definition, phase, {
-      omitFields: ["description", "enabled", "expression"],
+let valueEditorControlSequence = 0
+
+function cloneJsonValue(value) {
+  return JSON.parse(JSON.stringify(value))
+}
+
+function encodeValuePath(path) {
+  return JSON.stringify(path)
+}
+
+function decodeValuePath(value) {
+  const path = JSON.parse(value)
+  if (!Array.isArray(path)) throw new TypeError("The editor field path is invalid")
+  return path
+}
+
+function valueEditorControlId() {
+  valueEditorControlSequence += 1
+  return `value-editor-control-${valueEditorControlSequence}`
+}
+
+function appendTypeBadge(container, kind) {
+  container.append(
+    createElement("span", {
+      className: "value-type",
+      text: kind,
     }),
   )
 }
 
-function setEditorPresentation(entry) {
-  const isRule = entry?.presentation?.kind === "rule"
-  elements.ruleEditor.hidden = !isRule
-  elements.editorJson.classList.toggle("plain", !isRule)
-  elements.editorJson.open = !isRule
-  elements.editorJsonHelp.hidden = !isRule
-  elements.editorJsonSummary.textContent = isRule
-    ? "Advanced JSON definition"
-    : "Desired JSON definition"
-  if (isRule) {
-    renderRuleEditorDefinition(entry.value, entry.presentation.phase)
+function createScalarValueField(value, path, label, suggestions = []) {
+  const descriptor = valueControlDescriptor(value, path.at(-1) || "")
+  const field = createElement("div", {
+    className: `value-field${descriptor.multiline ? " multiline" : ""}`,
+  })
+  const controlId = valueEditorControlId()
+  let control
+  let controlAppended = false
+
+  if (descriptor.kind === JSON_VALUE_KIND.BOOLEAN) {
+    const booleanLabel = createElement("label", { className: "value-boolean" })
+    control = document.createElement("input")
+    control.type = "checkbox"
+    control.checked = value
+    booleanLabel.htmlFor = controlId
+    booleanLabel.append(
+      control,
+      createElement("span", { text: label }),
+    )
+    field.append(booleanLabel)
+    controlAppended = true
   } else {
-    elements.ruleEditorSummary.replaceChildren()
+    const heading = createElement("label", { text: label })
+    heading.htmlFor = controlId
+    field.append(heading)
+    if (descriptor.kind === JSON_VALUE_KIND.NUMBER) {
+      control = document.createElement("input")
+      control.type = "number"
+      control.step = "any"
+      control.required = true
+      control.value = String(value)
+    } else if (descriptor.multiline) {
+      control = document.createElement("textarea")
+      control.rows = Math.min(8, Math.max(3, String(value).split("\n").length + 1))
+      control.value = value
+    } else {
+      control = document.createElement("input")
+      control.type = "text"
+      control.autocomplete = "off"
+      control.spellcheck = false
+      control.value = value
+      if (suggestions.length > 0) {
+        const datalist = document.createElement("datalist")
+        datalist.id = `${controlId}-suggestions`
+        datalist.append(...suggestions.map((suggestion) => {
+          const option = document.createElement("option")
+          option.value = suggestion
+          return option
+        }))
+        control.setAttribute("list", datalist.id)
+        field.append(datalist)
+      }
+    }
   }
+
+  control.id = controlId
+  control.className = "value-control"
+  control.dataset.valueKind = descriptor.kind
+  control.dataset.valuePath = encodeValuePath(path)
+  if (!controlAppended) field.append(control)
+  appendTypeBadge(field, descriptor.kind)
+  return field
+}
+
+function createNullValueField(path, label) {
+  const field = createElement("div", { className: "value-field" })
+  const controlId = valueEditorControlId()
+  const heading = createElement("label", { text: label })
+  heading.htmlFor = controlId
+  const select = document.createElement("select")
+  select.id = controlId
+  select.className = "value-control"
+  select.dataset.nullPath = encodeValuePath(path)
+  select.append(...Object.values(JSON_VALUE_KIND).map((kind) => {
+    const option = createElement("option", {
+      text: kind === JSON_VALUE_KIND.NULL
+        ? "Null"
+        : `Change to ${kind}`,
+    })
+    option.value = kind
+    option.selected = kind === JSON_VALUE_KIND.NULL
+    return option
+  }))
+  field.append(heading, select)
+  appendTypeBadge(field, JSON_VALUE_KIND.NULL)
+  return field
+}
+
+function createObjectValueField(value, path, label, options) {
+  const group = createElement("fieldset", { className: "value-group value-object" })
+  const legend = createElement("legend", { text: label })
+  appendTypeBadge(legend, JSON_VALUE_KIND.OBJECT)
+  group.append(legend)
+  const entries = orderedValueEntries(value)
+  if (entries.length === 0) {
+    group.append(
+      createElement("p", {
+        className: "empty-value",
+        text: "No cached fields. Use Advanced JSON to add a field.",
+      }),
+    )
+    return group
+  }
+  const fields = createElement("div", { className: "value-group-fields" })
+  for (const [key, entry] of entries) {
+    fields.append(
+      createValueField(
+        entry,
+        [...path, key],
+        humanizeValueField(key),
+        options,
+      ),
+    )
+  }
+  group.append(fields)
+  return group
+}
+
+function createArrayValueField(value, path, label, options) {
+  const group = createElement("fieldset", { className: "value-group value-array" })
+  const legend = createElement("legend", { text: label })
+  appendTypeBadge(legend, JSON_VALUE_KIND.ARRAY)
+  group.append(legend)
+  const items = createElement("div", { className: "value-array-items" })
+  if (value.length === 0) {
+    items.append(
+      createElement("p", {
+        className: "empty-value",
+        text: "No items",
+      }),
+    )
+  }
+  for (const [index, entry] of value.entries()) {
+    const row = createElement("div", { className: "value-array-item" })
+    row.append(
+      createValueField(
+        entry,
+        [...path, index],
+        `Item ${index + 1}`,
+        options,
+      ),
+    )
+    const remove = createElement("button", {
+      className: "button button-quiet value-array-remove",
+      text: "Remove",
+    })
+    remove.type = "button"
+    remove.dataset.arrayIndex = String(index)
+    remove.dataset.arrayPath = encodeValuePath(path)
+    remove.setAttribute("aria-label", `Remove ${label} item ${index + 1}`)
+    row.append(remove)
+    items.append(row)
+  }
+  const add = createElement("button", {
+    className: "button button-quiet value-array-add",
+    text: "Add item",
+  })
+  add.type = "button"
+  add.dataset.arrayPath = encodeValuePath(path)
+  add.setAttribute("aria-label", `Add ${label} item`)
+  group.append(items, add)
+  return group
+}
+
+function createValueField(value, path, label, options = {}) {
+  const kind = jsonValueKind(value)
+  if (kind === JSON_VALUE_KIND.NULL) return createNullValueField(path, label)
+  if (kind === JSON_VALUE_KIND.OBJECT) {
+    return createObjectValueField(value, path, label, options)
+  }
+  if (kind === JSON_VALUE_KIND.ARRAY) {
+    return createArrayValueField(value, path, label, options)
+  }
+  const suggestions = options.suggestions?.get(encodeValuePath(path)) || []
+  return createScalarValueField(value, path, label, suggestions)
+}
+
+function renderValueEditor() {
+  const editor = state.editor
+  if (!editor) return
+  const draft = editor.draft
+  const kind = jsonValueKind(draft)
+  const fragment = document.createDocumentFragment()
+  if (kind === JSON_VALUE_KIND.OBJECT) {
+    const entries = orderedValueEntries(draft)
+    if (entries.length === 0) {
+      fragment.append(
+        createElement("p", {
+          className: "empty-value",
+          text: "No cached fields. Use Advanced JSON to add a field.",
+        }),
+      )
+    }
+    for (const [key, value] of entries) {
+      fragment.append(
+        createValueField(
+          value,
+          [key],
+          humanizeValueField(key),
+          editor,
+        ),
+      )
+    }
+  } else {
+    fragment.append(createValueField(draft, [], "Value", editor))
+  }
+  elements.valueEditorFields.replaceChildren(fragment)
+}
+
+function syncEditorJson() {
+  if (!state.editor) return
+  elements.editorValue.value = formattedJson(state.editor.draft)
+  elements.editorValue.removeAttribute("aria-invalid")
+  clearFieldError(elements.editorValue, elements.editorError)
+}
+
+function replaceEditorDraft(draft, options = {}) {
+  if (!state.editor) return
+  state.editor.draft = draft
+  syncEditorJson()
+  if (options.render !== false) renderValueEditor()
+}
+
+function selectedEditorEntry() {
+  return state.editor?.entries.find(
+    (candidate) => candidate.id === elements.editorChoice.value,
+  ) || state.editor?.entries[0] || null
 }
 
 function renderSelectedEditorEntry() {
-  const entry = state.editor?.entries.find(
-    (candidate) => candidate.id === elements.editorChoice.value,
-  ) || state.editor?.entries[0]
-  if (!entry) return
+  const entry = selectedEditorEntry()
+  if (!entry || !state.editor) return
   elements.editorChoice.value = entry.id
-  elements.editorValue.value = JSON.stringify(entry.value, null, 2)
-  setEditorPresentation(entry)
-  clearFieldError(elements.editorValue, elements.editorError)
+  state.editor.draft = cloneJsonValue(entry.value)
+  elements.valueEditorContext.textContent = entry.presentation?.kind === "rule"
+    ? `${rulePhaseLabel(entry.presentation.phase)} phase`
+    : `${humanizeValueField(jsonValueKind(entry.value))} value`
+  elements.editorJson.open = false
+  syncEditorJson()
+  renderValueEditor()
 }
 
-function syncRuleEditorFromJson() {
-  const entry = state.editor?.entries.find(
-    (candidate) => candidate.id === elements.editorChoice.value,
-  ) || state.editor?.entries[0]
-  if (entry?.presentation?.kind !== "rule") return
+function syncEditorFromJson() {
+  if (!state.editor) return
   try {
-    const definition = JSON.parse(elements.editorValue.value)
-    if (!definition || typeof definition !== "object" || Array.isArray(definition)) return
-    renderRuleEditorDefinition(definition, entry.presentation.phase)
+    const draft = JSON.parse(elements.editorValue.value)
+    jsonValueKind(draft)
+    state.editor.draft = draft
+    elements.editorValue.removeAttribute("aria-invalid")
+    clearFieldError(elements.editorValue, elements.editorError)
+    renderValueEditor()
   } catch {
-    return
+    elements.editorValue.setAttribute("aria-invalid", "true")
   }
 }
 
-function syncJsonFromRuleEditor() {
-  const entry = state.editor?.entries.find(
-    (candidate) => candidate.id === elements.editorChoice.value,
-  ) || state.editor?.entries[0]
-  if (entry?.presentation?.kind !== "rule") return
-  let definition
+function focusValueEditorPath(path) {
+  const encoded = encodeValuePath(path)
+  const control = [...elements.valueEditorFields.querySelectorAll(".value-control")]
+    .find((candidate) => candidate.dataset.valuePath === encoded)
+  control?.focus()
+}
+
+function updateGeneratedEditorControl(event) {
+  const control = event.target.closest("[data-value-path]")
+  if (!control || !state.editor) return
+  const path = decodeValuePath(control.dataset.valuePath)
   try {
-    definition = JSON.parse(elements.editorValue.value)
-  } catch (error) {
-    elements.editorJson.open = true
-    showFieldError(
-      elements.editorValue,
-      elements.editorError,
-      `Fix the advanced JSON before editing common fields: ${error.message}`,
+    const value = parseScalarControl(
+      control.dataset.valueKind,
+      control.value,
+      control.checked,
     )
+    control.setCustomValidity("")
+    replaceEditorDraft(
+      replaceValueAtPath(state.editor.draft, path, value),
+      { render: false },
+    )
+  } catch (error) {
+    control.setCustomValidity(error instanceof Error ? error.message : String(error))
+  }
+}
+
+function changeNullEditorType(event) {
+  const control = event.target.closest("[data-null-path]")
+  if (!control || !state.editor) return
+  const path = decodeValuePath(control.dataset.nullPath)
+  const replacement = defaultValueForKind(control.value)
+  replaceEditorDraft(
+    replaceValueAtPath(state.editor.draft, path, replacement),
+  )
+  requestAnimationFrame(() => focusValueEditorPath(path))
+}
+
+function handleValueEditorAction(event) {
+  const add = event.target.closest(".value-array-add")
+  if (add && state.editor) {
+    const path = decodeValuePath(add.dataset.arrayPath)
+    const nextIndex = valueAtPath(state.editor.draft, path).length
+    replaceEditorDraft(appendArrayItemAtPath(state.editor.draft, path))
+    requestAnimationFrame(() => focusValueEditorPath([...path, nextIndex]))
     return
   }
-  if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
-    elements.editorJson.open = true
-    showFieldError(
-      elements.editorValue,
-      elements.editorError,
-      "The advanced rule definition must be a JSON object",
+  const remove = event.target.closest(".value-array-remove")
+  if (!remove || !state.editor) return
+  const path = decodeValuePath(remove.dataset.arrayPath)
+  replaceEditorDraft(
+    removeArrayItemAtPath(
+      state.editor.draft,
+      path,
+      Number(remove.dataset.arrayIndex),
+    ),
+  )
+  requestAnimationFrame(() => {
+    const encoded = encodeValuePath(path)
+    const addButton = [...elements.valueEditorFields.querySelectorAll(".value-array-add")]
+      .find((candidate) => candidate.dataset.arrayPath === encoded)
+    addButton?.focus()
+  })
+}
+
+function collectValueSuggestions(values) {
+  const suggestions = new Map()
+  const visit = (value, path) => {
+    const kind = jsonValueKind(value)
+    if (kind === JSON_VALUE_KIND.STRING) {
+      const key = encodeValuePath(path)
+      if (!suggestions.has(key)) suggestions.set(key, new Set())
+      suggestions.get(key).add(value)
+      return
+    }
+    if (kind === JSON_VALUE_KIND.OBJECT) {
+      for (const [field, entry] of Object.entries(value)) {
+        visit(entry, [...path, field])
+      }
+      return
+    }
+    if (kind === JSON_VALUE_KIND.ARRAY) {
+      for (const [index, entry] of value.entries()) {
+        visit(entry, [...path, index])
+      }
+    }
+  }
+  for (const value of values) visit(value, [])
+  return new Map(
+    [...suggestions].map(([path, entries]) => [
+      path,
+      [...entries].sort((left, right) => left.localeCompare(right)),
+    ]),
+  )
+}
+
+function zoneSettingValues(settingId) {
+  return state.inventory.zones.flatMap((zone) => {
+    const setting = zone.surfaces.settings?.result?.find(
+      (entry) => entry.id === settingId,
     )
+    return setting ? [setting.value] : []
+  })
+}
+
+function setInlineEditorDisabled(editor, disabled) {
+  for (const control of editor.form.querySelectorAll("button, input, select, textarea")) {
+    control.disabled = disabled
+  }
+}
+
+function closeInlineEditor(options = {}) {
+  const editor = state.inlineEditor
+  if (!editor) return
+  const focusTarget = editor.cell.querySelector(".edit-cell")
+  editor.form.remove()
+  editor.cell.classList.remove("inline-editing")
+  state.inlineEditor = null
+  if (options.restoreFocus !== false && focusTarget?.isConnected) {
+    focusTarget.focus({ preventScroll: true })
+  }
+}
+
+function updateInlineEditorDraft(editor) {
+  try {
+    editor.draft = parseScalarControl(
+      editor.kind,
+      editor.control.value,
+      editor.control.checked,
+    )
+    editor.control.setCustomValidity("")
+    clearFieldError(editor.control, editor.error)
+  } catch (error) {
+    editor.control.setCustomValidity(error instanceof Error ? error.message : String(error))
+  }
+}
+
+async function reviewInlineSetting(event) {
+  event.preventDefault()
+  const editor = state.inlineEditor
+  if (!editor || editor.form !== event.currentTarget) return
+  updateInlineEditorDraft(editor)
+  if (!editor.form.checkValidity()) {
+    editor.form.reportValidity()
+    editor.control.focus()
+    requestAnimationFrame(() => editor.control.focus())
     return
   }
 
-  if (elements.ruleEditorName.value.length > 0) {
-    definition.description = elements.ruleEditorName.value
-  } else {
-    delete definition.description
+  setInlineEditorDisabled(editor, true)
+  let plan
+  try {
+    plan = await planSettingEdit(editor, editor.draft)
+  } catch (error) {
+    if (state.inlineEditor !== editor) return
+    setInlineEditorDisabled(editor, false)
+    showFieldError(editor.control, editor.error, error)
+    editor.control.focus()
+    return
   }
-  definition.enabled = elements.ruleEditorEnabled.checked
-  definition.expression = elements.ruleEditorExpression.value
-  elements.editorValue.value = JSON.stringify(definition, null, 2)
-  elements.ruleEditorSummary.replaceChildren(
-    createRuleSummary(definition, entry.presentation.phase, {
-      omitFields: ["description", "enabled", "expression"],
-    }),
+  if (state.inlineEditor !== editor) return
+  closeInlineEditor({ restoreFocus: false })
+  await applyPlans("Update zone setting", createLivePlanSet([plan]))
+}
+
+function openInlineSettingEditor(cell, action, zone, setting) {
+  closeInlineEditor({ restoreFocus: false })
+  const suggestions = collectValueSuggestions(
+    zoneSettingValues(action.settingId),
+  ).get(encodeValuePath([])) || []
+  const field = createScalarValueField(
+    setting.value,
+    [],
+    "Desired value",
+    suggestions,
   )
-  clearFieldError(elements.editorValue, elements.editorError)
+  const control = field.querySelector(".value-control")
+  const form = createElement("form", { className: "inline-value-editor" })
+  const error = createElement("p", {
+    className: "field-error inline-editor-error",
+  })
+  error.hidden = true
+  error.id = `inline-editor-error-${valueEditorControlSequence}`
+  error.setAttribute("role", "alert")
+  error.setAttribute("aria-live", "assertive")
+  control.setAttribute("aria-errormessage", error.id)
+
+  const cancel = createElement("button", {
+    className: "button button-quiet",
+    text: "Cancel",
+  })
+  cancel.type = "button"
+  const review = createElement("button", {
+    className: "button button-primary",
+    text: "Review",
+  })
+  review.type = "submit"
+  const actions = createElement("div", { className: "inline-editor-actions" })
+  actions.append(cancel, review)
+  form.append(field, error, actions)
+
+  const kind = jsonValueKind(setting.value)
+  state.inlineEditor = {
+    action,
+    cell,
+    control,
+    draft: cloneJsonValue(setting.value),
+    error,
+    form,
+    kind,
+    zone,
+  }
+  const editor = state.inlineEditor
+  cell.classList.add("inline-editing")
+  cell.append(form)
+  control.addEventListener("input", () => updateInlineEditorDraft(editor))
+  control.addEventListener("change", () => updateInlineEditorDraft(editor))
+  cancel.addEventListener("click", () => closeInlineEditor())
+  form.addEventListener("submit", reviewInlineSetting)
+  control.focus()
+  if (control instanceof HTMLInputElement && control.type === "text") control.select()
 }
 
 function openCellEditor(cell) {
@@ -2111,9 +2567,11 @@ function openCellEditor(cell) {
     toast("The selected resource is no longer available", "error")
     return
   }
+  closeInlineEditor({ restoreFocus: false })
 
   let entries
   let kind
+  let suggestions = new Map()
   let title
   let valueLabel
   if (action.type === "zone-setting") {
@@ -2124,6 +2582,15 @@ function openCellEditor(cell) {
       toast("The selected setting is no longer available", "error")
       return
     }
+    const settingKind = jsonValueKind(setting.value)
+    if (
+      settingKind === JSON_VALUE_KIND.BOOLEAN
+      || settingKind === JSON_VALUE_KIND.NUMBER
+      || settingKind === JSON_VALUE_KIND.STRING
+    ) {
+      openInlineSettingEditor(cell, action, zone, setting)
+      return
+    }
     entries = [
       {
         id: setting.id,
@@ -2131,6 +2598,7 @@ function openCellEditor(cell) {
         value: setting.value,
       },
     ]
+    suggestions = collectValueSuggestions(zoneSettingValues(action.settingId))
     kind = "Zone setting"
     title = action.settingId
     valueLabel = "Desired value"
@@ -2147,6 +2615,7 @@ function openCellEditor(cell) {
       label: editorRecordLabel(record),
       value: editableDnsRecordPayload(record),
     }))
+    suggestions = collectValueSuggestions(entries.map((entry) => entry.value))
     kind = "DNS record"
     title = cell.closest("tr")?.querySelector(".facet-cell span")?.textContent || "Edit DNS record"
     valueLabel = "Desired record definition"
@@ -2168,6 +2637,7 @@ function openCellEditor(cell) {
         value: editableRulePayload(cached.rule),
       },
     ]
+    suggestions = collectValueSuggestions(entries.map((entry) => entry.value))
     kind = "Ruleset rule"
     title = entries[0].label
     valueLabel = "Desired rule definition"
@@ -2179,6 +2649,7 @@ function openCellEditor(cell) {
   state.editor = {
     action,
     entries,
+    suggestions,
     zone,
   }
   elements.editorKind.textContent = kind
@@ -2193,16 +2664,14 @@ function openCellEditor(cell) {
   }))
   elements.editorChoiceRow.hidden = entries.length <= 1
   renderSelectedEditorEntry()
-  const initialFocus = entries[0]?.presentation?.kind === "rule"
-    ? elements.ruleEditorName
-    : elements.editorValue
+  const initialFocus = elements.valueEditorFields.querySelector(".value-control")
+    || elements.editorChoice
   showDialog(elements.editorDialog, {
     initialFocus,
   })
 }
 
 function editorError(error) {
-  if (!elements.ruleEditor.hidden) elements.editorJson.open = true
   showFieldError(elements.editorValue, elements.editorError, error)
 }
 
@@ -2298,11 +2767,20 @@ async function reviewEditorChange(event) {
     editorError("The editor state is unavailable")
     return
   }
+  const invalidControl = elements.valueEditorFields.querySelector(":invalid")
+  if (invalidControl) {
+    elements.editorError.textContent = invalidControl.validationMessage
+    elements.editorError.hidden = false
+    invalidControl.focus()
+    invalidControl.reportValidity()
+    return
+  }
 
   let desired
   try {
     desired = JSON.parse(elements.editorValue.value)
   } catch (error) {
+    elements.editorJson.open = true
     editorError(`Invalid JSON: ${error.message}`)
     return
   }
@@ -2349,6 +2827,7 @@ function renderInventory(inventory, source) {
   renderSummary()
   renderPolicyCards()
   if (matrixChanged) {
+    closeInlineEditor({ restoreFocus: false })
     renderMatrixFilters()
     renderMatrix()
   }
@@ -2512,10 +2991,7 @@ elements.matrixBody.addEventListener("click", (event) => {
   const fillableHole = event.target.closest(".fillable-hole")
   if (fillableHole) {
     openHoleResolution(fillableHole)
-    return
   }
-  const editableCell = event.target.closest(".editable-cell")
-  if (editableCell) openCellEditor(editableCell)
 })
 elements.matrixBody.addEventListener("focusin", (event) => {
   const action = event.target.closest(MATRIX_CONTROL_SELECTOR)
@@ -2559,11 +3035,11 @@ elements.toast.addEventListener("focusout", resumeToastTimer)
 elements.editorChoice.addEventListener("change", renderSelectedEditorEntry)
 elements.editorValue.addEventListener("input", () => {
   clearFieldError(elements.editorValue, elements.editorError)
-  syncRuleEditorFromJson()
+  syncEditorFromJson()
 })
-elements.ruleEditorName.addEventListener("input", syncJsonFromRuleEditor)
-elements.ruleEditorEnabled.addEventListener("change", syncJsonFromRuleEditor)
-elements.ruleEditorExpression.addEventListener("input", syncJsonFromRuleEditor)
+elements.valueEditorFields.addEventListener("input", updateGeneratedEditorControl)
+elements.valueEditorFields.addEventListener("change", changeNullEditorType)
+elements.valueEditorFields.addEventListener("click", handleValueEditorAction)
 elements.editorDialog.addEventListener("close", () => {
   state.editor = null
 })

@@ -41,6 +41,25 @@ test("matrix marks divergent settings and exposes editable actions", () => {
     value: "off",
     zoneId: "zone-beta.example",
   })
+  assert.equal(row.cells.get("beta.example").inspectionValue, "off")
+})
+
+test("matrix preserves an explicit null setting inspection value", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      settings: [
+        {
+          editable: true,
+          id: "nullable_setting",
+          value: null,
+        },
+      ],
+    }),
+  ])
+
+  const matrix = buildMatrix(inventory)
+  const row = matrix.rows.find((entry) => entry.key === "nullable_setting")
+  assert.equal(row.cells.get("alpha.example").inspectionValue, null)
 })
 
 test("matrix distinguishes direct setting edits from unavailable direct edits", () => {
@@ -128,6 +147,7 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   assert.equal(cell.presentation.phase, "http_request_dynamic_redirect")
   assert.equal(cell.presentation.rule.action, "redirect")
   assert.equal(cell.presentation.rule.expression, "http.host eq \"{zone}\"")
+  assert.deepEqual(cell.inspectionValue, cell.presentation.rule)
 })
 
 test("matrix exposes dependency-backed rules for editing but not copying", () => {
@@ -535,6 +555,13 @@ test("matrix exposes unlocked DNS records as direct cell edits", () => {
   })
   assert.equal(row.presentCount, 1)
   assert.equal(row.recordType, "A")
+  assert.deepEqual(cell.inspectionValue, [
+    {
+      content: "192.0.2.1",
+      proxied: true,
+      ttl: 1,
+    },
+  ])
   assert.deepEqual(row.missingZoneIds, [])
   assert.match(row.search, /alpha\.example/)
 })

@@ -168,25 +168,16 @@
         <label for="editor-choice">Record in this cell</label>
         <select id="editor-choice"></select>
       </div>
-      <section class="rule-editor" id="rule-editor" aria-labelledby="rule-editor-heading" hidden>
-        <h3 id="rule-editor-heading">Rule definition</h3>
-        <div class="rule-editor-grid">
-          <label for="rule-editor-name">
-            Rule name
-            <input id="rule-editor-name" type="text" autocomplete="off" spellcheck="false">
-          </label>
-          <label class="rule-enabled" for="rule-editor-enabled">
-            <input id="rule-editor-enabled" type="checkbox">
-            <span>Enabled</span>
-          </label>
+      <section class="value-editor" id="value-editor" aria-labelledby="value-editor-heading">
+        <div class="value-editor-heading">
+          <h3 id="value-editor-heading">Fields</h3>
+          <p id="value-editor-context"></p>
         </div>
-        <label for="rule-editor-expression">Matching expression</label>
-        <textarea id="rule-editor-expression" class="rule-expression" spellcheck="false"></textarea>
-        <div id="rule-editor-summary"></div>
+        <div class="value-editor-fields" id="value-editor-fields"></div>
       </section>
-      <details class="editor-json plain" id="editor-json" open>
-        <summary id="editor-json-summary">Desired JSON definition</summary>
-        <p id="editor-json-help" hidden>Use the exact JSON for action parameters, logging, rate limits, or other advanced rule fields. Common fields above stay synchronized with this definition.</p>
+      <details class="editor-json" id="editor-json">
+        <summary id="editor-json-summary">Advanced JSON</summary>
+        <p id="editor-json-help">The exact payload stays synchronized with the fields above. Use this for uncommon fields or structural changes.</p>
         <label for="editor-value" id="editor-value-label">Desired definition</label>
         <textarea id="editor-value" spellcheck="false" aria-describedby="editor-target editor-json-help" aria-errormessage="editor-error" required></textarea>
       </details>
