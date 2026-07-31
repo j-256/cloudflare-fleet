@@ -35,6 +35,17 @@ test("matrix marks divergent settings and exposes editable actions", () => {
   assert.equal(row.different, true)
   assert.equal(row.missingCount, 0)
   assert.equal(row.cells.get("alpha.example").display, "on")
+  assert.equal(row.consensusCanonical, null)
+  assert.equal(row.consensusCount, 0)
+  assert.equal(row.variantCount, 2)
+  assert.notEqual(
+    row.variantIndexes.get(row.cells.get("alpha.example").canonical),
+    0,
+  )
+  assert.notEqual(
+    row.variantIndexes.get(row.cells.get("beta.example").canonical),
+    0,
+  )
   assert.deepEqual(row.cells.get("beta.example").action, {
     settingId: "always_use_https",
     type: "zone-setting",
@@ -42,6 +53,55 @@ test("matrix marks divergent settings and exposes editable actions", () => {
     zoneId: "zone-beta.example",
   })
   assert.equal(row.cells.get("beta.example").inspectionValue, "off")
+})
+
+test("matrix reserves variant index zero for a unique row consensus", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      settings: [
+        {
+          editable: true,
+          id: "always_use_https",
+          value: "off",
+        },
+      ],
+    }),
+    makeZone("beta.example"),
+    makeZone("gamma.example"),
+    makeZone("delta.example", { settings: [] }),
+  ])
+
+  const matrix = buildMatrix(inventory)
+  const row = matrix.rows.find(
+    (entry) => entry.category === "Zone settings" && entry.label === "always_use_https",
+  )
+  const variantCanonical = row.cells.get("alpha.example").canonical
+  const consensusCanonical = row.cells.get("beta.example").canonical
+
+  assert.equal(row.different, true)
+  assert.equal(row.consensusCanonical, consensusCanonical)
+  assert.equal(row.consensusCount, 2)
+  assert.equal(row.variantCount, 2)
+  assert.equal(row.missingCount, 1)
+  assert.equal(row.variantIndexes.get(consensusCanonical), 0)
+  assert.notEqual(row.variantIndexes.get(variantCanonical), 0)
+})
+
+test("matrix identifies uniform present values as the row consensus", () => {
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example"),
+    makeZone("beta.example"),
+  ]))
+  const row = matrix.rows.find(
+    (entry) => entry.category === "Zone settings" && entry.label === "always_use_https",
+  )
+  const canonical = row.cells.get("alpha.example").canonical
+
+  assert.equal(row.different, false)
+  assert.equal(row.consensusCanonical, canonical)
+  assert.equal(row.consensusCount, 2)
+  assert.equal(row.variantCount, 1)
+  assert.equal(row.variantIndexes.get(canonical), 0)
 })
 
 test("matrix preserves an explicit null setting inspection value", () => {
@@ -556,6 +616,67 @@ test("matrix exposes a destination-owned fill for a portable missing rule", () =
   assert.equal(resolution.candidates[0].presentation.kind, "rule")
 })
 
+test("matrix exposes API-managed Email Routing rules as direct edits", () => {
+  const route = (zoneName, source = "api") => ({
+    actions: [
+      {
+        type: "worker",
+        value: ["email-worker"],
+      },
+    ],
+    enabled: true,
+    id: `route-${zoneName}`,
+    matchers: [
+      {
+        field: "to",
+        type: "literal",
+        value: `worker@${zoneName}`,
+      },
+    ],
+    name: "Worker route",
+    priority: 0,
+    source,
+  })
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      catchAll: {
+        id: "catch-all-alpha",
+        source: "api",
+      },
+      emailRules: [route("alpha.example")],
+    }),
+    makeZone("beta.example", {
+      emailRules: [route("beta.example", "wrangler")],
+    }),
+  ]))
+  const routeRow = matrix.rows.find(
+    (row) => row.category === "Email routes" && row.label === "Worker route",
+  )
+  const catchAllRow = matrix.rows.find(
+    (row) => row.category === "Email" && row.label === "Catch-all rule",
+  )
+
+  assert.deepEqual(routeRow.cells.get("alpha.example").action, {
+    catchAll: false,
+    ruleId: "route-alpha.example",
+    ruleIdentifier: "route-alpha.example",
+    type: "email-routing-rule",
+    zoneId: "zone-alpha.example",
+  })
+  assert.equal(routeRow.cells.get("beta.example").action, null)
+  assert.match(
+    routeRow.cells.get("beta.example").capability.reason,
+    /Wrangler owns this route/,
+  )
+  assert.deepEqual(catchAllRow.cells.get("alpha.example").action, {
+    catchAll: true,
+    ruleId: "catch-all-alpha",
+    ruleIdentifier: "catch_all",
+    type: "email-routing-rule",
+    zoneId: "zone-alpha.example",
+  })
+})
+
 test("matrix routes missing Email policy cells through the policy composer", () => {
   const matrix = buildMatrix(makeInventory([
     makeZone("alpha.example"),
@@ -667,6 +788,90 @@ test("matrix links Email DNS MX specifications to their live DNS records", () =>
     zoneId: "zone-alpha.example",
   })
   assert.equal(cell.capability.kind, "direct-edit")
+})
+
+test("matrix ignores Cloudflare-assigned Email Routing MX priorities for drift", () => {
+  const routingMx = (zoneName, priorities, options = {}) => [
+    "route1.mx.cloudflare.net",
+    "route2.mx.cloudflare.net",
+    "route3.mx.cloudflare.net",
+  ].map((content, index) => ({
+    content: options.trailingDot ? `${content}.` : content,
+    id: options.includeIds ? `mx-${zoneName}-${index + 1}` : undefined,
+    locked: false,
+    name: zoneName,
+    priority: priorities[index],
+    ttl: 1,
+    type: "MX",
+  }))
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      dns: routingMx("alpha.example", [95, 46, 23], {
+        includeIds: true,
+      }),
+      emailDns: routingMx("alpha.example", [95, 46, 23], {
+        trailingDot: true,
+      }),
+    }),
+    makeZone("beta.example", {
+      dns: routingMx("beta.example", [17, 81, 42], {
+        includeIds: true,
+      }),
+      emailDns: routingMx("beta.example", [17, 81, 42], {
+        trailingDot: true,
+      }),
+    }),
+  ]))
+  const specification = matrix.rows.find(
+    (row) => row.category === "Email DNS specification" && row.label === "MX @",
+  )
+  const records = matrix.rows.find(
+    (row) => row.category === "DNS records" && row.label === "MX @",
+  )
+  const alphaRecords = records.cells.get("alpha.example")
+  const betaRecords = records.cells.get("beta.example")
+
+  assert.equal(specification.different, false)
+  assert.equal(records.different, false)
+  assert.match(specification.description, /priorities are ignored for drift/)
+  assert.match(records.description, /priorities are ignored for drift/)
+  assert.equal(alphaRecords.canonical, betaRecords.canonical)
+  assert.notEqual(
+    alphaRecords.resolutionCanonical,
+    betaRecords.resolutionCanonical,
+  )
+  assert.deepEqual(
+    alphaRecords.inspectionValue.map((record) => record.priority).sort(
+      (left, right) => left - right,
+    ),
+    [23, 46, 95],
+  )
+})
+
+test("matrix preserves ordinary MX priority differences as drift", () => {
+  const customMx = (zoneName, priority) => ({
+    content: "mail.example.net",
+    id: `custom-mx-${zoneName}`,
+    locked: false,
+    name: zoneName,
+    priority,
+    ttl: 1,
+    type: "MX",
+  })
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      dns: [customMx("alpha.example", 10)],
+    }),
+    makeZone("beta.example", {
+      dns: [customMx("beta.example", 20)],
+    }),
+  ]))
+  const row = matrix.rows.find(
+    (entry) => entry.category === "DNS records" && entry.label === "MX @",
+  )
+
+  assert.equal(row.different, true)
+  assert.equal(row.description, "")
 })
 
 test("matrix does not link unrelated DNS records to an Email DNS specification", () => {

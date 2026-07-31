@@ -47,6 +47,7 @@ import {
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
+  buildEmailRoutingRuleEditPlan,
   buildRuleCreatePlan,
   buildRuleCopyPlans,
   buildRuleDeletePlan,
@@ -61,6 +62,7 @@ import {
   deriveEmailDnsPolicy,
   deriveFleetWafPolicies,
   editableDnsRecordPayload,
+  editableEmailRoutingRulePayload,
   editableRulePayload,
   emailIssues,
   evaluateFleetEmailPolicyExceptions,
@@ -134,6 +136,11 @@ const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGN
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
+const MATRIX_COMPARISON_STATE = Object.freeze({
+  MATCH: "match",
+  NO_CONSENSUS: "no-consensus",
+  VARIANT: "variant",
+})
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
@@ -1129,6 +1136,80 @@ async function verifyRulesetAction(action, options = {}) {
   restoreInventoryStatus()
 }
 
+function patchVerifiedEmailRoutingRule(action, rule) {
+  const inventory = state.inventory
+  if (!inventory) throw new Error("The fleet snapshot is unavailable")
+  const zones = inventory.zones.map((zone) => {
+    if (zone.meta.id !== action.zoneId) return zone
+    const surfaces = {
+      ...zone.surfaces,
+    }
+    if (action.catchAll) {
+      surfaces["email-catch-all"] = {
+        ...zone.surfaces["email-catch-all"],
+        ok: true,
+        result: rule,
+        status: 200,
+      }
+    }
+    const rulesSurface = zone.surfaces["email-rules"]
+    if (rulesSurface?.ok && Array.isArray(rulesSurface.result)) {
+      const matches = (candidate) => action.catchAll
+        ? candidate.id === rule.id
+          || candidate.matchers?.some((matcher) => matcher.type === "all")
+        : candidate.id === action.ruleId
+      const found = rulesSurface.result.some(matches)
+      surfaces["email-rules"] = {
+        ...rulesSurface,
+        result: found
+          ? rulesSurface.result.map((candidate) => (
+              matches(candidate) ? rule : candidate
+            ))
+          : [...rulesSurface.result, rule],
+        status: 200,
+      }
+    }
+    return {
+      ...zone,
+      surfaces,
+    }
+  })
+  const patched = {
+    ...inventory,
+    zones,
+  }
+  renderInventory(patched, state.inventorySource)
+  return patched
+}
+
+async function verifyEmailRoutingRuleAction(action) {
+  const zone = zoneById(action.zoneId)
+  setStatus(`Verifying Email Routing on ${zone?.meta.name || "zone"}`)
+  const readAction = {
+    ruleIdentifier: action.ruleIdentifier,
+    type: READ_ACTION.EMAIL_RULE_EDIT,
+    zoneId: action.zoneId,
+  }
+  const resourceId = actionResourceId(readAction)
+  const liveData = await executeActionReadPlan(api, [readAction])
+  const liveRule = liveData.resources.get(resourceId)
+  if (!liveRule) {
+    throw new Error("Email Routing rule verification returned no live definition")
+  }
+  const patched = patchVerifiedEmailRoutingRule(action, liveRule)
+  const serializedSnapshot = serializeLiveSnapshot(patched)
+  window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
+  try {
+    await api.persistSnapshot(serializedSnapshot)
+  } catch (error) {
+    setRefreshDetail(
+      `Live Email Routing rule verified, but the snapshot was not saved: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    )
+  }
+  restoreInventoryStatus()
+}
+
 function openRulesetWorkspace(action) {
   const zone = zoneById(action.zoneId)
   if (!zone) {
@@ -1677,6 +1758,9 @@ function zoneHeading(zone) {
 }
 
 function editActionLabel(action, row, zone) {
+  if (action.type === READ_ACTION.EMAIL_RULE_EDIT) {
+    return `Edit ${row.label} on ${zone.meta.name}`
+  }
   if (action.type === "zone-setting") {
     return `Edit ${action.settingId} on ${zone.meta.name}`
   }
@@ -1687,6 +1771,39 @@ function editActionLabel(action, row, zone) {
     return `Edit ${row.label} on ${zone.meta.name}`
   }
   return `Edit ${row.label} on ${zone.meta.name}`
+}
+
+function cellComparisonStatus(row, cell) {
+  const hasConsensus = row.consensusCanonical !== null
+  const matchesConsensus = hasConsensus
+    && cell.canonical === row.consensusCanonical
+  const status = matchesConsensus
+    ? {
+        className: MATRIX_COMPARISON_STATE.MATCH,
+        label: "Match",
+        title: "Matches the unique row consensus",
+      }
+    : hasConsensus
+      ? {
+          className: MATRIX_COMPARISON_STATE.VARIANT,
+          label: "Variant",
+          title: "Differs from the unique row consensus",
+        }
+      : {
+          className: MATRIX_COMPARISON_STATE.NO_CONSENSUS,
+          label: "No consensus",
+          title: "The most common present values are tied",
+        }
+  const element = createElement("span", {
+    className: `cell-comparison-status ${status.className}`,
+    text: status.label,
+  })
+  element.title = status.title
+  element.setAttribute("aria-label", status.title)
+  return {
+    className: status.className,
+    element,
+  }
 }
 
 function matrixCell(row, zone) {
@@ -1734,7 +1851,10 @@ function matrixCell(row, zone) {
     td.dataset.ruleId = cell.action.ruleId
     td.dataset.rulesetId = cell.action.rulesetId
   }
-  td.classList.add(`variant-${row.variantIndexes.get(cell.canonical) || 0}`)
+  td.classList.add(`variant-${row.variantIndexes.get(cell.canonical) ?? 0}`)
+  const comparisonStatus = cellComparisonStatus(row, cell)
+  td.dataset.comparison = comparisonStatus.className
+  td.append(comparisonStatus.element)
   const directlyEditable = Boolean(cell.action && !readOnly)
   const structuredValue = cell.inspectionValue !== null
     && typeof cell.inspectionValue === "object"
@@ -1882,7 +2002,23 @@ function renderMatrix() {
     categoryCell.scope = "row"
     const facetCell = createElement("th", { className: "facet-cell" })
     facetCell.scope = "row"
-    facetCell.append(createElement("span", { text: row.label }))
+    const hasConsensus = row.consensusCanonical !== null
+    const consensusBadge = createElement("small", {
+      className: `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}`,
+      text: hasConsensus
+        ? `Consensus ${row.consensusCount}/${state.inventory.zones.length}`
+        : "No consensus",
+    })
+    consensusBadge.title = hasConsensus
+      ? `${row.consensusCount} of ${state.inventory.zones.length} zones match the unique row consensus`
+      : `${row.variantCount} present variants; the most common values are tied`
+    consensusBadge.setAttribute("aria-label", consensusBadge.title)
+    const facetTitle = createElement("div", { className: "facet-title" })
+    facetTitle.append(
+      createElement("span", { text: row.label }),
+      consensusBadge,
+    )
+    facetCell.append(facetTitle)
     if (row.description) facetCell.append(createElement("small", { text: row.description }))
     const facetActions = createElement("div", { className: "facet-actions" })
     const actionTypes = new Set(
@@ -2784,6 +2920,21 @@ function cachedRule(zone, rulesetId, ruleId) {
   return rule ? { rule, ruleset } : null
 }
 
+function cachedEmailRoutingRule(zone, action) {
+  if (action.catchAll) {
+    return zone.surfaces["email-catch-all"]?.result || null
+  }
+  return (zone.surfaces["email-rules"]?.result || [])
+    .find((rule) => rule.id === action.ruleId) || null
+}
+
+function emailRoutingRuleLabel(rule, catchAll = false) {
+  if (catchAll) return "Catch-all rule"
+  return rule.name
+    || rule.matchers?.find((matcher) => matcher.value)?.value
+    || "Email Routing rule"
+}
+
 function editorRecordLabel(record) {
   const definition = record.content ?? record.data ?? ""
   const detail = typeof definition === "string"
@@ -3446,7 +3597,31 @@ function openCellEditor(cell) {
   let suggestions = new Map()
   let title
   let valueLabel
-  if (action.type === "zone-setting") {
+  let verify = null
+  if (action.type === READ_ACTION.EMAIL_RULE_EDIT) {
+    const rule = cachedEmailRoutingRule(zone, action)
+    if (!rule) {
+      toast("The selected Email Routing rule is no longer available", "error")
+      return
+    }
+    const label = emailRoutingRuleLabel(rule, action.catchAll)
+    entries = [
+      {
+        id: rule.id || action.ruleIdentifier,
+        label,
+        value: editableEmailRoutingRulePayload(rule, {
+          catchAll: action.catchAll,
+        }),
+      },
+    ]
+    suggestions = collectValueSuggestions(entries.map((entry) => entry.value))
+    kind = action.catchAll
+      ? "Email Routing catch-all"
+      : "Email Routing rule"
+    title = label
+    valueLabel = "Desired route definition"
+    verify = () => verifyEmailRoutingRuleAction(action)
+  } else if (action.type === "zone-setting") {
     const setting = zone.surfaces.settings?.result?.find(
       (entry) => entry.id === action.settingId,
     )
@@ -3525,6 +3700,7 @@ function openCellEditor(cell) {
     suggestions,
     title,
     valueLabel,
+    verify,
     zone,
   })
 }
@@ -3827,6 +4003,33 @@ function editorError(error) {
   showFieldError(elements.editorValue, elements.editorError, error)
 }
 
+async function planEmailRoutingRuleEdit(editor, desiredDefinition) {
+  const readAction = {
+    ruleIdentifier: editor.action.ruleIdentifier,
+    type: READ_ACTION.EMAIL_RULE_EDIT,
+    zoneId: editor.zone.meta.id,
+  }
+  const resourceId = actionResourceId(readAction)
+  const liveData = await runWritePreflight(
+    `${emailRoutingRuleLabel(editor.entries[0]?.value, editor.action.catchAll)} on ${editor.zone.meta.name}`,
+    () => executePreflightRead([
+      readAction,
+    ]),
+  )
+  const liveRule = liveData.resources.get(resourceId)
+  if (!liveRule) {
+    throw new Error("Email Routing rule live validation returned no definition")
+  }
+  return buildEmailRoutingRuleEditPlan(
+    editor.zone,
+    liveRule,
+    desiredDefinition,
+    {
+      catchAll: editor.action.catchAll,
+    },
+  )
+}
+
 async function planSettingEdit(editor, desiredValue) {
   const settingId = editor.action.settingId
   const readAction = {
@@ -3940,7 +4143,10 @@ async function reviewEditorChange(event) {
   let plan
   let confirmationTitle
   try {
-    if (editor.action.type === "zone-setting") {
+    if (editor.action.type === READ_ACTION.EMAIL_RULE_EDIT) {
+      plan = await planEmailRoutingRuleEdit(editor, desired)
+      confirmationTitle = "Update Email Routing rule"
+    } else if (editor.action.type === "zone-setting") {
       plan = await planSettingEdit(editor, desired)
       confirmationTitle = "Update zone setting"
     } else if (editor.action.type === "dns-records") {

@@ -1,5 +1,7 @@
 import {
   EMAIL_POLICY_COMPONENT,
+  EMAIL_ROUTING_ACTION_KIND,
+  EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_WAF_RULE_DESCRIPTIONS,
   HTTP_METHOD,
   POLICY_EXCEPTION_STATUS,
@@ -16,6 +18,25 @@ import {
 const EMAIL_CATCH_ALL_NAME = "Catch-all to Gmail"
 const DMARC_NAME = "_dmarc"
 const DMARC_PREFIX = "v=dmarc1;"
+const EMAIL_ROUTING_ACTION_TYPES = new Set([
+  "drop",
+  "forward",
+  "worker",
+])
+const EMAIL_ROUTING_MATCHER_TYPES = new Set([
+  "all",
+  "literal",
+])
+const EMAIL_ROUTING_RULE_FIELDS = Object.freeze([
+  "actions",
+  "enabled",
+  "matchers",
+  "name",
+  "priority",
+])
+const EMAIL_ROUTING_CATCH_ALL_FIELDS = Object.freeze(
+  EMAIL_ROUTING_RULE_FIELDS.filter((field) => field !== "priority"),
+)
 const RULE_COPY_DEPENDENCY_KEYS = new Set([
   "id",
   "list_id",
@@ -811,6 +832,142 @@ function desiredPayload(value, writableFields, requiredFields, label) {
   return value
 }
 
+function emailRoutingRuleFields(options = {}) {
+  return options.catchAll
+    ? EMAIL_ROUTING_CATCH_ALL_FIELDS
+    : EMAIL_ROUTING_RULE_FIELDS
+}
+
+function assertEmailRoutingRuleDefinition(definition, options = {}) {
+  if (typeof definition.enabled !== "boolean") {
+    throw new TypeError("Email Routing rule enabled must be a boolean")
+  }
+  if (definition.name !== undefined) {
+    if (typeof definition.name !== "string") {
+      throw new TypeError("Email Routing rule name must be a string")
+    }
+    if (definition.name.length > 256) {
+      throw new RangeError("Email Routing rule name cannot exceed 256 characters")
+    }
+  }
+  if (definition.priority !== undefined) {
+    if (!Number.isFinite(definition.priority) || definition.priority < 0) {
+      throw new RangeError("Email Routing rule priority must be a non-negative number")
+    }
+  }
+  if (!Array.isArray(definition.actions) || definition.actions.length === 0) {
+    throw new TypeError("Email Routing rule actions must contain at least one action")
+  }
+  for (const [index, action] of definition.actions.entries()) {
+    desiredPayload(
+      action,
+      ["type", "value"],
+      ["type"],
+      `Email Routing action ${index + 1}`,
+    )
+    if (!EMAIL_ROUTING_ACTION_TYPES.has(action.type)) {
+      throw new Error(`Email Routing action ${index + 1} has unsupported type ${action.type}`)
+    }
+    if (action.type === "drop") {
+      if (action.value !== undefined
+        && (!Array.isArray(action.value) || action.value.length > 0)) {
+        throw new TypeError("Drop actions cannot contain destination values")
+      }
+      continue
+    }
+    if (!Array.isArray(action.value)
+      || action.value.length !== 1
+      || typeof action.value[0] !== "string"
+      || action.value[0].trim().length === 0) {
+      throw new TypeError(`${action.type} actions require exactly one destination value`)
+    }
+  }
+  if (!Array.isArray(definition.matchers) || definition.matchers.length === 0) {
+    throw new TypeError("Email Routing rule matchers must contain at least one matcher")
+  }
+  for (const [index, matcher] of definition.matchers.entries()) {
+    desiredPayload(
+      matcher,
+      ["field", "type", "value"],
+      ["type"],
+      `Email Routing matcher ${index + 1}`,
+    )
+    if (!EMAIL_ROUTING_MATCHER_TYPES.has(matcher.type)) {
+      throw new Error(`Email Routing matcher ${index + 1} has unsupported type ${matcher.type}`)
+    }
+    if (matcher.type === "all") {
+      if (!options.catchAll) {
+        throw new Error("Only the dedicated catch-all rule can use an all matcher")
+      }
+      if (matcher.field !== undefined || matcher.value !== undefined) {
+        throw new Error("The catch-all matcher cannot contain field or value")
+      }
+      continue
+    }
+    if (options.catchAll) {
+      throw new Error("The catch-all rule must use the all matcher")
+    }
+    if (matcher.field !== "to") {
+      throw new Error(`Email Routing matcher ${index + 1} must target the to field`)
+    }
+    if (typeof matcher.value !== "string" || matcher.value.trim().length === 0) {
+      throw new TypeError(`Email Routing matcher ${index + 1} requires an address`)
+    }
+    if (matcher.value.length > 90) {
+      throw new RangeError(`Email Routing matcher ${index + 1} cannot exceed 90 characters`)
+    }
+  }
+  if (options.catchAll
+    && (definition.matchers.length !== 1 || definition.matchers[0].type !== "all")) {
+    throw new Error("The catch-all rule requires exactly one all matcher")
+  }
+  return definition
+}
+
+export function editableEmailRoutingRulePayload(rule, options = {}) {
+  const writable = {}
+  for (const field of emailRoutingRuleFields(options)) {
+    if (rule?.[field] !== undefined && rule[field] !== null) {
+      writable[field] = rule[field]
+    }
+  }
+  return writable
+}
+
+export function emailRoutingRuleEditCapability(rule, options = {}) {
+  if (!options.catchAll && !rule?.id) {
+    return {
+      editable: false,
+      reason: "Cloudflare did not expose an Email Routing rule identifier",
+    }
+  }
+  if (rule?.source && rule.source !== "api") {
+    return {
+      editable: false,
+      reason: rule.source === "wrangler"
+        ? "Wrangler owns this route; edit its Worker configuration instead"
+        : `Email Routing source ${rule.source} is not supported by the direct edit adapter`,
+    }
+  }
+  try {
+    assertEmailRoutingRuleDefinition(
+      editableEmailRoutingRulePayload(rule, options),
+      options,
+    )
+  } catch (error) {
+    return {
+      editable: false,
+      reason: error instanceof Error ? error.message : String(error),
+    }
+  }
+  return {
+    editable: true,
+    reason: options.catchAll
+      ? "The Email Routing Catch-all API supports a type-aware PUT"
+      : "The Email Routing Rules API supports a type-aware PUT",
+  }
+}
+
 export function editableDnsRecordPayload(record) {
   return writeDnsRecord(record)
 }
@@ -1314,6 +1471,54 @@ export function buildDnsRecordEditPlan(zone, liveRecord, desiredDefinition) {
     summary: operations.length === 0
       ? `${liveRecord.type} ${liveRecord.name} already matches the desired definition`
       : `Update ${liveRecord.type} ${liveRecord.name} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildEmailRoutingRuleEditPlan(
+  zone,
+  liveRule,
+  desiredDefinition,
+  options = {},
+) {
+  const capability = emailRoutingRuleEditCapability(liveRule, options)
+  if (!capability.editable) throw new Error(capability.reason)
+  const desired = assertEmailRoutingRuleDefinition(
+    desiredPayload(
+      desiredDefinition,
+      emailRoutingRuleFields(options),
+      ["actions", "enabled", "matchers"],
+      "Email Routing rule definition",
+    ),
+    options,
+  )
+  const current = editableEmailRoutingRulePayload(liveRule, options)
+  const ruleIdentifier = options.catchAll
+    ? EMAIL_ROUTING_RULE_IDENTIFIER.CATCH_ALL
+    : liveRule.id
+  const label = options.catchAll
+    ? "Catch-all rule"
+    : liveRule.name || liveRule.matchers?.[0]?.value || "Email Routing rule"
+  const operations = stableString(current) === stableString(desired)
+    ? []
+    : [
+        {
+          body: desired,
+          currentValue: current,
+          label: `Update ${label}`,
+          method: HTTP_METHOD.PUT,
+          path: `zones/${zone.meta.id}/email/routing/rules/${ruleIdentifier}`,
+        },
+      ]
+
+  return {
+    id: `email-routing-rule:${zone.meta.id}:${ruleIdentifier}`,
+    kind: EMAIL_ROUTING_ACTION_KIND.RULE_EDIT,
+    operations,
+    summary: operations.length === 0
+      ? `${label} already matches the desired definition`
+      : `Update ${label} on ${zone.meta.name}`,
     zoneId: zone.meta.id,
     zoneName: zone.meta.name,
   }

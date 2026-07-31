@@ -13,6 +13,14 @@ export const HTTP_METHOD = Object.freeze({
 
 export const WAF_PHASE = "http_request_firewall_custom"
 
+export const EMAIL_ROUTING_ACTION_KIND = Object.freeze({
+  RULE_EDIT: "email-routing-rule",
+})
+
+export const EMAIL_ROUTING_RULE_IDENTIFIER = Object.freeze({
+  CATCH_ALL: "catch_all",
+})
+
 export const RULESET_KIND = Object.freeze({
   CUSTOM: "custom",
   MANAGED: "managed",

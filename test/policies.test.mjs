@@ -5,6 +5,7 @@ import {
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
+  buildEmailRoutingRuleEditPlan,
   buildRuleCreatePlan,
   buildRuleCopyPlans,
   buildRuleDeletePlan,
@@ -21,7 +22,9 @@ import {
   dnsRecordCopyCapability,
   dnsRecordEditCapability,
   editableDnsRecordPayload,
+  editableEmailRoutingRulePayload,
   editableRulePayload,
+  emailRoutingRuleEditCapability,
   emailIssues,
   evaluateEmailPolicyExceptions,
   evaluateFleetEmailPolicyExceptions,
@@ -855,6 +858,132 @@ test("DNS record edit capability blocks locked and schema-unknown records", () =
     editable: false,
     reason: "DNS record type FUTURE is not supported by the edit adapter",
   })
+})
+
+test("Email Routing rule editor strips server fields and plans a live PUT", () => {
+  const zone = makeZone("alpha.example")
+  const liveRule = {
+    actions: [
+      {
+        type: "worker",
+        value: ["email-worker"],
+      },
+    ],
+    enabled: true,
+    id: "route-id",
+    matchers: [
+      {
+        field: "to",
+        type: "literal",
+        value: "worker@alpha.example",
+      },
+    ],
+    name: "Worker route",
+    priority: 0,
+    source: "api",
+    tag: "deprecated-tag",
+  }
+  const current = editableEmailRoutingRulePayload(liveRule)
+  const desired = {
+    ...current,
+    name: "Renamed worker route",
+  }
+  const plan = buildEmailRoutingRuleEditPlan(zone, liveRule, desired)
+
+  assert.deepEqual(current, {
+    actions: liveRule.actions,
+    enabled: true,
+    matchers: liveRule.matchers,
+    name: "Worker route",
+    priority: 0,
+  })
+  assert.equal(emailRoutingRuleEditCapability(liveRule).editable, true)
+  assert.equal(plan.operations[0].method, "PUT")
+  assert.equal(
+    plan.operations[0].path,
+    "zones/zone-alpha.example/email/routing/rules/route-id",
+  )
+  assert.deepEqual(plan.operations[0].body, desired)
+  assert.deepEqual(
+    buildEmailRoutingRuleEditPlan(zone, liveRule, current).operations,
+    [],
+  )
+  assert.throws(
+    () => buildEmailRoutingRuleEditPlan(zone, liveRule, {
+      ...desired,
+      tag: "server-field",
+    }),
+    /unsupported fields: tag/,
+  )
+  assert.match(
+    emailRoutingRuleEditCapability({
+      ...liveRule,
+      source: "wrangler",
+    }).reason,
+    /Wrangler owns this route/,
+  )
+})
+
+test("Email Routing catch-all editor preserves its dedicated schema", () => {
+  const zone = makeZone("alpha.example")
+  const liveRule = {
+    actions: [
+      {
+        type: "forward",
+        value: ["fleet@example.com"],
+      },
+    ],
+    enabled: true,
+    id: "catch-all-id",
+    matchers: [
+      {
+        type: "all",
+      },
+    ],
+    name: "Catch all",
+    priority: 2147483647,
+    source: "api",
+  }
+  const current = editableEmailRoutingRulePayload(liveRule, {
+    catchAll: true,
+  })
+  const plan = buildEmailRoutingRuleEditPlan(
+    zone,
+    liveRule,
+    {
+      ...current,
+      enabled: false,
+    },
+    {
+      catchAll: true,
+    },
+  )
+
+  assert.equal(Object.hasOwn(current, "priority"), false)
+  assert.equal(
+    plan.operations[0].path,
+    "zones/zone-alpha.example/email/routing/rules/catch_all",
+  )
+  assert.throws(
+    () => buildEmailRoutingRuleEditPlan(
+      zone,
+      liveRule,
+      {
+        ...current,
+        matchers: [
+          {
+            field: "to",
+            type: "literal",
+            value: "route@alpha.example",
+          },
+        ],
+      },
+      {
+        catchAll: true,
+      },
+    ),
+    /catch-all rule must use the all matcher/,
+  )
 })
 
 test("rule copy treats an exact destination payload as a no-op", () => {

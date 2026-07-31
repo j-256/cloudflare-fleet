@@ -218,6 +218,30 @@ test("DNS target fills merge one source with every selected destination", () => 
   })
 })
 
+test("Email Routing edits compose to one exact live rule read", () => {
+  const action = {
+    ruleIdentifier: "route-id",
+    type: READ_ACTION.EMAIL_RULE_EDIT,
+    zoneId: "zone-alpha",
+  }
+
+  assert.equal(
+    actionResourceId(action),
+    "email-routing-rule:zone-alpha:route-id",
+  )
+  assert.deepEqual(composeActionReadPlan([action]), {
+    inventory: null,
+    resources: [
+      {
+        id: "email-routing-rule:zone-alpha:route-id",
+        kind: "resource",
+        path: "zones/zone-alpha/email/routing/rules/route-id",
+      },
+    ],
+    rulePhases: [],
+  })
+})
+
 test("rule edits compose to the exact live ruleset resource", () => {
   const action = {
     phase: "http_request_sanitize",
@@ -440,6 +464,15 @@ test("rule copy actions execute metadata, exact source, and target phase reads",
 })
 
 test("action composer rejects incomplete action inputs", () => {
+  assert.throws(
+    () => composeActionReadPlan([
+      {
+        type: READ_ACTION.EMAIL_RULE_EDIT,
+        zoneId: "zone-alpha",
+      },
+    ]),
+    /Email Routing rule identifier is required/,
+  )
   assert.throws(
     () => composeActionReadPlan([
       {

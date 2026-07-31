@@ -1,5 +1,6 @@
 import { loadInventory } from "./inventory.mjs"
 import {
+  EMAIL_ROUTING_ACTION_KIND,
   FLEET_ACTION_KIND,
   RULESET_ACTION_KIND,
   RULESET_KIND,
@@ -15,6 +16,7 @@ export const READ_ACTION = Object.freeze({
   DNS_RECORD_COPY: "dns-record-copy",
   DNS_RECORD_EDIT: "dns-record-edit",
   EMAIL_ALIGNMENT: "email-alignment",
+  EMAIL_RULE_EDIT: EMAIL_ROUTING_ACTION_KIND.RULE_EDIT,
   RULE_COPY: "ruleset-rule-copy",
   RULE_CREATE: "ruleset-rule-create",
   RULE_DELETE: "ruleset-rule-delete",
@@ -99,6 +101,10 @@ export function rulesetResourceId(zoneId, rulesetId) {
   return `ruleset:${requiredIdentifier(zoneId, "Ruleset zone identifier")}:${requiredIdentifier(rulesetId, "Ruleset identifier")}`
 }
 
+export function emailRoutingRuleResourceId(zoneId, ruleIdentifier) {
+  return `email-routing-rule:${requiredIdentifier(zoneId, "Email Routing rule zone identifier")}:${requiredIdentifier(ruleIdentifier, "Email Routing rule identifier")}`
+}
+
 export function rulesetPhaseResourceId(zoneId, phase) {
   return `ruleset-phase:${requiredIdentifier(zoneId, "Ruleset phase zone identifier")}:${requiredIdentifier(phase, "Ruleset phase")}`
 }
@@ -122,6 +128,9 @@ function zoneResourcePath(zoneId, ...segments) {
 }
 
 export function actionResourceId(action) {
+  if (action.type === READ_ACTION.EMAIL_RULE_EDIT) {
+    return emailRoutingRuleResourceId(action.zoneId, action.ruleIdentifier)
+  }
   if (action.type === READ_ACTION.ZONE_SETTING_EDIT) {
     return `setting:${requiredIdentifier(action.zoneId, "Zone setting zone identifier")}:${requiredIdentifier(action.settingId, "Zone setting identifier")}`
   }
@@ -151,6 +160,21 @@ export function readRequirementsForAction(action) {
         ruleDetailPhases: [WAF_PHASE],
         surfaceIds: RULESET_SURFACE_IDS,
       }),
+    ]
+  }
+  if (action.type === READ_ACTION.EMAIL_RULE_EDIT) {
+    const id = actionResourceId(action)
+    return [
+      resourceRead(
+        id,
+        zoneResourcePath(
+          action.zoneId,
+          "email",
+          "routing",
+          "rules",
+          action.ruleIdentifier,
+        ),
+      ),
     ]
   }
   if (action.type === READ_ACTION.DNS_RECORD_COPY) {

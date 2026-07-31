@@ -8,6 +8,8 @@ import {
   stableString,
 } from "./normalize.mjs"
 import {
+  EMAIL_ROUTING_ACTION_KIND,
+  EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
   RULESET_ACTION_KIND,
@@ -18,6 +20,7 @@ import {
   dnsRecordCopyCapability,
   dnsRecordEditCapability,
   emailDnsRecordAssociationKey,
+  emailRoutingRuleEditCapability,
   ruleCopyCapability,
 } from "./policies.mjs"
 import { rulePhaseLabel } from "./rule-presentation.mjs"
@@ -51,6 +54,10 @@ const CATEGORY_ORDER = [
   "Zone",
 ]
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
+const EMAIL_ROUTING_MX_DRIFT_DESCRIPTION = "Cloudflare-assigned MX priorities are ignored for drift; live priorities remain inspectable and editable"
+const MATRIX_MISSING_CANONICAL = "__missing__"
+const MX_RECORD_TYPE = "MX"
+const NON_CONSENSUS_VARIANT_COLOR_COUNT = 5
 
 function surfaceResult(zone, surfaceId) {
   const surface = zone.surfaces[surfaceId]
@@ -59,6 +66,46 @@ function surfaceResult(zone, surfaceId) {
 
 function rowId(category, key) {
   return `${category}\u0000${key}`
+}
+
+function compareCanonical(left, right) {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+
+function comparisonMetadata(canonicalValues) {
+  const counts = new Map()
+  for (const canonical of canonicalValues) {
+    if (canonical === MATRIX_MISSING_CANONICAL) continue
+    counts.set(canonical, (counts.get(canonical) || 0) + 1)
+  }
+
+  const ranked = [...counts.entries()].sort(
+    ([leftCanonical, leftCount], [rightCanonical, rightCount]) =>
+      rightCount - leftCount || compareCanonical(leftCanonical, rightCanonical),
+  )
+  const leadingCount = ranked[0]?.[1] || 0
+  const hasUniqueConsensus = leadingCount > (ranked[1]?.[1] || 0)
+  const consensusCanonical = hasUniqueConsensus ? ranked[0][0] : null
+  const variantIndexes = new Map()
+  if (consensusCanonical !== null) variantIndexes.set(consensusCanonical, 0)
+  const nonConsensusVariants = [...counts.keys()]
+    .filter((canonical) => canonical !== consensusCanonical)
+    .sort(compareCanonical)
+  for (const [index, canonical] of nonConsensusVariants.entries()) {
+    variantIndexes.set(
+      canonical,
+      (index % NON_CONSENSUS_VARIANT_COLOR_COUNT) + 1,
+    )
+  }
+
+  return {
+    consensusCanonical,
+    consensusCount: hasUniqueConsensus ? leadingCount : 0,
+    variantCount: counts.size,
+    variantIndexes,
+  }
 }
 
 function inspectionValue(value) {
@@ -94,6 +141,9 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
   const inspected = Object.prototype.hasOwnProperty.call(options, "inspectionValue")
     ? options.inspectionValue
     : normalized
+  const resolutionValue = Object.prototype.hasOwnProperty.call(options, "resolutionValue")
+    ? options.resolutionValue
+    : normalized
   row.cells.set(zone.meta.name, {
     action: options.action || null,
     canonical: stableString(normalized),
@@ -103,6 +153,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     inspectionValue: inspectionValue(inspected),
     presentation: options.presentation || null,
     parentAction: options.parentAction || null,
+    resolutionCanonical: stableString(resolutionValue),
     resolutionSource: options.resolutionSource || null,
     secondaryAction: options.secondaryAction || null,
     workspaceAction: options.workspaceAction || null,
@@ -197,6 +248,87 @@ function addDnssecRows(rows, inventory) {
   )
 }
 
+function emailRoutingRuleCellOptions(rule, zone, options = {}) {
+  const capability = emailRoutingRuleEditCapability(rule, options)
+  return {
+    action: capability.editable
+      ? {
+          catchAll: Boolean(options.catchAll),
+          ruleId: rule.id || "",
+          ruleIdentifier: options.catchAll
+            ? EMAIL_ROUTING_RULE_IDENTIFIER.CATCH_ALL
+            : rule.id,
+          type: EMAIL_ROUTING_ACTION_KIND.RULE_EDIT,
+          zoneId: zone.meta.id,
+        }
+      : null,
+    capability: capability.editable
+      ? null
+      : {
+          kind: "not-directly-editable",
+          label: "No direct route edit",
+          reason: capability.reason,
+        },
+  }
+}
+
+function emailDnsMatrixRecord(record) {
+  return {
+    content: record.content,
+    priority: record.priority,
+    ttl: record.ttl,
+  }
+}
+
+function dnsMatrixRecord(record) {
+  return {
+    comment: record.comment,
+    content: record.content,
+    data: record.data,
+    priority: record.priority,
+    proxied: record.proxied,
+    settings: record.settings,
+    tags: record.tags,
+    ttl: record.ttl,
+  }
+}
+
+function normalizedDnsMatrixRecords(
+  records,
+  zoneName,
+  project,
+  ignoredPriorityIndexes = new Set(),
+) {
+  return normalizeValue(
+    records.map((record, index) => {
+      const value = project(record)
+      if (ignoredPriorityIndexes.has(index)) delete value.priority
+      return value
+    }),
+    zoneName,
+  )
+}
+
+function emailRoutingMxIndexes(records, zone) {
+  const requiredCounts = new Map()
+  for (const record of surfaceResult(zone, "email-dns") || []) {
+    if (String(record.type || "").toUpperCase() !== MX_RECORD_TYPE) continue
+    const key = emailDnsRecordAssociationKey(record, zone.meta.name)
+    requiredCounts.set(key, (requiredCounts.get(key) || 0) + 1)
+  }
+
+  const indexes = new Set()
+  records.forEach((record, index) => {
+    if (String(record.type || "").toUpperCase() !== MX_RECORD_TYPE) return
+    const key = emailDnsRecordAssociationKey(record, zone.meta.name)
+    const remaining = requiredCounts.get(key) || 0
+    if (remaining === 0) return
+    indexes.add(index)
+    requiredCounts.set(key, remaining - 1)
+  })
+  return indexes
+}
+
 function addEmailRows(rows, inventory) {
   for (const zone of inventory.zones) {
     const settings = surfaceResult(zone, "email")
@@ -218,6 +350,9 @@ function addEmailRows(rows, inventory) {
         zone,
         normalizeValue(catchAll, zone.meta.name, { omit: ["priority"] }),
         {
+          ...emailRoutingRuleCellOptions(catchAll, zone, {
+            catchAll: true,
+          }),
           resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
         },
       )
@@ -236,6 +371,7 @@ function addEmailRows(rows, inventory) {
         rule.name || matcher,
         zone,
         normalizeValue(rule, zone.meta.name, { omit: ["priority"] }),
+        emailRoutingRuleCellOptions(rule, zone),
       )
     }
 
@@ -268,19 +404,40 @@ function addEmailRows(rows, inventory) {
             `${unmatchedCount} expected record${unmatchedCount === 1 ? "" : "s"} has no matching live DNS record; use Email alignment to create it`,
           ].filter(Boolean).join("; ")
         }
+        const ignoredPriorityIndexes = new Set(
+          records.flatMap((record, index) => (
+            String(record.type || "").toUpperCase() === MX_RECORD_TYPE
+              ? [index]
+              : []
+          )),
+        )
+        const inspectionRecords = normalizedDnsMatrixRecords(
+          records,
+          zone.meta.name,
+          emailDnsMatrixRecord,
+        )
+        const comparisonRecords = normalizedDnsMatrixRecords(
+          records,
+          zone.meta.name,
+          emailDnsMatrixRecord,
+          ignoredPriorityIndexes,
+        )
         addCell(
           rows,
           "Email DNS specification",
           key,
           key,
           zone,
-          records.map((record) => normalizeValue({
-            content: record.content,
-            priority: record.priority,
-            ttl: record.ttl,
-          }, zone.meta.name)),
+          inspectionRecords,
           {
             ...editOptions,
+            description: ignoredPriorityIndexes.size > 0
+              ? EMAIL_ROUTING_MX_DRIFT_DESCRIPTION
+              : "",
+            display: shortDisplay(comparisonRecords),
+            full: displayJson(inspectionRecords),
+            inspectionValue: inspectionRecords,
+            normalized: comparisonRecords,
             resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
           },
         )
@@ -343,25 +500,36 @@ function addDnsRows(rows, inventory) {
       const copyable = records.every(
         (record) => copyCapabilities.get(record).copyable,
       )
+      const ignoredPriorityIndexes = emailRoutingMxIndexes(records, zone)
+      const inspectionRecords = normalizedDnsMatrixRecords(
+        records,
+        zone.meta.name,
+        dnsMatrixRecord,
+      )
+      const comparisonRecords = normalizedDnsMatrixRecords(
+        records,
+        zone.meta.name,
+        dnsMatrixRecord,
+        ignoredPriorityIndexes,
+      )
       addCell(
         rows,
         "DNS records",
         key,
         key,
         zone,
-        records.map((record) => normalizeValue({
-          comment: record.comment,
-          content: record.content,
-          data: record.data,
-          priority: record.priority,
-          proxied: record.proxied,
-          settings: record.settings,
-          tags: record.tags,
-          ttl: record.ttl,
-        }, zone.meta.name)),
+        inspectionRecords,
         {
           ...dnsRecordEditOptions(records, zone),
+          description: ignoredPriorityIndexes.size > 0
+            ? EMAIL_ROUTING_MX_DRIFT_DESCRIPTION
+            : "",
+          display: shortDisplay(comparisonRecords),
+          full: displayJson(inspectionRecords),
+          inspectionValue: inspectionRecords,
+          normalized: comparisonRecords,
           resolutionKind: HOLE_RESOLUTION_KIND.DNS_RECORDS,
+          resolutionValue: inspectionRecords,
           resolutionSource: copyable
             ? {
                 recordIds: records.map((record) => record.id),
@@ -598,9 +766,9 @@ function resolutionCandidates(row, inventory) {
   for (const zone of inventory.zones) {
     const cell = row.cells.get(zone.meta.name)
     if (!cell) continue
-    if (!grouped.has(cell.canonical)) {
-      grouped.set(cell.canonical, {
-        canonical: cell.canonical,
+    if (!grouped.has(cell.resolutionCanonical)) {
+      grouped.set(cell.resolutionCanonical, {
+        canonical: cell.resolutionCanonical,
         count: 0,
         display: cell.display,
         full: cell.full,
@@ -609,7 +777,7 @@ function resolutionCandidates(row, inventory) {
         sources: [],
       })
     }
-    const variant = grouped.get(cell.canonical)
+    const variant = grouped.get(cell.resolutionCanonical)
     variant.count += 1
     if (cell.resolutionSource) {
       variant.sources.push({
@@ -838,9 +1006,11 @@ export function buildMatrix(inventory) {
       ...rowDefinition
     } = row
     const description = [...descriptions].sort().join(" / ")
-    const canonicalValues = inventory.zones.map((zone) => row.cells.get(zone.meta.name)?.canonical ?? "__missing__")
+    const canonicalValues = inventory.zones.map(
+      (zone) => row.cells.get(zone.meta.name)?.canonical ?? MATRIX_MISSING_CANONICAL,
+    )
     const variants = [...new Set(canonicalValues)]
-    const nonMissing = [...new Set(canonicalValues.filter((value) => value !== "__missing__"))]
+    const comparison = comparisonMetadata(canonicalValues)
     const candidates = resolutionCandidates(rowDefinition, inventory)
     const fleetRename = fleetRuleRenameCapability(
       rowDefinition,
@@ -863,12 +1033,15 @@ export function buildMatrix(inventory) {
       .map((zone) => zone.meta.id)
     return {
       ...rowDefinition,
+      ...comparison,
       description,
       different: variants.length > 1,
       fleetAction: fleetRename.action,
       fleetActionReason: fleetRename.reason,
       missingResolutions,
-      missingCount: canonicalValues.filter((value) => value === "__missing__").length,
+      missingCount: canonicalValues.filter(
+        (value) => value === MATRIX_MISSING_CANONICAL,
+      ).length,
       missingZoneIds,
       presentCount: row.cells.size,
       recordType,
@@ -879,7 +1052,6 @@ export function buildMatrix(inventory) {
         ...row.cells.keys(),
         ...[...row.cells.values()].map((cell) => cell.full),
       ].join(" ").toLowerCase(),
-      variantIndexes: new Map(nonMissing.map((value, index) => [value, index % 6])),
     }
   })
 
@@ -916,6 +1088,7 @@ export function matrixRenderKey(inventory, matrix) {
           capability: cell.capability,
           display: cell.display,
           full: cell.full,
+          resolutionCanonical: cell.resolutionCanonical,
           resolutionSource: cell.resolutionSource,
           secondaryAction: cell.secondaryAction,
           parentAction: cell.parentAction,
