@@ -179,11 +179,12 @@ test("matrix leads with rule names and separates direct edits from copying", () 
 
   const matrix = buildMatrix(inventory)
   const row = matrix.rows.find(
-    (entry) => entry.category === "Ruleset rules" && entry.label === "Redirect docs",
+    (entry) => entry.category === "Redirects" && entry.label === "Redirect docs",
   )
   const cell = row.cells.get("alpha.example")
 
-  assert.equal(row.description, "redirect | http_request_dynamic_redirect")
+  assert.equal(row.description, "When http.host eq \"{zone}\"")
+  assert.deepEqual(row.redirectTypes, ["static"])
   assert.deepEqual(cell.action, {
     phase: "http_request_dynamic_redirect",
     ruleId: "id-Redirect docs",
@@ -207,6 +208,10 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   assert.equal(cell.presentation.phase, "http_request_dynamic_redirect")
   assert.equal(cell.presentation.rule.action, "redirect")
   assert.equal(cell.presentation.rule.expression, "http.host eq \"{zone}\"")
+  assert.equal(cell.presentation.redirect.target, "https://{zone}/docs")
+  assert.equal(cell.presentation.redirect.targetKind, "static")
+  assert.equal(cell.presentation.redirect.position, 1)
+  assert.equal(cell.display, "https://{zone}/docs")
   assert.deepEqual(cell.inspectionValue, cell.presentation.rule)
   assert.deepEqual(cell.parentAction, {
     kind: "zone",
@@ -223,6 +228,143 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   assert.deepEqual(
     parentRow.cells.get("alpha.example").workspaceAction,
     cell.parentAction,
+  )
+})
+
+test("matrix aligns redirects by normalized match behavior despite name differences", () => {
+  const ruleset = (zoneName, description) => ({
+    id: `redirect-entrypoint-${zoneName}`,
+    kind: "zone",
+    name: "default",
+    phase: "http_request_dynamic_redirect",
+    rules: [
+      makeRule(description, {
+        action: "redirect",
+        action_parameters: {
+          from_value: {
+            preserve_query_string: true,
+            status_code: 302,
+            target_url: {
+              expression: `concat(\"https://${zoneName}\", http.request.uri.path)`,
+            },
+          },
+        },
+        expression: `http.host eq \"www.${zoneName}\"`,
+        id: `redirect-${zoneName}`,
+      }),
+    ],
+  })
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      ruleDetails: [ok(ruleset("alpha.example", "Redirect from www to root"))],
+    }),
+    makeZone("beta.example", {
+      ruleDetails: [ok(ruleset("beta.example", "Redirect from WWW to root"))],
+    }),
+  ]))
+  const rows = matrix.rows.filter((entry) => entry.category === "Redirects")
+  const row = rows.find(
+    (entry) => entry.key.includes("http.host eq \"www.{zone}\""),
+  )
+
+  assert.equal(rows.length, 1)
+  assert.equal(row.presentCount, 2)
+  assert.equal(row.different, true)
+  assert.deepEqual(row.redirectTypes, ["dynamic"])
+  assert.equal(
+    row.cells.get("beta.example").presentation.redirect.target,
+    "concat(\"https://{zone}\", http.request.uri.path)",
+  )
+})
+
+test("matrix preserves duplicate redirects with the same match expression", () => {
+  const ruleset = {
+    id: "redirect-entrypoint",
+    kind: "zone",
+    name: "default",
+    phase: "http_request_dynamic_redirect",
+    rules: [
+      makeRule("First redirect", {
+        action: "redirect",
+        action_parameters: {
+          from_value: {
+            preserve_query_string: false,
+            status_code: 301,
+            target_url: { value: "https://alpha.example/first" },
+          },
+        },
+        expression: "http.request.uri.path eq \"/old\"",
+        id: "first-redirect",
+      }),
+      makeRule("Second redirect", {
+        action: "redirect",
+        action_parameters: {
+          from_value: {
+            preserve_query_string: false,
+            status_code: 302,
+            target_url: { value: "https://alpha.example/second" },
+          },
+        },
+        expression: "http.request.uri.path eq \"/old\"",
+        id: "second-redirect",
+      }),
+    ],
+  }
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      ruleDetails: [ok(ruleset)],
+    }),
+  ]))
+  const rows = matrix.rows.filter((entry) => entry.category === "Redirects")
+
+  assert.equal(rows.length, 2)
+  assert.deepEqual(
+    rows.map((row) => [...row.cells.values()][0].action.ruleId).sort(),
+    ["first-redirect", "second-redirect"],
+  )
+})
+
+test("matrix treats redirect order as behavioral drift", () => {
+  const redirect = makeRule("Redirect docs", {
+    action: "redirect",
+    action_parameters: {
+      from_value: {
+        preserve_query_string: true,
+        status_code: 302,
+        target_url: { value: "https://example.com/docs" },
+      },
+    },
+    expression: "http.request.uri.path eq \"/docs\"",
+    id: "redirect-docs",
+  })
+  const ruleset = (rules) => ({
+    id: "redirect-entrypoint",
+    kind: "zone",
+    name: "default",
+    phase: "http_request_dynamic_redirect",
+    rules,
+  })
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      ruleDetails: [ok(ruleset([redirect]))],
+    }),
+    makeZone("beta.example", {
+      ruleDetails: [ok(ruleset([
+        makeRule("Earlier rule", { id: "earlier-rule" }),
+        redirect,
+      ]))],
+    }),
+  ]))
+  const row = matrix.rows.find(
+    (entry) => entry.category === "Redirects" && entry.label === "Redirect docs",
+  )
+
+  assert.equal(row.different, true)
+  assert.equal(row.cells.get("alpha.example").presentation.redirect.position, 1)
+  assert.equal(row.cells.get("beta.example").presentation.redirect.position, 2)
+  assert.equal(
+    row.cells.get("alpha.example").resolutionCanonical,
+    row.cells.get("beta.example").resolutionCanonical,
   )
 })
 
@@ -606,7 +748,7 @@ test("matrix exposes a destination-owned fill for a portable missing rule", () =
     makeZone("beta.example"),
   ]))
   const row = matrix.rows.find(
-    (entry) => entry.category === "Ruleset rules" && entry.label === "Redirect docs",
+    (entry) => entry.category === "Redirects" && entry.label === "Redirect docs",
   )
   const resolution = row.missingResolutions.get("beta.example")
 

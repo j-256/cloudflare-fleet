@@ -28,6 +28,9 @@ test("rule presentation separates common facts from nested configuration", () =>
       from_value: {
         preserve_query_string: true,
         status_code: 301,
+        target_url: {
+          value: "https://example.com/docs",
+        },
       },
     },
     description: "Redirect docs",
@@ -46,12 +49,24 @@ test("rule presentation separates common facts from nested configuration", () =>
       ["enabled", "Enabled"],
       ["action", "Redirect"],
       ["phase", "Dynamic redirects"],
-      ["expression", "http.request.uri.path eq \"/docs\""],
       ["ref", "redirect-docs"],
     ],
   )
   assert.deepEqual(
     presentation.sections.map(({ key }) => key),
-    ["action_parameters", "logging"],
+    ["logging"],
   )
+  assert.deepEqual(presentation.redirect, {
+    enabled: true,
+    enabledLabel: "Enabled",
+    match: "http.request.uri.path eq \"/docs\"",
+    preserveQueryString: true,
+    position: null,
+    queryLabel: "Keep query",
+    responseLabel: "301 Moved permanently",
+    statusCode: 301,
+    target: "https://example.com/docs",
+    targetKind: "static",
+    targetKindLabel: "Static target",
+  })
 })

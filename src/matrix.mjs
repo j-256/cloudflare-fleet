@@ -12,6 +12,7 @@ import {
   EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
+  MATRIX_CATEGORY,
   RULESET_ACTION_KIND,
   RULESET_KIND,
 } from "./constants.mjs"
@@ -24,6 +25,10 @@ import {
   ruleCopyCapability,
 } from "./policies.mjs"
 import { rulePhaseLabel } from "./rule-presentation.mjs"
+import {
+  presentRedirect,
+  redirectSemanticIdentity,
+} from "./redirect-presentation.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
@@ -34,7 +39,8 @@ const CATEGORY_ORDER = [
   "Email routes",
   "Email DNS specification",
   "Rulesets",
-  "Ruleset rules",
+  MATRIX_CATEGORY.REDIRECTS,
+  MATRIX_CATEGORY.RULESET_RULES,
   "Zone settings",
   "DNSSEC",
   "DNS records",
@@ -58,6 +64,10 @@ const EMAIL_ROUTING_MX_DRIFT_DESCRIPTION = "Cloudflare-assigned MX priorities ar
 const MATRIX_MISSING_CANONICAL = "__missing__"
 const MX_RECORD_TYPE = "MX"
 const NON_CONSENSUS_VARIANT_COLOR_COUNT = 5
+const RULE_MATRIX_CATEGORY_SET = new Set([
+  MATRIX_CATEGORY.REDIRECTS,
+  MATRIX_CATEGORY.RULESET_RULES,
+])
 
 function surfaceResult(zone, surfaceId) {
   const surface = zone.surfaces[surfaceId]
@@ -155,6 +165,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     parentAction: options.parentAction || null,
     resolutionCanonical: stableString(resolutionValue),
     resolutionSource: options.resolutionSource || null,
+    search: options.search || "",
     secondaryAction: options.secondaryAction || null,
     workspaceAction: options.workspaceAction || null,
   })
@@ -610,6 +621,7 @@ function addRulesetRows(rows, inventory) {
         },
       )
 
+      const ruleIdentityOccurrences = new Map()
       for (const [index, rule] of (ruleset.rules || []).entries()) {
         const normalizedRule = normalizeValue(rule, zone.meta.name, {
           omit: ["last_updated", "ref", "version"],
@@ -617,15 +629,33 @@ function addRulesetRows(rows, inventory) {
         })
         const capability = ruleCopyCapability(ruleset, rule)
         const stableRef = rule.ref && rule.ref !== rule.id ? rule.ref : ""
-        const identity = normalizeText(
+        const label = normalizeText(
           rule.description || stableRef || `${rule.action || "rule"} rule ${index + 1} | ${(rule.expression || "").slice(0, 80)}`,
           zone.meta.name,
         )
+        const redirect = presentRedirect(normalizedRule, {
+          position: index + 1,
+        })
+        let identity = label
+        if (redirect) {
+          const baseIdentity = redirectSemanticIdentity(normalizedRule, index)
+          const occurrence = ruleIdentityOccurrences.get(baseIdentity) || 0
+          ruleIdentityOccurrences.set(baseIdentity, occurrence + 1)
+          identity = occurrence === 0
+            ? baseIdentity
+            : `${baseIdentity} #${occurrence + 1}`
+        }
+        const category = redirect
+          ? MATRIX_CATEGORY.REDIRECTS
+          : MATRIX_CATEGORY.RULESET_RULES
+        const description = redirect
+          ? `When ${redirect.match || "every request"}`
+          : `${rule.action || "unknown"} | ${phase}`
         addCell(
           rows,
-          "Ruleset rules",
+          category,
           `${phase}:${identity}`,
-          identity,
+          label,
           zone,
           normalizedRule,
           {
@@ -643,18 +673,27 @@ function addRulesetRows(rows, inventory) {
               label: capability.copyable ? "Copy to selected zones" : "Copy unavailable",
               reason: capability.reason,
             },
-            description: `${rule.action || "unknown"} | ${phase}`,
-            display: rule.enabled === false ? "Disabled" : "Enabled",
+            description,
+            display: redirect?.target || (rule.enabled === false ? "Disabled" : "Enabled"),
             full: displayJson({
               copy_capability: capability.copyable ? "copy to selected zones" : capability.reason,
+              ...(redirect ? { position: redirect.position } : {}),
               rule: normalizedRule,
             }),
+            normalized: redirect
+              ? {
+                  position: redirect.position,
+                  rule: normalizedRule,
+                }
+              : normalizedRule,
             presentation: {
               kind: "rule",
               phase,
+              redirect,
               rule: normalizedRule,
             },
             inspectionValue: normalizedRule,
+            resolutionValue: normalizedRule,
             parentAction: workspaceAction,
             secondaryAction: capability.copyable
               ? {
@@ -675,6 +714,17 @@ function addRulesetRows(rows, inventory) {
                   type: HOLE_RESOLUTION_KIND.RULESET_RULE,
                 }
               : null,
+            search: redirect
+              ? [
+                  redirect.targetKindLabel,
+                  redirect.responseLabel,
+                  redirect.queryLabel,
+                  redirect.enabledLabel,
+                  redirect.match,
+                  `Order ${redirect.position}`,
+                  redirect.target,
+                ].join(" ")
+              : "",
           },
         )
       }
@@ -897,7 +947,7 @@ function missingResolution(row, zone, inventory, candidates) {
 }
 
 function fleetRuleRenameCapability(row, inventory, duplicateZoneNames) {
-  if (row.category !== "Ruleset rules" || row.cells.size === 0) {
+  if (!RULE_MATRIX_CATEGORY_SET.has(row.category) || row.cells.size === 0) {
     return {
       action: null,
       reason: "",
@@ -1028,6 +1078,11 @@ export function buildMatrix(inventory) {
     const recordType = DNS_MATRIX_CATEGORY_SET.has(row.category)
       ? row.key.split(" ", 1)[0].toUpperCase()
       : ""
+    const redirectTypes = [...new Set(
+      [...row.cells.values()]
+        .map((cell) => cell.presentation?.redirect?.targetKind)
+        .filter(Boolean),
+    )].sort(compareCanonical)
     const missingZoneIds = inventory.zones
       .filter((zone) => !row.cells.has(zone.meta.name))
       .map((zone) => zone.meta.id)
@@ -1045,12 +1100,14 @@ export function buildMatrix(inventory) {
       missingZoneIds,
       presentCount: row.cells.size,
       recordType,
+      redirectTypes,
       search: [
         row.category,
         row.label,
         description,
         ...row.cells.keys(),
         ...[...row.cells.values()].map((cell) => cell.full),
+        ...[...row.cells.values()].map((cell) => cell.search),
       ].join(" ").toLowerCase(),
     }
   })
@@ -1108,6 +1165,7 @@ export function matrixRenderKey(inventory, matrix) {
       ),
       presentCount: row.presentCount,
       recordType: row.recordType,
+      redirectTypes: row.redirectTypes,
     })),
     zones: inventory.zones.map((zone) => ({
       createdOn: zone.meta.created_on,

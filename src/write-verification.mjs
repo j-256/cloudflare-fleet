@@ -1,0 +1,168 @@
+import { HTTP_METHOD, RULESET_KIND } from "./constants.mjs"
+
+export const WRITE_VERIFICATION_KIND = Object.freeze({
+  DNS_RECORD: "dns-record",
+  EMAIL_RULE: "email-rule",
+  RULESET: "ruleset",
+  RULESET_DELETION: "ruleset-deletion",
+  RULESET_PHASE: "ruleset-phase",
+  SETTING: "setting",
+  SURFACE: "surface",
+})
+
+export const WRITE_VERIFICATION_SURFACE = Object.freeze({
+  DNS: "dns",
+  EMAIL: "email",
+  EMAIL_DNS: "email-dns",
+})
+
+function requiredString(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${label} is required`)
+  }
+  return value
+}
+
+function operationSegments(operation) {
+  const path = requiredString(operation?.path, "Write operation path")
+  return path
+    .split("?", 1)[0]
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => decodeURIComponent(segment))
+}
+
+function surfaceTarget(zoneId, surfaceId) {
+  return {
+    kind: WRITE_VERIFICATION_KIND.SURFACE,
+    surfaceId,
+    zoneId,
+  }
+}
+
+function emailDnsTargets(zoneId) {
+  return [
+    surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.DNS),
+    surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.EMAIL),
+    surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.EMAIL_DNS),
+  ]
+}
+
+export function verificationTargetsForOperation(operation) {
+  const segments = operationSegments(operation)
+  if (segments[0] !== "zones" || !segments[1]) {
+    throw new Error(`Unsupported write verification path: ${operation.path}`)
+  }
+  const zoneId = segments[1]
+
+  if (segments[2] === "settings" && segments.length === 4) {
+    return [{
+      kind: WRITE_VERIFICATION_KIND.SETTING,
+      settingId: segments[3],
+      zoneId,
+    }]
+  }
+
+  if (segments[2] === "dns_records") {
+    if (segments.length === 4 && operation.method !== HTTP_METHOD.DELETE) {
+      return [{
+        kind: WRITE_VERIFICATION_KIND.DNS_RECORD,
+        recordId: segments[3],
+        zoneId,
+      }]
+    }
+    if (segments.length === 3) {
+      return [surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.DNS)]
+    }
+  }
+
+  if (segments[2] === "email" && segments[3] === "routing") {
+    if (segments.length === 4) {
+      return [surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.EMAIL)]
+    }
+    if (segments[4] === "dns" && segments.length === 5) {
+      return emailDnsTargets(zoneId)
+    }
+    if (segments[4] === "rules" && segments[5] && segments.length === 6) {
+      return [{
+        kind: WRITE_VERIFICATION_KIND.EMAIL_RULE,
+        ruleIdentifier: segments[5],
+        zoneId,
+      }]
+    }
+  }
+
+  if (segments[2] === "rulesets") {
+    if (segments.length === 3 && operation.method === HTTP_METHOD.POST) {
+      return [{
+        kind: WRITE_VERIFICATION_KIND.RULESET_PHASE,
+        kinds: [operation.body?.kind || RULESET_KIND.ZONE],
+        phase: requiredString(
+          operation.body?.phase,
+          "Created ruleset phase",
+        ),
+        zoneId,
+      }]
+    }
+    if (segments[3]) {
+      if (segments.length === 4 && operation.method === HTTP_METHOD.DELETE) {
+        return [{
+          kind: WRITE_VERIFICATION_KIND.RULESET_DELETION,
+          rulesetId: segments[3],
+          zoneId,
+        }]
+      }
+      return [{
+        kind: WRITE_VERIFICATION_KIND.RULESET,
+        rulesetId: segments[3],
+        zoneId,
+      }]
+    }
+  }
+
+  throw new Error(`Unsupported write verification path: ${operation.path}`)
+}
+
+function verificationTargetKey(target) {
+  if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
+    return `${target.zoneId}:${target.kind}:${target.surfaceId}`
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
+    return `${target.zoneId}:${target.kind}:${target.settingId}`
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.DNS_RECORD) {
+    return `${target.zoneId}:${target.kind}:${target.recordId}`
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.EMAIL_RULE) {
+    return `${target.zoneId}:${target.kind}:${target.ruleIdentifier}`
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_PHASE) {
+    return `${target.zoneId}:${target.kind}:${target.phase}:${target.kinds.slice().sort().join(",")}`
+  }
+  return `${target.zoneId}:${target.kind}:${target.rulesetId}`
+}
+
+export function verificationTargetsForPlans(plans) {
+  if (!Array.isArray(plans)) throw new TypeError("Write plans must be an array")
+  const targets = new Map()
+  for (const plan of plans) {
+    if (!Array.isArray(plan?.operations)) {
+      throw new TypeError("Every write plan must contain operations")
+    }
+    for (const operation of plan.operations) {
+      for (const target of verificationTargetsForOperation(operation)) {
+        targets.set(verificationTargetKey(target), target)
+      }
+    }
+  }
+
+  for (const target of [...targets.values()]) {
+    if (target.kind !== WRITE_VERIFICATION_KIND.DNS_RECORD) continue
+    const surfaceKey = verificationTargetKey(
+      surfaceTarget(target.zoneId, WRITE_VERIFICATION_SURFACE.DNS),
+    )
+    if (targets.has(surfaceKey)) targets.delete(verificationTargetKey(target))
+  }
+
+  return [...targets.values()]
+}

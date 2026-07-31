@@ -1,4 +1,5 @@
 import { humanizeValueField } from "./value-editor.mjs"
+import { presentRedirect } from "./redirect-presentation.mjs"
 
 const RULE_ACTION_LABELS = Object.freeze({
   block: "Block",
@@ -95,7 +96,8 @@ export function presentRule(rule, phase = "") {
       value: rulePhaseLabel(phase),
     })
   }
-  if (definition.expression !== undefined) {
+  const redirect = presentRedirect(definition)
+  if (!redirect && definition.expression !== undefined) {
     fields.push({
       key: "expression",
       kind: "code",
@@ -115,6 +117,7 @@ export function presentRule(rule, phase = "") {
   const sections = []
   for (const key of RULE_SECTION_FIELDS) {
     if (definition[key] === undefined || definition[key] === null) continue
+    if (redirect && key === "action_parameters") continue
     sections.push({
       key,
       label: humanizeRuleField(key),
@@ -137,6 +140,7 @@ export function presentRule(rule, phase = "") {
 
   return {
     fields,
+    redirect,
     sections,
   }
 }

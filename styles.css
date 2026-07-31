@@ -319,8 +319,9 @@ h1 {
   max-width: 190px;
 }
 
-#dns-type {
-  max-width: 145px;
+#dns-type,
+#redirect-type {
+  max-width: 170px;
 }
 
 .toolbar select:disabled {
@@ -930,6 +931,107 @@ thead .facet-heading {
   line-height: 1.3;
 }
 
+.redirect-cell-summary {
+  clear: both;
+}
+
+.redirect-cell-target {
+  display: grid;
+  gap: 2px;
+}
+
+.redirect-cell-target > span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.redirect-cell-target code {
+  display: -webkit-box;
+  overflow: hidden;
+  max-height: 4.35em;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.redirect-cell-name {
+  display: grid;
+  gap: 1px;
+  margin-top: 5px;
+  padding-left: 5px;
+  border-left: 2px solid var(--accent-2);
+}
+
+.redirect-cell-name > span {
+  color: var(--accent-2);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.redirect-cell-name strong {
+  font-size: 9px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.redirect-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.redirect-badge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.redirect-badge.target-dynamic {
+  border-color: rgba(180, 151, 255, 0.44);
+  color: var(--purple);
+}
+
+.redirect-badge.target-static {
+  border-color: rgba(90, 169, 255, 0.44);
+  color: var(--blue);
+}
+
+.redirect-badge.target-list {
+  border-color: rgba(246, 138, 203, 0.44);
+  color: var(--pink);
+}
+
+.redirect-badge.response,
+.redirect-badge.enabled {
+  border-color: rgba(119, 208, 143, 0.44);
+  color: var(--green);
+}
+
+.redirect-badge.position {
+  border-color: rgba(255, 180, 84, 0.44);
+  color: var(--accent-2);
+}
+
+.redirect-badge.disabled {
+  border-color: rgba(255, 107, 120, 0.48);
+  color: var(--danger);
+}
+
 .cell-actions {
   display: flex;
   clear: both;
@@ -1056,6 +1158,84 @@ pre {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.redirect-flow {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(11, 19, 28, 0.72);
+}
+
+.redirect-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.redirect-node {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 7px;
+  border-left: 2px solid var(--slate);
+  border-radius: 4px;
+  background: rgba(22, 34, 48, 0.78);
+}
+
+.redirect-node.target-dynamic {
+  border-left-color: var(--purple);
+}
+
+.redirect-node.target-static {
+  border-left-color: var(--blue);
+}
+
+.redirect-node.target-list {
+  border-left-color: var(--pink);
+}
+
+.redirect-node > span {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.redirect-node code {
+  min-width: 0;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.redirect-arrow {
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.redirect-flow > .redirect-badges {
+  margin-top: 0;
+}
+
+.redirect-flow.compact {
+  padding: 7px;
+}
+
+.matrix-cell .redirect-route {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.matrix-cell .redirect-arrow {
+  justify-self: center;
+  font-size: 13px;
+  transform: rotate(90deg);
 }
 
 .rule-facts {
@@ -1559,6 +1739,14 @@ dialog form {
   margin-top: 7px;
 }
 
+.rule-card-preview.redirect-preview {
+  display: block;
+}
+
+.rule-card-preview.redirect-preview .redirect-flow {
+  margin-top: 0;
+}
+
 .rule-card-preview:empty {
   display: none;
 }
@@ -1703,6 +1891,7 @@ dialog label:not(.confirm-check) {
 dialog textarea,
 dialog input[type="text"],
 dialog input[type="number"],
+dialog input[type="url"],
 dialog select {
   width: 100%;
   padding: 11px;
@@ -1719,7 +1908,8 @@ dialog textarea {
 }
 
 dialog input[type="text"],
-dialog input[type="number"] {
+dialog input[type="number"],
+dialog input[type="url"] {
   min-height: 42px;
 }
 
@@ -1795,6 +1985,23 @@ dialog details > summary {
 
 .value-control {
   min-width: 0;
+}
+
+.redirect-editor-group {
+  border-left: 2px solid rgba(89, 215, 196, 0.46);
+  background: rgba(11, 19, 28, 0.38);
+}
+
+.redirect-editor-group legend {
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.redirect-editor-field .value-help {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
 }
 
 .value-editor textarea.value-control {
@@ -2289,7 +2496,8 @@ dialog details > summary {
     min-width: 0;
   }
 
-  #dns-type {
+  #dns-type,
+  #redirect-type {
     grid-column: 1;
     grid-row: 4;
     width: 100%;

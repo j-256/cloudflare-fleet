@@ -64,6 +64,10 @@
       <select id="dns-type" aria-describedby="visible-count">
         <option value="">All DNS types</option>
       </select>
+      <label class="sr-only" for="redirect-type">Filter by redirect target type</label>
+      <select id="redirect-type" aria-describedby="visible-count" hidden>
+        <option value="">All redirect targets</option>
+      </select>
       <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Drift only</button>
       <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
     </nav>
@@ -238,8 +242,8 @@
         <div class="value-editor-fields" id="value-editor-fields"></div>
       </section>
       <details class="editor-json" id="editor-json">
-        <summary id="editor-json-summary">Advanced JSON</summary>
-        <p id="editor-json-help">The exact payload stays synchronized with the fields above. Use this for uncommon fields or structural changes.</p>
+        <summary id="editor-json-summary">Show raw JSON</summary>
+        <p id="editor-json-help">The exact payload stays synchronized with the friendly fields above. Use it as an escape hatch for uncommon fields.</p>
         <label for="editor-value" id="editor-value-label">Desired definition</label>
         <textarea id="editor-value" spellcheck="false" aria-describedby="editor-target editor-json-help" aria-errormessage="editor-error" required></textarea>
       </details>

@@ -35,6 +35,7 @@ export function matrixRowMatchesFilters(row, filters) {
   return terms.every((term) => search.includes(term))
     && (!filters.category || row.category === filters.category)
     && (!filters.recordType || row.recordType === filters.recordType)
+    && (!filters.redirectType || (row.redirectTypes || []).includes(filters.redirectType))
     && (!filters.differencesOnly || row.different)
     && hasTargetHole
     && facetMatchesScope(

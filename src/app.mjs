@@ -7,13 +7,16 @@ import {
 } from "./cache.mjs"
 import {
   EMAIL_POLICY_COMPONENT,
+  EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
+  MATRIX_CATEGORY,
   POLICY_EXCEPTION_STATUS,
   RULESET_ACTION_KIND,
   RULESET_KIND,
   SESSION_TITLE,
   STATIC_LIMITATIONS,
+  SURFACES,
 } from "./constants.mjs"
 import {
   configuredEmailPolicyExceptions,
@@ -75,6 +78,12 @@ import {
   rulePhaseLabel,
 } from "./rule-presentation.mjs"
 import {
+  redirectTargetKindLabel,
+  REDIRECT_STATUS_OPTIONS,
+  REDIRECT_TARGET_KIND,
+  REDIRECT_TARGET_KIND_ORDER,
+} from "./redirect-presentation.mjs"
+import {
   actionResourceId,
   executeActionReadPlan,
   READ_ACTION,
@@ -107,6 +116,10 @@ import {
   valueAtPath,
   valueControlDescriptor,
 } from "./value-editor.mjs"
+import {
+  verificationTargetsForPlans,
+  WRITE_VERIFICATION_KIND,
+} from "./write-verification.mjs"
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
@@ -150,6 +163,24 @@ const EDITABLE_OBJECT_KEY_FIELDS = new Set([
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const RULESET_RULE_PREVIEW_LIMIT = 220
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
+const REDIRECT_FROM_VALUE_PATH = Object.freeze([
+  "action_parameters",
+  "from_value",
+])
+const REDIRECT_QUERY_CHOICE = Object.freeze({
+  DROP: "drop",
+  KEEP: "keep",
+  UNSPECIFIED: "unspecified",
+})
+const REDIRECT_PRIMARY_RULE_FIELDS = new Set([
+  "action",
+  "action_parameters",
+  "description",
+  "enabled",
+  "expression",
+  "ref",
+])
+const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]))
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 const POLICY_EXCEPTION_COMPONENT_LABELS = Object.freeze({
   [EMAIL_POLICY_COMPONENT.SPF]: "SPF",
@@ -241,6 +272,7 @@ const elements = {
   policyExceptionSummary: document.querySelector("#policy-exception-summary"),
   refresh: document.querySelector("#refresh"),
   refreshDetail: document.querySelector("#refresh-detail"),
+  redirectType: document.querySelector("#redirect-type"),
   renameCurrent: document.querySelector("#rename-current"),
   renameDialog: document.querySelector("#rename-dialog"),
   renameError: document.querySelector("#rename-error"),
@@ -496,7 +528,7 @@ function formattedJson(value) {
   return serialized === undefined ? String(value) : serialized
 }
 
-function createRawValueDetails(value, label = "Raw value JSON") {
+function createRawValueDetails(value, label = "Show raw JSON") {
   const raw = document.createElement("details")
   raw.className = "raw-value"
   raw.append(
@@ -513,6 +545,97 @@ function createGenericValueInspection(value) {
     createRawValueDetails(value),
   )
   return inspection
+}
+
+function createRedirectBadge(text, className = "", title = "") {
+  const badge = createElement("span", {
+    className: `redirect-badge${className ? ` ${className}` : ""}`,
+    text,
+  })
+  if (title) badge.title = title
+  return badge
+}
+
+function createRedirectBadges(redirect, options = {}) {
+  const badges = createElement("span", { className: "redirect-badges" })
+  const responseText = options.compact && redirect.statusCode !== null
+    ? String(redirect.statusCode)
+    : redirect.responseLabel
+  badges.append(
+    ...(redirect.position === null
+      ? []
+      : [createRedirectBadge(`Order ${redirect.position}`, "position")]),
+    createRedirectBadge(
+      redirect.targetKindLabel,
+      `target-${redirect.targetKind}`,
+    ),
+    createRedirectBadge(responseText, "response", redirect.responseLabel),
+    createRedirectBadge(redirect.queryLabel, "query"),
+  )
+  if (!redirect.enabled || !options.compact) {
+    badges.append(createRedirectBadge(
+      redirect.enabledLabel,
+      redirect.enabled ? "enabled" : "disabled",
+    ))
+  }
+  return badges
+}
+
+function createRedirectFlow(redirect, options = {}) {
+  const root = createElement("div", {
+    className: `redirect-flow${options.compact ? " compact" : ""}`,
+  })
+  const route = createElement("div", { className: "redirect-route" })
+  const match = createElement("div", { className: "redirect-node match" })
+  const target = createElement("div", {
+    className: `redirect-node target target-${redirect.targetKind}`,
+  })
+  const matchValue = createElement("code", { text: redirect.match || "Every request" })
+  const targetValue = createElement("code", { text: redirect.target })
+  matchValue.title = redirect.match || "Every request"
+  targetValue.title = redirect.target
+  match.append(
+    createElement("span", { text: "When request matches" }),
+    matchValue,
+  )
+  target.append(
+    createElement("span", { text: redirect.targetKindLabel }),
+    targetValue,
+  )
+  const arrow = createElement("span", {
+    className: "redirect-arrow",
+    text: "\u2192",
+  })
+  arrow.setAttribute("aria-hidden", "true")
+  route.append(
+    match,
+    arrow,
+    target,
+  )
+  root.append(route, createRedirectBadges(redirect, options))
+  return root
+}
+
+function createRedirectCellSummary(redirect, ruleName = "", rowName = "") {
+  const summary = document.createElement("summary")
+  summary.className = "redirect-cell-summary"
+  const target = createElement("span", { className: "redirect-cell-target" })
+  target.append(
+    createElement("span", { text: "To" }),
+    createElement("code", { text: redirect.target }),
+  )
+  target.lastElementChild.title = redirect.target
+  summary.append(target)
+  if (ruleName && ruleName !== rowName) {
+    const name = createElement("span", { className: "redirect-cell-name" })
+    name.append(
+      createElement("span", { text: "Rule name" }),
+      createElement("strong", { text: ruleName }),
+    )
+    summary.append(name)
+  }
+  summary.append(createRedirectBadges(redirect, { compact: true }))
+  return summary
 }
 
 function createRuleSummary(rule, phase = "", options = {}) {
@@ -556,6 +679,9 @@ function createRuleSummary(rule, phase = "", options = {}) {
       )
     }
     root.append(facts)
+  }
+  if (presentation.redirect) {
+    root.append(createRedirectFlow(presentation.redirect, options))
   }
   for (const section of presentation.sections) {
     const container = createElement("section", { className: "rule-section" })
@@ -727,6 +853,12 @@ function ruleActionParameterPreview(workspace, rule) {
 
 function ruleCardPreview(workspace, rule) {
   const preview = createElement("div", { className: "rule-card-preview" })
+  const redirect = presentRule(rule, workspace.ruleset.phase).redirect
+  if (redirect) {
+    preview.classList.add("redirect-preview")
+    preview.append(createRedirectFlow(redirect, { compact: true }))
+    return preview
+  }
   const entries = [
     ["Expression", rule.expression],
     ["Parameters", ruleActionParameterPreview(workspace, rule)],
@@ -788,7 +920,7 @@ function createRulesetRuleCard(workspace, rule) {
     createRuleSummary(editableRulePayload(rule), workspace.ruleset.phase, {
       omitFields: ["description", "enabled", "phase"],
     }),
-    createRawValueDetails(rule, "Raw rule JSON"),
+    createRawValueDetails(rule),
   )
   item.append(inspection)
 
@@ -1048,6 +1180,410 @@ function rulesetSurfaceSummary(ruleset) {
   return summary
 }
 
+function zoneApiPath(zoneId, ...segments) {
+  return ["zones", zoneId, ...segments].map(encodeURIComponent).join("/")
+}
+
+function updateInventoryZone(inventory, zoneId, update) {
+  let found = false
+  const zones = inventory.zones.map((zone) => {
+    if (zone.meta.id !== zoneId) return zone
+    found = true
+    return update(zone)
+  })
+  if (!found) throw new Error(`Verified zone ${zoneId} is absent from the fleet snapshot`)
+  return {
+    ...inventory,
+    zones,
+  }
+}
+
+function verifiedSurface(previous, response) {
+  return {
+    ...previous,
+    ok: true,
+    result: response.result,
+    status: response.status,
+  }
+}
+
+function inventoryWithVerifiedSurface(inventory, target, response) {
+  return updateInventoryZone(inventory, target.zoneId, (zone) => ({
+    ...zone,
+    surfaces: {
+      ...zone.surfaces,
+      [target.surfaceId]: verifiedSurface(
+        zone.surfaces[target.surfaceId],
+        response,
+      ),
+    },
+  }))
+}
+
+function inventoryWithVerifiedSetting(inventory, target, response) {
+  const setting = response.result
+  if (!setting || setting.id !== target.settingId) {
+    throw new Error(`Setting verification returned no ${target.settingId} definition`)
+  }
+  return updateInventoryZone(inventory, target.zoneId, (zone) => {
+    const settings = zone.surfaces.settings?.result
+    if (!Array.isArray(settings)) {
+      throw new Error("The cached zone settings surface is unavailable")
+    }
+    const found = settings.some((candidate) => candidate.id === target.settingId)
+    if (!found) throw new Error(`The cached ${target.settingId} setting is unavailable`)
+    return {
+      ...zone,
+      surfaces: {
+        ...zone.surfaces,
+        settings: verifiedSurface(
+          zone.surfaces.settings,
+          {
+            result: settings.map((candidate) => (
+              candidate.id === target.settingId ? setting : candidate
+            )),
+            status: response.status,
+          },
+        ),
+      },
+    }
+  })
+}
+
+function inventoryWithVerifiedDnsRecord(inventory, target, response) {
+  const record = response.result
+  if (!record || record.id !== target.recordId) {
+    throw new Error(`DNS verification returned no ${target.recordId} record`)
+  }
+  return updateInventoryZone(inventory, target.zoneId, (zone) => {
+    const records = zone.surfaces.dns?.result
+    if (!Array.isArray(records)) {
+      throw new Error("The cached DNS surface is unavailable")
+    }
+    const found = records.some((candidate) => candidate.id === target.recordId)
+    const nextRecords = found
+      ? records.map((candidate) => (
+          candidate.id === target.recordId ? record : candidate
+        ))
+      : [...records, record]
+    return {
+      ...zone,
+      surfaces: {
+        ...zone.surfaces,
+        dns: verifiedSurface(
+          zone.surfaces.dns,
+          {
+            result: nextRecords,
+            status: response.status,
+          },
+        ),
+      },
+    }
+  })
+}
+
+function inventoryWithVerifiedEmailRule(inventory, target, response) {
+  const rule = response.result
+  if (!rule || typeof rule !== "object") {
+    throw new Error("Email Routing verification returned no rule definition")
+  }
+  const catchAll = target.ruleIdentifier === EMAIL_ROUTING_RULE_IDENTIFIER.CATCH_ALL
+  return updateInventoryZone(inventory, target.zoneId, (zone) => {
+    const surfaces = {
+      ...zone.surfaces,
+    }
+    if (catchAll) {
+      surfaces["email-catch-all"] = verifiedSurface(
+        zone.surfaces["email-catch-all"],
+        response,
+      )
+    }
+    const rulesSurface = zone.surfaces["email-rules"]
+    if (rulesSurface?.ok && Array.isArray(rulesSurface.result)) {
+      const matches = (candidate) => catchAll
+        ? candidate.id === rule.id
+          || candidate.matchers?.some((matcher) => matcher.type === "all")
+        : candidate.id === target.ruleIdentifier
+      const found = rulesSurface.result.some(matches)
+      surfaces["email-rules"] = verifiedSurface(
+        rulesSurface,
+        {
+          result: found
+            ? rulesSurface.result.map((candidate) => (
+                matches(candidate) ? rule : candidate
+              ))
+            : [...rulesSurface.result, rule],
+          status: response.status,
+        },
+      )
+    }
+    return {
+      ...zone,
+      surfaces,
+    }
+  })
+}
+
+function inventoryWithVerifiedRuleset(inventory, target, response) {
+  const ruleset = normalizeRulesetDetail(response.result)
+  if (!ruleset || ruleset.id !== target.rulesetId) {
+    throw new Error(`Ruleset verification returned no ${target.rulesetId} definition`)
+  }
+  return updateInventoryZone(inventory, target.zoneId, (zone) => {
+    const summaries = zone.surfaces.rulesets?.result || []
+    const nextDetails = zone.ruleDetails.filter(
+      (detail) => !detail.ok || detail.result.id !== target.rulesetId,
+    )
+    if (rulesetIsEditable(ruleset)) {
+      nextDetails.push({
+        ok: true,
+        phase: ruleset.phase,
+        result: ruleset,
+        status: response.status,
+      })
+    }
+    return {
+      ...zone,
+      ruleDetails: nextDetails,
+      surfaces: {
+        ...zone.surfaces,
+        rulesets: verifiedSurface(
+          zone.surfaces.rulesets,
+          {
+            result: [
+              ...summaries.filter((entry) => entry.id !== target.rulesetId),
+              rulesetSurfaceSummary(ruleset),
+            ],
+            status: response.status,
+          },
+        ),
+      },
+    }
+  })
+}
+
+function inventoryWithVerifiedRulesetDeletion(inventory, target, response) {
+  const summaries = response.result
+  if (!Array.isArray(summaries)) {
+    throw new TypeError("Ruleset deletion verification returned no ruleset list")
+  }
+  if (summaries.some((ruleset) => ruleset.id === target.rulesetId)) {
+    throw new Error("Cloudflare still reports the deleted ruleset")
+  }
+  return updateInventoryZone(inventory, target.zoneId, (zone) => ({
+    ...zone,
+    ruleDetails: zone.ruleDetails.filter(
+      (detail) => !detail.ok || detail.result.id !== target.rulesetId,
+    ),
+    surfaces: {
+      ...zone.surfaces,
+      rulesets: verifiedSurface(zone.surfaces.rulesets, response),
+    },
+  }))
+}
+
+function inventoryWithVerifiedRulesetPhase(inventory, target, response) {
+  const summaries = response.result?.summaries
+  const details = response.result?.details
+  if (!Array.isArray(summaries) || !Array.isArray(details)) {
+    throw new TypeError("Ruleset phase verification returned incomplete state")
+  }
+  const kinds = new Set(target.kinds)
+  return updateInventoryZone(inventory, target.zoneId, (zone) => ({
+    ...zone,
+    ruleDetails: [
+      ...zone.ruleDetails.filter((detail) => {
+        const phase = detail.result?.phase || detail.phase
+        const kind = detail.result?.kind
+        return phase !== target.phase || (kind && !kinds.has(kind))
+      }),
+      ...details.map((ruleset) => ({
+        ok: true,
+        phase: ruleset.phase,
+        result: normalizeRulesetDetail(ruleset),
+        status: response.status,
+      })),
+    ],
+    surfaces: {
+      ...zone.surfaces,
+      rulesets: verifiedSurface(
+        zone.surfaces.rulesets,
+        {
+          result: summaries,
+          status: response.status,
+        },
+      ),
+    },
+  }))
+}
+
+async function readWriteVerificationTarget(target) {
+  if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
+    const surface = SURFACE_BY_ID.get(target.surfaceId)
+    if (!surface) throw new Error(`Unknown verification surface ${target.surfaceId}`)
+    return {
+      response: await api.request(surface.path(target.zoneId)),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "settings", target.settingId),
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.DNS_RECORD) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "dns_records", target.recordId),
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.EMAIL_RULE) {
+    return {
+      response: await api.request(zoneApiPath(
+        target.zoneId,
+        "email",
+        "routing",
+        "rules",
+        target.ruleIdentifier,
+      )),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "rulesets", target.rulesetId),
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_DELETION) {
+    return {
+      response: await api.request(zoneApiPath(target.zoneId, "rulesets")),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_PHASE) {
+    const summariesResponse = await api.request(
+      zoneApiPath(target.zoneId, "rulesets"),
+    )
+    if (!Array.isArray(summariesResponse.result)) {
+      throw new TypeError("Ruleset phase verification returned no ruleset list")
+    }
+    const kinds = new Set(target.kinds)
+    const matching = summariesResponse.result.filter(
+      (ruleset) => ruleset.phase === target.phase && kinds.has(ruleset.kind),
+    )
+    const details = await Promise.all(matching.map(async (ruleset) => {
+      const response = await api.request(
+        zoneApiPath(target.zoneId, "rulesets", ruleset.id),
+      )
+      return response.result
+    }))
+    return {
+      response: {
+        result: {
+          details,
+          summaries: summariesResponse.result,
+        },
+        status: summariesResponse.status,
+      },
+      target,
+    }
+  }
+  throw new Error(`Unsupported write verification kind: ${target.kind}`)
+}
+
+function inventoryWithWriteVerification(inventory, entry) {
+  const { response, target } = entry
+  if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
+    return inventoryWithVerifiedSurface(inventory, target, response)
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
+    return inventoryWithVerifiedSetting(inventory, target, response)
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.DNS_RECORD) {
+    return inventoryWithVerifiedDnsRecord(inventory, target, response)
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.EMAIL_RULE) {
+    return inventoryWithVerifiedEmailRule(inventory, target, response)
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET) {
+    return inventoryWithVerifiedRuleset(inventory, target, response)
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_DELETION) {
+    return inventoryWithVerifiedRulesetDeletion(inventory, target, response)
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_PHASE) {
+    return inventoryWithVerifiedRulesetPhase(inventory, target, response)
+  }
+  throw new Error(`Unsupported write verification kind: ${target.kind}`)
+}
+
+function syncRulesetWorkspaceFromInventory(inventory) {
+  const workspace = state.rulesetWorkspace
+  if (!workspace) return
+  const zone = inventory.zones.find(
+    (candidate) => candidate.meta.id === workspace.action.zoneId,
+  )
+  const ruleset = zone?.ruleDetails
+    .filter((detail) => detail.ok)
+    .map((detail) => detail.result)
+    .find((candidate) => candidate.id === workspace.action.rulesetId)
+  if (!ruleset) return
+  workspace.ruleset = ruleset
+  workspace.error = ""
+  workspace.loading = false
+  renderRulesetWorkspace()
+}
+
+async function verifyChangedWriteTargets(targets) {
+  if (targets.length === 0) {
+    restoreInventoryStatus()
+    return
+  }
+  setStatus(`Verifying changed resources 0/${targets.length}`)
+  let completed = 0
+  const entries = await Promise.all(targets.map(async (target) => {
+    const entry = await readWriteVerificationTarget(target)
+    completed += 1
+    setStatus(`Verifying changed resources ${completed}/${targets.length}`)
+    return entry
+  }))
+  let patched = state.inventory
+  if (!patched) throw new Error("The fleet snapshot is unavailable")
+  for (const entry of entries) {
+    patched = inventoryWithWriteVerification(patched, entry)
+  }
+  renderInventory(patched, state.inventorySource)
+  syncRulesetWorkspaceFromInventory(patched)
+  const serializedSnapshot = serializeLiveSnapshot(patched)
+  window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
+  let cacheError = null
+  try {
+    await api.persistSnapshot(serializedSnapshot)
+  } catch (error) {
+    cacheError = error
+  }
+  restoreInventoryStatus()
+  if (cacheError) {
+    setRefreshDetail(
+      `Changed resources verified, but the snapshot was not saved: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+      "error",
+    )
+  } else {
+    setRefreshDetail(
+      `${targets.length} changed resource${targets.length === 1 ? "" : "s"} verified; full fleet refresh skipped`,
+      "complete",
+    )
+  }
+}
+
 function patchVerifiedRuleset(action, ruleset, options = {}) {
   const inventory = state.inventory
   if (!inventory) throw new Error("The fleet snapshot is unavailable")
@@ -1253,13 +1789,18 @@ function showWorkspaceRuleInMatrix(ruleId) {
   if (!workspace) return
   const { ruleset } = workspace
   const zoneId = workspace.action.zoneId
+  const rule = ruleset.rules?.find((candidate) => candidate.id === ruleId)
   elements.rulesetDialog.close()
   elements.search.value = ""
-  elements.category.value = "Ruleset rules"
+  elements.category.value = presentRule(rule, ruleset.phase).redirect
+    ? MATRIX_CATEGORY.REDIRECTS
+    : MATRIX_CATEGORY.RULESET_RULES
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
+  elements.redirectType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
   syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
   filterRows()
   const selector = `.matrix-cell[data-zone-id="${CSS.escape(zoneId)}"][data-ruleset-id="${CSS.escape(ruleset.id)}"][data-rule-id="${CSS.escape(ruleId)}"]`
   const cell = elements.matrixBody.querySelector(selector)
@@ -1502,9 +2043,33 @@ function renderDnsTypes() {
   if (counts.has(previous)) elements.dnsType.value = previous
 }
 
+function renderRedirectTypes() {
+  const previous = elements.redirectType.value
+  const counts = new Map()
+  for (const row of state.matrix.rows) {
+    for (const targetKind of row.redirectTypes) {
+      counts.set(targetKind, (counts.get(targetKind) || 0) + 1)
+    }
+  }
+  elements.redirectType.replaceChildren(createElement("option", {
+    text: "All redirect targets",
+  }))
+  elements.redirectType.firstElementChild.value = ""
+  for (const targetKind of REDIRECT_TARGET_KIND_ORDER) {
+    if (!counts.has(targetKind)) continue
+    const option = createElement("option", {
+      text: `${redirectTargetKindLabel(targetKind)} (${counts.get(targetKind)})`,
+    })
+    option.value = targetKind
+    elements.redirectType.append(option)
+  }
+  if (counts.has(previous)) elements.redirectType.value = previous
+}
+
 function syncDnsTypeAvailability() {
   const category = elements.category.value
   const available = !category || DNS_MATRIX_CATEGORY_SET.has(category)
+  elements.dnsType.hidden = category === MATRIX_CATEGORY.REDIRECTS
   elements.dnsType.disabled = !available
   elements.dnsType.title = available
     ? "Limit DNS rows to one record type"
@@ -1512,11 +2077,23 @@ function syncDnsTypeAvailability() {
   if (!available) elements.dnsType.value = ""
 }
 
+function syncRedirectTypeAvailability() {
+  const available = elements.category.value === MATRIX_CATEGORY.REDIRECTS
+  elements.redirectType.hidden = !available
+  elements.redirectType.disabled = !available
+  elements.redirectType.title = available
+    ? "Limit redirects to static or computed destinations"
+    : "Redirect target type applies only to redirects"
+  if (!available) elements.redirectType.value = ""
+}
+
 function renderMatrixFilters() {
   renderCategories()
   renderScopes()
   renderDnsTypes()
+  renderRedirectTypes()
   syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
 }
 
 function renderPolicyCards() {
@@ -1628,10 +2205,12 @@ function showPolicyExceptionInMatrix(exception) {
     elements.category.value = "DNS records"
     elements.scope.value = MATRIX_SCOPE.ALL
     elements.dnsType.value = "TXT"
+    elements.redirectType.value = ""
     elements.differenceToggle.setAttribute("aria-pressed", "false")
     elements.targetHoles.setAttribute("aria-pressed", "false")
     elements.targetHoles.textContent = "Target holes"
     syncDnsTypeAvailability()
+    syncRedirectTypeAvailability()
     filterRows()
 
     const rows = [...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)")]
@@ -1861,17 +2440,26 @@ function matrixCell(row, zone) {
   if (cell.presentation?.kind === "rule") {
     const details = document.createElement("details")
     details.className = "cell-value-details"
+    const redirect = cell.presentation.redirect
     details.append(
-      createElement("summary", { text: cell.display }),
+      redirect
+        ? createRedirectCellSummary(
+            redirect,
+            cell.presentation.rule.description,
+            row.label,
+          )
+        : createElement("summary", { text: cell.display }),
       createRuleSummary(
         cell.presentation.rule,
         cell.presentation.phase,
         {
           compact: true,
-          omitFields: ["description", "enabled"],
+          omitFields: redirect
+            ? ["enabled", "action", "phase"]
+            : ["description", "enabled"],
         },
       ),
-      createRawValueDetails(cell.inspectionValue, "Raw rule JSON"),
+      createRawValueDetails(cell.inspectionValue),
     )
     td.append(details)
   } else if (structuredValue) {
@@ -1996,6 +2584,7 @@ function renderMatrix() {
     tr.dataset.missingZoneIds = row.missingZoneIds.join(" ")
     tr.dataset.presentCount = String(row.presentCount)
     tr.dataset.recordType = row.recordType
+    tr.dataset.redirectTypes = row.redirectTypes.join(" ")
     tr.dataset.search = row.search
 
     const categoryCell = createElement("th", { className: "category-cell", text: row.category })
@@ -2111,6 +2700,7 @@ function filterRows() {
     differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
     query: elements.search.value,
     recordType: elements.dnsType.value,
+    redirectType: elements.redirectType.value,
     scope: elements.scope.value,
     targetHolesOnly: elements.targetHoles.getAttribute("aria-pressed") === "true",
     targetZoneIds: state.selectedZoneIds,
@@ -2125,6 +2715,7 @@ function filterRows() {
       missingZoneIds: row.dataset.missingZoneIds.split(" ").filter(Boolean),
       presentCount: Number(row.dataset.presentCount),
       recordType: row.dataset.recordType,
+      redirectTypes: row.dataset.redirectTypes.split(" ").filter(Boolean),
       search: row.dataset.search,
     }, filters)
     row.classList.toggle("hidden-row", !show)
@@ -2298,8 +2889,10 @@ function showEditableSettings() {
   elements.search.value = ""
   elements.category.value = "Zone settings"
   elements.dnsType.value = ""
+  elements.redirectType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
   syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
   filterRows()
 
   const firstEdit = [...elements.matrixBody.querySelectorAll(".editable-cell")]
@@ -2415,8 +3008,18 @@ async function applyPlans(title, planSet, options = {}) {
     toast("This change has not passed live validation", "error")
     return false
   }
+  let verificationTargets = null
+  if (!options.verify) {
+    try {
+      verificationTargets = verificationTargetsForPlans(planSet.plans)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error")
+      return false
+    }
+  }
   if (!await confirmPlans(title, planSet)) return false
   const plans = planSet.plans
+  const verify = options.verify || (() => verifyChangedWriteTargets(verificationTargets))
   setBusy(true)
   let writesCompleted = false
   try {
@@ -2427,16 +3030,14 @@ async function applyPlans(title, planSet, options = {}) {
     })
     writesCompleted = true
     toast("Writes succeeded; re-reading live state for verification")
-    if (options.verify) await options.verify()
-    else await refreshInventory({ preserveSelection: true })
+    await verify()
     toast(options.successMessage || "Writes succeeded and live verification passed")
     return true
   } catch (error) {
     setStatus(writesCompleted ? "Verification failed" : "Write failed", "error")
     toast(error instanceof Error ? error.message : String(error), "error")
     try {
-      if (options.verify) await options.verify()
-      else await refreshInventory({ preserveSelection: true })
+      await verify()
     } catch {
       restoreInventoryStatus()
     }
@@ -3072,7 +3673,7 @@ function createObjectValueField(value, path, label, options) {
     group.append(
       createElement("p", {
         className: "empty-value",
-        text: "No cached fields. Use Advanced JSON to add a field.",
+        text: "No cached fields. Use Show raw JSON to add a field.",
       }),
     )
     return group
@@ -3177,6 +3778,230 @@ function createValueField(value, path, label, options = {}) {
   return createScalarValueField(value, path, label, suggestions)
 }
 
+function makeRedirectFieldFriendly(field, options = {}) {
+  field.classList.add("redirect-editor-field")
+  field.querySelector(":scope > .value-type")?.remove()
+  const control = field.querySelector(".value-control")
+  if (control && options.required) control.required = true
+  if (control && options.help) {
+    const help = createElement("small", {
+      className: "value-help",
+      text: options.help,
+    })
+    help.id = `${control.id}-help`
+    control.setAttribute("aria-describedby", help.id)
+    field.append(help)
+  }
+  return field
+}
+
+function createRedirectScalarField(value, path, label, options = {}) {
+  return makeRedirectFieldFriendly(
+    createScalarValueField(value, path, label),
+    options,
+  )
+}
+
+function createRedirectSelectField(label, className = "") {
+  const field = createElement("div", {
+    className: `value-field redirect-editor-field${className ? ` ${className}` : ""}`,
+  })
+  const controlId = valueEditorControlId()
+  const heading = createElement("label", { text: label })
+  const select = document.createElement("select")
+  heading.htmlFor = controlId
+  select.id = controlId
+  select.className = "value-control"
+  field.append(heading, select)
+  return { field, select }
+}
+
+function appendRedirectSelectOption(select, value, label, selected = false) {
+  const option = createElement("option", { text: label })
+  option.value = String(value)
+  option.selected = selected
+  select.append(option)
+}
+
+function createRedirectStatusField(statusCode, path) {
+  const { field, select } = createRedirectSelectField("HTTP response")
+  if (statusCode === null) {
+    appendRedirectSelectOption(select, "", "Choose a response code", true)
+  } else if (!REDIRECT_STATUS_OPTIONS.some(({ value }) => value === statusCode)) {
+    appendRedirectSelectOption(select, statusCode, `HTTP ${statusCode}`, true)
+  }
+  for (const option of REDIRECT_STATUS_OPTIONS) {
+    appendRedirectSelectOption(
+      select,
+      option.value,
+      option.label,
+      option.value === statusCode,
+    )
+  }
+  select.required = true
+  select.dataset.valueKind = JSON_VALUE_KIND.NUMBER
+  select.dataset.valuePath = encodeValuePath(path)
+  return field
+}
+
+function createRedirectTargetKindField(targetKind) {
+  const { field, select } = createRedirectSelectField("Destination type")
+  appendRedirectSelectOption(
+    select,
+    REDIRECT_TARGET_KIND.STATIC,
+    "Static URL",
+    targetKind === REDIRECT_TARGET_KIND.STATIC,
+  )
+  appendRedirectSelectOption(
+    select,
+    REDIRECT_TARGET_KIND.DYNAMIC,
+    "Dynamic expression",
+    targetKind === REDIRECT_TARGET_KIND.DYNAMIC,
+  )
+  select.dataset.redirectTargetKind = ""
+  return field
+}
+
+function createRedirectQueryField(preserveQueryString) {
+  const { field, select } = createRedirectSelectField("Query string")
+  appendRedirectSelectOption(
+    select,
+    REDIRECT_QUERY_CHOICE.KEEP,
+    "Keep the original query string",
+    preserveQueryString === true,
+  )
+  appendRedirectSelectOption(
+    select,
+    REDIRECT_QUERY_CHOICE.DROP,
+    "Drop the original query string",
+    preserveQueryString === false,
+  )
+  appendRedirectSelectOption(
+    select,
+    REDIRECT_QUERY_CHOICE.UNSPECIFIED,
+    "Use Cloudflare's default",
+    preserveQueryString === null,
+  )
+  select.dataset.redirectQuery = ""
+  return field
+}
+
+function createRedirectEditorGroup(label, fields) {
+  const group = document.createElement("fieldset")
+  group.className = "value-group redirect-editor-group"
+  group.append(createElement("legend", { text: label }))
+  const contents = createElement("div", { className: "value-group-fields" })
+  contents.append(...fields)
+  group.append(contents)
+  return group
+}
+
+function createRedirectEditorFields(editor) {
+  const draft = editor.draft
+  const redirect = presentRule(draft).redirect
+  const fromValue = draft.action_parameters?.from_value
+  if (!redirect
+    || !fromValue
+    || ![REDIRECT_TARGET_KIND.DYNAMIC, REDIRECT_TARGET_KIND.STATIC]
+      .includes(redirect.targetKind)) {
+    return null
+  }
+
+  const ruleFields = [createRedirectScalarField(
+    typeof draft.description === "string" ? draft.description : "",
+    ["description"],
+    "Rule name",
+    { help: "Shown in the matrix and Cloudflare rule lists" },
+  )]
+  ruleFields.push(createRedirectScalarField(
+    draft.enabled !== false,
+    ["enabled"],
+    "Enabled",
+  ))
+  if (typeof draft.ref === "string") {
+    ruleFields.push(createRedirectScalarField(
+      draft.ref,
+      ["ref"],
+      "Stable reference",
+      { help: "Preserved across rule versions" },
+    ))
+  }
+
+  const matchField = createRedirectScalarField(
+    typeof draft.expression === "string" ? draft.expression : "",
+    ["expression"],
+    "Request matching expression",
+    {
+      help: "A Cloudflare Rules expression that selects requests to redirect",
+      required: true,
+    },
+  )
+  matchField.classList.add("multiline")
+
+  const targetFieldName = redirect.targetKind === REDIRECT_TARGET_KIND.STATIC
+    ? "value"
+    : "expression"
+  const targetPath = [
+    ...REDIRECT_FROM_VALUE_PATH,
+    "target_url",
+    targetFieldName,
+  ]
+  const targetField = createRedirectScalarField(
+    redirect.target,
+    targetPath,
+    redirect.targetKind === REDIRECT_TARGET_KIND.STATIC
+      ? "Destination URL"
+      : "Destination expression",
+    {
+      help: redirect.targetKind === REDIRECT_TARGET_KIND.STATIC
+        ? "The complete URL returned in the Location header"
+        : "A Cloudflare Rules expression that evaluates to the destination URL",
+      required: true,
+    },
+  )
+  targetField.classList.add("multiline")
+  if (redirect.targetKind === REDIRECT_TARGET_KIND.STATIC) {
+    const targetControl = targetField.querySelector(".value-control")
+    targetControl.type = "url"
+    targetControl.inputMode = "url"
+  }
+
+  const responseFields = [
+    createRedirectTargetKindField(redirect.targetKind),
+    createRedirectStatusField(
+      redirect.statusCode,
+      [...REDIRECT_FROM_VALUE_PATH, "status_code"],
+    ),
+    targetField,
+    createRedirectQueryField(redirect.preserveQueryString),
+  ]
+  const fields = [
+    createRedirectEditorGroup("Rule", ruleFields),
+    createRedirectEditorGroup("When", [matchField]),
+    createRedirectEditorGroup("Then redirect", responseFields),
+  ]
+  const additionalFields = Object.entries(draft)
+    .filter(([key]) => !REDIRECT_PRIMARY_RULE_FIELDS.has(key))
+    .map(([key, value]) => createValueField(
+      value,
+      [key],
+      humanizeValueField(key),
+      editor,
+    ))
+  if (additionalFields.length > 0) {
+    fields.push(createRedirectEditorGroup("Additional settings", additionalFields))
+  }
+
+  const entry = selectedEditorEntry()
+  elements.valueEditorContext.textContent = [
+    entry?.presentation?.phase
+      ? rulePhaseLabel(entry.presentation.phase)
+      : "Single redirect",
+    redirect.targetKindLabel,
+  ].join(" | ")
+  return fields
+}
+
 function renderValueEditor() {
   const editor = state.editor
   if (!editor) return
@@ -3184,12 +4009,18 @@ function renderValueEditor() {
   const kind = jsonValueKind(draft)
   const fragment = document.createDocumentFragment()
   if (kind === JSON_VALUE_KIND.OBJECT) {
+    const redirectFields = createRedirectEditorFields(editor)
+    if (redirectFields) {
+      fragment.append(...redirectFields)
+      elements.valueEditorFields.replaceChildren(fragment)
+      return
+    }
     const entries = orderedValueEntries(draft)
     if (entries.length === 0) {
       fragment.append(
         createElement("p", {
           className: "empty-value",
-          text: "No cached fields. Use Advanced JSON to add a field.",
+          text: "No cached fields. Use Show raw JSON to add an uncommon field.",
         }),
       )
     }
@@ -3223,6 +4054,82 @@ function replaceEditorDraft(draft, options = {}) {
   if (options.render !== false) renderValueEditor()
 }
 
+function resetRedirectTargetDrafts(editor) {
+  editor.redirectTargetDrafts = new Map()
+  const redirect = presentRule(editor.draft).redirect
+  if (redirect && [REDIRECT_TARGET_KIND.DYNAMIC, REDIRECT_TARGET_KIND.STATIC]
+    .includes(redirect.targetKind)) {
+    editor.redirectTargetDrafts.set(redirect.targetKind, redirect.target)
+  }
+}
+
+function initialRedirectTargetForKind(redirect, targetKind) {
+  if (targetKind === REDIRECT_TARGET_KIND.DYNAMIC) {
+    return redirect.targetKind === REDIRECT_TARGET_KIND.STATIC
+      ? JSON.stringify(redirect.target)
+      : redirect.target
+  }
+  if (redirect.targetKind === REDIRECT_TARGET_KIND.DYNAMIC) {
+    try {
+      const literal = JSON.parse(redirect.target)
+      return typeof literal === "string" ? literal : ""
+    } catch {
+      return ""
+    }
+  }
+  return redirect.target
+}
+
+function changeRedirectTargetKind(event) {
+  const control = event.target.closest("[data-redirect-target-kind]")
+  const editor = state.editor
+  if (!control || !editor) return
+  const redirect = presentRule(editor.draft).redirect
+  const targetKind = control.value
+  if (!redirect
+    || targetKind === redirect.targetKind
+    || ![REDIRECT_TARGET_KIND.DYNAMIC, REDIRECT_TARGET_KIND.STATIC]
+      .includes(targetKind)) {
+    return
+  }
+  editor.redirectTargetDrafts.set(redirect.targetKind, redirect.target)
+  const target = editor.redirectTargetDrafts.get(targetKind)
+    ?? initialRedirectTargetForKind(redirect, targetKind)
+  editor.redirectTargetDrafts.set(targetKind, target)
+  const field = targetKind === REDIRECT_TARGET_KIND.STATIC
+    ? "value"
+    : "expression"
+  replaceEditorDraft(replaceValueAtPath(
+    editor.draft,
+    [...REDIRECT_FROM_VALUE_PATH, "target_url"],
+    { [field]: target },
+  ))
+  requestAnimationFrame(() => focusValueEditorPath([
+    ...REDIRECT_FROM_VALUE_PATH,
+    "target_url",
+    field,
+  ]))
+}
+
+function changeRedirectQuery(event) {
+  const control = event.target.closest("[data-redirect-query]")
+  const editor = state.editor
+  if (!control || !editor) return
+  const fromValue = {
+    ...editor.draft.action_parameters?.from_value,
+  }
+  if (control.value === REDIRECT_QUERY_CHOICE.UNSPECIFIED) {
+    delete fromValue.preserve_query_string
+  } else {
+    fromValue.preserve_query_string = control.value === REDIRECT_QUERY_CHOICE.KEEP
+  }
+  replaceEditorDraft(replaceValueAtPath(
+    editor.draft,
+    REDIRECT_FROM_VALUE_PATH,
+    fromValue,
+  ), { render: false })
+}
+
 function selectedEditorEntry() {
   return state.editor?.entries.find(
     (candidate) => candidate.id === elements.editorChoice.value,
@@ -3234,6 +4141,7 @@ function renderSelectedEditorEntry() {
   if (!entry || !state.editor) return
   elements.editorChoice.value = entry.id
   state.editor.draft = cloneJsonValue(entry.value)
+  resetRedirectTargetDrafts(state.editor)
   elements.valueEditorContext.textContent = entry.presentation?.kind === "rule"
     ? `${rulePhaseLabel(entry.presentation.phase)} phase`
     : `${humanizeValueField(jsonValueKind(entry.value))} value`
@@ -3248,6 +4156,7 @@ function syncEditorFromJson() {
     const draft = JSON.parse(elements.editorValue.value)
     jsonValueKind(draft)
     state.editor.draft = draft
+    resetRedirectTargetDrafts(state.editor)
     elements.editorValue.removeAttribute("aria-invalid")
     clearFieldError(elements.editorValue, elements.editorError)
     renderValueEditor()
@@ -4308,10 +5217,12 @@ elements.refresh.addEventListener("click", () => refreshInventory({ preserveSele
 elements.search.addEventListener("input", filterRows)
 elements.category.addEventListener("change", () => {
   syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
   filterRows()
 })
 elements.scope.addEventListener("change", filterRows)
 elements.dnsType.addEventListener("change", filterRows)
+elements.redirectType.addEventListener("change", filterRows)
 elements.targetHoles.addEventListener("click", () => {
   const next = elements.targetHoles.getAttribute("aria-pressed") !== "true"
   elements.targetHoles.setAttribute("aria-pressed", String(next))
@@ -4417,6 +5328,8 @@ elements.editorValue.addEventListener("input", () => {
   syncEditorFromJson()
 })
 elements.valueEditorFields.addEventListener("input", updateGeneratedEditorControl)
+elements.valueEditorFields.addEventListener("change", changeRedirectTargetKind)
+elements.valueEditorFields.addEventListener("change", changeRedirectQuery)
 elements.valueEditorFields.addEventListener("change", changeNullEditorType)
 elements.valueEditorFields.addEventListener("change", renameGeneratedEditorObjectKey)
 elements.valueEditorFields.addEventListener("click", handleValueEditorAction)

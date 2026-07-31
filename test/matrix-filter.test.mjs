@@ -24,6 +24,7 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
     missingZoneIds: ["zone-beta.example"],
     presentCount: 3,
     recordType: "CNAME",
+    redirectTypes: [],
     search: "dns records cname cc-dev zone-d.example",
   }
   const filters = {
@@ -53,5 +54,34 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
   assert.equal(matrixRowMatchesFilters(row, {
     ...filters,
     targetZoneIds: new Set(["zone-alpha.example"]),
+  }), false)
+})
+
+test("matrix filters redirects by destination type", () => {
+  const row = {
+    category: "Redirects",
+    different: true,
+    missingZoneIds: [],
+    presentCount: 4,
+    recordType: "",
+    redirectTypes: ["dynamic"],
+    search: "redirects dynamic target concat",
+  }
+  const filters = {
+    category: "Redirects",
+    differencesOnly: false,
+    query: "",
+    recordType: "",
+    redirectType: "dynamic",
+    scope: MATRIX_SCOPE.ALL,
+    targetHolesOnly: false,
+    targetZoneIds: new Set(),
+    zoneCount: 14,
+  }
+
+  assert.equal(matrixRowMatchesFilters(row, filters), true)
+  assert.equal(matrixRowMatchesFilters(row, {
+    ...filters,
+    redirectType: "static",
   }), false)
 })
