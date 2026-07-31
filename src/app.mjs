@@ -1178,7 +1178,6 @@ function showWorkspaceRuleInMatrix(ruleId) {
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
-  elements.differenceToggle.textContent = "All rows"
   syncDnsTypeAvailability()
   filterRows()
   const selector = `.matrix-cell[data-zone-id="${CSS.escape(zoneId)}"][data-ruleset-id="${CSS.escape(ruleset.id)}"][data-rule-id="${CSS.escape(ruleId)}"]`
@@ -1549,7 +1548,6 @@ function showPolicyExceptionInMatrix(exception) {
     elements.scope.value = MATRIX_SCOPE.ALL
     elements.dnsType.value = "TXT"
     elements.differenceToggle.setAttribute("aria-pressed", "false")
-    elements.differenceToggle.textContent = "All rows"
     elements.targetHoles.setAttribute("aria-pressed", "false")
     elements.targetHoles.textContent = "Target holes"
     syncDnsTypeAvailability()
@@ -2165,7 +2163,6 @@ function showEditableSettings() {
   elements.category.value = "Zone settings"
   elements.dnsType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
-  elements.differenceToggle.textContent = "All rows"
   syncDnsTypeAvailability()
   filterRows()
 
@@ -4118,7 +4115,6 @@ elements.targetHoles.addEventListener("click", () => {
 elements.differenceToggle.addEventListener("click", () => {
   const next = elements.differenceToggle.getAttribute("aria-pressed") !== "true"
   elements.differenceToggle.setAttribute("aria-pressed", String(next))
-  elements.differenceToggle.textContent = next ? "Differences only" : "All rows"
   filterRows()
 })
 elements.matrixHead.addEventListener("change", (event) => {
