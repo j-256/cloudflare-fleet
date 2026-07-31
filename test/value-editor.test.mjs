@@ -10,6 +10,7 @@ import {
   orderedValueEntries,
   parseScalarControl,
   removeArrayItemAtPath,
+  renameObjectKeyAtPath,
   replaceValueAtPath,
   valueAtPath,
   valueControlDescriptor,
@@ -138,6 +139,52 @@ test("array helpers add a matching item type and remove exact indexes", () => {
   assert.deepEqual(original, {
     tags: ["fleet"],
   })
+})
+
+test("object key renames preserve values and reject collisions", () => {
+  const original = {
+    headers: {
+      "X-Old": {
+        operation: "set",
+        value: "one",
+      },
+      "X-Other": {
+        operation: "remove",
+      },
+    },
+  }
+  const renamed = renameObjectKeyAtPath(
+    original,
+    ["headers"],
+    "X-Old",
+    "X-New",
+  )
+
+  assert.deepEqual(renamed, {
+    headers: {
+      "X-New": {
+        operation: "set",
+        value: "one",
+      },
+      "X-Other": {
+        operation: "remove",
+      },
+    },
+  })
+  assert.equal(Object.hasOwn(original.headers, "X-Old"), true)
+  assert.throws(
+    () => renameObjectKeyAtPath(
+      original,
+      ["headers"],
+      "X-Old",
+      "X-Other",
+    ),
+    /already exists/,
+  )
+  assert.throws(
+    () => renameObjectKeyAtPath(original, ["headers"], "X-Old", ""),
+    /Enter an object field name/,
+  )
 })
 
 test("scalar controls preserve JSON types and reject invalid numbers", () => {

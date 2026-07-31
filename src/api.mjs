@@ -6,7 +6,6 @@ import {
 } from "./constants.mjs"
 
 export const BROKER_SESSION_HEADER = "X-Cloudflare-Fleet-Session"
-const BROKER_RECONNECT_DELAY_MS = 1000
 
 export class CloudflareApiError extends Error {
   constructor(message, options = {}) {
@@ -84,6 +83,14 @@ export class CloudflareApi {
       })
     }
 
+    if (response.ok && response.status === 204) {
+      return {
+        result: null,
+        resultInfo: null,
+        status: response.status,
+      }
+    }
+
     let envelope
     try {
       envelope = await response.json()
@@ -134,7 +141,7 @@ export class CloudflareApi {
   startSessionMonitor(handlers = {}) {
     if (!this.usesBroker) return () => {}
     const controller = new AbortController()
-    let connected = false
+    let connected = null
     const updateConnection = (next) => {
       if (connected === next) return
       connected = next
@@ -142,36 +149,27 @@ export class CloudflareApi {
       else handlers.onDisconnected?.()
     }
     const monitor = async () => {
-      while (!controller.signal.aborted) {
-        try {
-          const response = await this.fetchImpl(new URL("liveness", this.brokerBaseUrl), {
-            headers: {
-              Accept: "text/event-stream",
-              [BROKER_SESSION_HEADER]: this.brokerSecret,
-            },
-            signal: controller.signal,
-          })
-          if (!response.ok || !response.body) {
-            throw new Error(`Session liveness returned HTTP ${response.status}`)
-          }
-          updateConnection(true)
-          const reader = response.body.getReader()
-          while (!controller.signal.aborted) {
-            const { done } = await reader.read()
-            if (done) break
-          }
-        } catch {
-          if (controller.signal.aborted) break
-        }
-        updateConnection(false)
-        await new Promise((resolve) => {
-          const timeout = setTimeout(resolve, BROKER_RECONNECT_DELAY_MS)
-          controller.signal.addEventListener("abort", () => {
-            clearTimeout(timeout)
-            resolve()
-          }, { once: true })
+      try {
+        const response = await this.fetchImpl(new URL("liveness", this.brokerBaseUrl), {
+          headers: {
+            Accept: "text/event-stream",
+            [BROKER_SESSION_HEADER]: this.brokerSecret,
+          },
+          signal: controller.signal,
         })
+        if (!response.ok || !response.body) {
+          throw new Error(`Session liveness returned HTTP ${response.status}`)
+        }
+        updateConnection(true)
+        const reader = response.body.getReader()
+        while (!controller.signal.aborted) {
+          const { done } = await reader.read()
+          if (done) break
+        }
+      } catch {
+        if (controller.signal.aborted) return
       }
+      updateConnection(false)
     }
     monitor()
     return () => controller.abort()

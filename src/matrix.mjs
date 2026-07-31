@@ -10,6 +10,8 @@ import {
 import {
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
+  RULESET_ACTION_KIND,
+  RULESET_KIND,
 } from "./constants.mjs"
 import { DNS_MATRIX_CATEGORIES } from "./matrix-filter.mjs"
 import {
@@ -18,17 +20,18 @@ import {
   emailDnsRecordAssociationKey,
   ruleCopyCapability,
 } from "./policies.mjs"
+import { rulePhaseLabel } from "./rule-presentation.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
-  "custom",
-  "zone",
+  RULESET_KIND.CUSTOM,
+  RULESET_KIND.ZONE,
 ])
 const CATEGORY_ORDER = [
   "Email",
   "Email routes",
   "Email DNS specification",
-  "Ruleset rules",
   "Rulesets",
+  "Ruleset rules",
   "Zone settings",
   "DNSSEC",
   "DNS records",
@@ -99,8 +102,10 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     full: options.full ?? displayJson(normalized),
     inspectionValue: inspectionValue(inspected),
     presentation: options.presentation || null,
+    parentAction: options.parentAction || null,
     resolutionSource: options.resolutionSource || null,
     secondaryAction: options.secondaryAction || null,
+    workspaceAction: options.workspaceAction || null,
   })
 }
 
@@ -372,28 +377,68 @@ function addDnsRows(rows, inventory) {
 
 function addRulesetRows(rows, inventory) {
   for (const zone of inventory.zones) {
-    const managed = (surfaceResult(zone, "rulesets") || [])
-      .filter((ruleset) => ruleset.kind === "managed")
-      .map((ruleset) => ({
-        name: ruleset.name,
-        phase: ruleset.phase,
-        version: ruleset.version,
-      }))
-    addCell(rows, "Rulesets", "managed", "Managed rulesets", zone, managed)
+    for (const ruleset of (surfaceResult(zone, "rulesets") || [])
+      .filter((entry) => entry.kind === RULESET_KIND.MANAGED)) {
+      addCell(
+        rows,
+        "Rulesets",
+        `managed:${ruleset.id}`,
+        ruleset.name,
+        zone,
+        {
+          kind: ruleset.kind,
+          phase: ruleset.phase,
+          version: ruleset.version,
+        },
+        {
+          description: `${rulePhaseLabel(ruleset.phase)} | Managed`,
+          display: `Managed | ${rulePhaseLabel(ruleset.phase)}`,
+          inspectionValue: ruleset,
+          workspaceAction: {
+            kind: ruleset.kind,
+            name: ruleset.name,
+            phase: ruleset.phase,
+            rulesetId: ruleset.id,
+            type: RULESET_ACTION_KIND.OPEN,
+            zoneId: zone.meta.id,
+          },
+        },
+      )
+    }
 
     for (const detail of zone.ruleDetails.filter((entry) => entry.ok)) {
       const ruleset = detail.result
       const phase = ruleset.phase
+      const rulesetKey = ruleset.kind === RULESET_KIND.ZONE
+        ? `zone:${phase}`
+        : `${ruleset.kind}:${phase}:${normalizeText(ruleset.name || ruleset.id, zone.meta.name)}`
+      const rulesetLabel = ruleset.kind === RULESET_KIND.ZONE
+        ? `${rulePhaseLabel(phase)} entrypoint`
+        : ruleset.name || `${rulePhaseLabel(phase)} ruleset`
+      const workspaceAction = {
+        kind: ruleset.kind,
+        name: ruleset.name,
+        phase,
+        rulesetId: ruleset.id,
+        type: RULESET_ACTION_KIND.OPEN,
+        zoneId: zone.meta.id,
+      }
       addCell(
         rows,
         "Rulesets",
-        `phase:${phase}`,
-        `${phase} entrypoint`,
+        rulesetKey,
+        rulesetLabel,
         zone,
         {
           kind: ruleset.kind,
           name: ruleset.name,
           rule_count: ruleset.rules?.length || 0,
+        },
+        {
+          description: `${rulePhaseLabel(phase)} | ${ruleset.kind}`,
+          display: `${ruleset.rules?.length || 0} rule${ruleset.rules?.length === 1 ? "" : "s"}`,
+          inspectionValue: ruleset,
+          workspaceAction,
         },
       )
 
@@ -442,6 +487,7 @@ function addRulesetRows(rows, inventory) {
               rule: normalizedRule,
             },
             inspectionValue: normalizedRule,
+            parentAction: workspaceAction,
             secondaryAction: capability.copyable
               ? {
                   phase,
@@ -872,6 +918,8 @@ export function matrixRenderKey(inventory, matrix) {
           full: cell.full,
           resolutionSource: cell.resolutionSource,
           secondaryAction: cell.secondaryAction,
+          parentAction: cell.parentAction,
+          workspaceAction: cell.workspaceAction,
         }
       }),
       description: row.description,

@@ -33,6 +33,7 @@ const MIME_TYPES = Object.freeze({
   ".mjs": "text/javascript; charset=utf-8",
 })
 const PROXY_METHODS = new Set([
+  HTTP_METHOD.DELETE,
   HTTP_METHOD.GET,
   HTTP_METHOD.PATCH,
   HTTP_METHOD.POST,

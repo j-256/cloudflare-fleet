@@ -10,6 +10,8 @@ import {
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
   POLICY_EXCEPTION_STATUS,
+  RULESET_ACTION_KIND,
+  RULESET_KIND,
   SESSION_TITLE,
   STATIC_LIMITATIONS,
 } from "./constants.mjs"
@@ -45,9 +47,14 @@ import {
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
+  buildRuleCreatePlan,
   buildRuleCopyPlans,
+  buildRuleDeletePlan,
   buildRuleEditPlan,
   buildRuleRenamePlans,
+  buildRuleReorderPlan,
+  buildRulesetDeletePlan,
+  buildRulesetDescriptionPlan,
   buildWafAlignmentPlan,
   buildZoneSettingPlan,
   deriveEmailDestination,
@@ -62,6 +69,7 @@ import {
 } from "./policies.mjs"
 import {
   presentRule,
+  ruleActionLabel,
   rulePhaseLabel,
 } from "./rule-presentation.mjs"
 import {
@@ -73,6 +81,17 @@ import {
   rulesetResourceId,
 } from "./read-composer.mjs"
 import {
+  duplicateRuleDefinition,
+  findManagedDeployment,
+  newRuleDefinition,
+  normalizeRulesetDetail,
+  RULESET_RULE_PAGE_SIZE,
+  rulesetIsEditable,
+  rulesetRuleLabel,
+  rulesetRulePage,
+  rulesetSummary,
+} from "./ruleset-workspace.mjs"
+import {
   appendArrayItemAtPath,
   defaultValueForKind,
   humanizeValueField,
@@ -81,6 +100,7 @@ import {
   orderedValueEntries,
   parseScalarControl,
   removeArrayItemAtPath,
+  renameObjectKeyAtPath,
   replaceValueAtPath,
   valueAtPath,
   valueControlDescriptor,
@@ -117,6 +137,11 @@ const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
+const EDITABLE_OBJECT_KEY_FIELDS = new Set([
+  "headers",
+])
+const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const RULESET_RULE_PREVIEW_LIMIT = 220
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 const POLICY_EXCEPTION_COMPONENT_LABELS = Object.freeze({
@@ -144,6 +169,7 @@ const state = {
   holeResolution: null,
   inlineEditor: null,
   ruleRename: null,
+  rulesetWorkspace: null,
   selectedZoneIds: new Set(),
   startupCacheLoadedAt: null,
   toastTimer: null,
@@ -154,6 +180,7 @@ const editActionByCell = new WeakMap()
 const fillActionByCell = new WeakMap()
 const bulkFillRowByButton = new WeakMap()
 const fleetActionByButton = new WeakMap()
+const workspaceActionByButton = new WeakMap()
 
 const elements = {
   alignEmail: document.querySelector("#align-email"),
@@ -214,6 +241,28 @@ const elements = {
   renameReview: document.querySelector("#rename-review"),
   renameTarget: document.querySelector("#rename-target"),
   renameValue: document.querySelector("#rename-value"),
+  rulesetAddRule: document.querySelector("#ruleset-add-rule"),
+  rulesetBadges: document.querySelector("#ruleset-badges"),
+  rulesetConfigureDeployment: document.querySelector("#ruleset-configure-deployment"),
+  rulesetDelete: document.querySelector("#ruleset-delete"),
+  rulesetDeployment: document.querySelector("#ruleset-deployment"),
+  rulesetDeploymentSummary: document.querySelector("#ruleset-deployment-summary"),
+  rulesetDescription: document.querySelector("#ruleset-description"),
+  rulesetDescriptionDialog: document.querySelector("#ruleset-description-dialog"),
+  rulesetDescriptionError: document.querySelector("#ruleset-description-error"),
+  rulesetDescriptionForm: document.querySelector("#ruleset-description-form"),
+  rulesetDescriptionReview: document.querySelector("#ruleset-description-review"),
+  rulesetDescriptionValue: document.querySelector("#ruleset-description-value"),
+  rulesetDialog: document.querySelector("#ruleset-dialog"),
+  rulesetEditDescription: document.querySelector("#ruleset-edit-description"),
+  rulesetLoadMore: document.querySelector("#ruleset-load-more"),
+  rulesetRefresh: document.querySelector("#ruleset-refresh"),
+  rulesetRuleList: document.querySelector("#ruleset-rule-list"),
+  rulesetSearch: document.querySelector("#ruleset-search"),
+  rulesetStatus: document.querySelector("#ruleset-status"),
+  rulesetStatusFilter: document.querySelector("#ruleset-status-filter"),
+  rulesetTarget: document.querySelector("#ruleset-target"),
+  rulesetTitle: document.querySelector("#ruleset-title"),
   search: document.querySelector("#search"),
   selectDrifted: document.querySelector("#select-drifted"),
   selectionCount: document.querySelector("#selection-count"),
@@ -247,6 +296,8 @@ const elements = {
 
 elements.sessionMode.textContent = readOnly ? "Read-only session" : "Read/write session"
 elements.writePanel.hidden = readOnly
+elements.alignEmail.hidden = readOnly
+elements.alignWaf.hidden = readOnly
 
 function setStatus(message, mode = "loading") {
   elements.statusText.textContent = message
@@ -263,6 +314,12 @@ function setRefreshDetail(message = "", mode = "") {
   elements.refreshDetail.removeAttribute("title")
 }
 
+function updateTransportDependentControls() {
+  elements.refresh.disabled = state.busy || !state.transportAvailable
+  updateActionButtons()
+  updateRulesetActionAvailability()
+}
+
 function setBusy(busy) {
   if (busy && !state.busy) {
     const activeElement = document.activeElement
@@ -272,10 +329,10 @@ function setBusy(busy) {
   }
   state.busy = busy
   application.setAttribute("aria-busy", String(busy))
-  elements.refresh.disabled = busy || !state.transportAvailable
   elements.editorReview.disabled = busy
   elements.renameReview.disabled = busy
-  updateActionButtons()
+  elements.rulesetDescriptionReview.disabled = busy
+  updateTransportDependentControls()
   if (!busy) {
     const focusTarget = state.busyFocus
     state.busyFocus = null
@@ -504,6 +561,651 @@ function createRuleSummary(rule, phase = "", options = {}) {
   return root
 }
 
+function cachedRulesetForAction(action) {
+  const zone = zoneById(action.zoneId)
+  if (!zone) return null
+  const detail = zone.ruleDetails
+    .filter((entry) => entry.ok)
+    .map((entry) => entry.result)
+    .find((ruleset) => ruleset.id === action.rulesetId)
+  if (detail) return normalizeRulesetDetail(detail)
+  return (zone.surfaces.rulesets?.result || [])
+    .map(normalizeRulesetDetail)
+    .find((ruleset) => ruleset.id === action.rulesetId) || null
+}
+
+function rulesetWorkspaceTitle(ruleset) {
+  if (ruleset?.kind === RULESET_KIND.ZONE) {
+    return `${rulePhaseLabel(ruleset.phase)} entrypoint`
+  }
+  return ruleset?.name || `${rulePhaseLabel(ruleset?.phase)} ruleset`
+}
+
+function rulesetBadge(text, className = "") {
+  return createElement("span", {
+    className: `ruleset-badge${className ? ` ${className}` : ""}`,
+    text,
+  })
+}
+
+function workspaceWriteLocked() {
+  return readOnly
+    || state.busy
+    || !state.transportAvailable
+    || Boolean(state.rulesetWorkspace?.loading)
+}
+
+function updateRulesetActionAvailability() {
+  const workspace = state.rulesetWorkspace
+  if (!workspace) return
+  const locked = workspaceWriteLocked()
+  const lockReason = !state.transportAvailable
+    ? "Session broker offline; relaunch to restore live writes"
+    : workspace.loading
+      ? "Ruleset details are refreshing"
+      : state.busy
+        ? "Another fleet operation is in progress"
+        : ""
+  elements.rulesetRefresh.disabled = state.busy
+    || workspace.loading
+    || !state.transportAvailable
+  for (const button of elements.rulesetDialog.querySelectorAll("[data-ruleset-write]")) {
+    const available = button.dataset.rulesetAvailable !== "false"
+    button.disabled = locked || !available
+    button.title = locked && !readOnly
+      ? lockReason
+      : button.dataset.actionTitle || button.title
+  }
+}
+
+function workspaceZoneRulesets(zone) {
+  return zone?.ruleDetails
+    .filter((detail) => detail.ok)
+    .map((detail) => detail.result) || []
+}
+
+function workspaceManagedDeployment(workspace) {
+  if (workspace.ruleset?.kind !== RULESET_KIND.MANAGED) return null
+  return findManagedDeployment(
+    workspace.ruleset,
+    workspaceZoneRulesets(zoneById(workspace.action.zoneId)),
+  )
+}
+
+function renderRulesetDeployment(workspace) {
+  const managed = workspace.ruleset?.kind === RULESET_KIND.MANAGED
+  elements.rulesetDeployment.hidden = !managed
+  elements.rulesetConfigureDeployment.hidden = true
+  if (!managed) return
+
+  const deployment = workspaceManagedDeployment(workspace)
+  workspace.deployment = deployment
+  if (!deployment) {
+    elements.rulesetDeploymentSummary.textContent = "No editable zone deployment rule was found. Cloudflare may attach this managed ruleset automatically."
+    return
+  }
+
+  const deploymentLabel = rulesetRuleLabel(deployment.rule, deployment.index)
+  elements.rulesetDeploymentSummary.textContent = `${deploymentLabel} in ${rulesetWorkspaceTitle(deployment.ruleset)} controls this managed ruleset's deployment and overrides.`
+  elements.rulesetConfigureDeployment.hidden = false
+  elements.rulesetConfigureDeployment.textContent = readOnly
+    ? "Open deployment"
+    : "Configure deployment"
+  if (!readOnly) {
+    elements.rulesetConfigureDeployment.dataset.rulesetWrite = ""
+    elements.rulesetConfigureDeployment.dataset.actionTitle = "Edit the deployment rule and its managed overrides"
+  } else {
+    delete elements.rulesetConfigureDeployment.dataset.rulesetWrite
+  }
+}
+
+function workspaceHasFlattenedRule(workspace, ruleId) {
+  return workspaceZoneRulesets(zoneById(workspace.action.zoneId))
+    .some((ruleset) => ruleset.id === workspace.ruleset.id
+      && ruleset.rules?.some((rule) => rule.id === ruleId))
+}
+
+function workspaceButton(label, className, handler, options = {}) {
+  const button = createElement("button", {
+    className,
+    text: label,
+  })
+  button.type = "button"
+  if (options.write) {
+    button.dataset.rulesetWrite = ""
+    button.dataset.rulesetAvailable = String(options.available !== false)
+  }
+  if (options.title) {
+    button.title = options.title
+    button.dataset.actionTitle = options.title
+  }
+  if (options.ariaLabel) button.setAttribute("aria-label", options.ariaLabel)
+  button.addEventListener("click", handler)
+  return button
+}
+
+function ruleActionParameterPreview(workspace, rule) {
+  const parameters = rule.action_parameters
+  if (!parameters || typeof parameters !== "object") return ""
+  if (rule.action === "execute" && parameters.id) {
+    const zone = zoneById(workspace.action.zoneId)
+    const target = (zone?.surfaces.rulesets?.result || [])
+      .find((ruleset) => ruleset.id === parameters.id)
+    const overrideCount = parameters.overrides?.rules?.length || 0
+    return [
+      target?.name || `Ruleset ${String(parameters.id).slice(0, 8)}`,
+      overrideCount > 0
+        ? `${overrideCount} rule override${overrideCount === 1 ? "" : "s"}`
+        : "",
+    ].filter(Boolean).join(" | ")
+  }
+  if (rule.action === "redirect") {
+    const definition = parameters.from_value || parameters.from_list
+    const target = definition?.target_url?.expression
+      || definition?.target_url?.value
+      || definition?.key
+    const status = definition?.status_code
+    return [
+      status ? `HTTP ${status}` : "",
+      target ? `to ${target}` : "",
+    ].filter(Boolean).join(" ")
+  }
+  if (rule.action === "skip") {
+    const products = parameters.products || []
+    const phases = parameters.phases || []
+    return [...products, ...phases].join(", ")
+  }
+  return Object.keys(parameters).map(humanizeValueField).join(", ")
+}
+
+function ruleCardPreview(workspace, rule) {
+  const preview = createElement("div", { className: "rule-card-preview" })
+  const entries = [
+    ["Expression", rule.expression],
+    ["Parameters", ruleActionParameterPreview(workspace, rule)],
+  ]
+  for (const [label, rawValue] of entries) {
+    if (rawValue === undefined || rawValue === "") continue
+    const value = String(rawValue)
+    const shortened = value.length > RULESET_RULE_PREVIEW_LIMIT
+      ? `${value.slice(0, RULESET_RULE_PREVIEW_LIMIT - 3)}...`
+      : value
+    const code = createElement("code", { text: shortened })
+    code.title = value
+    preview.append(
+      createElement("span", { text: label }),
+      code,
+    )
+  }
+  return preview
+}
+
+function createRulesetRuleCard(workspace, rule) {
+  const rules = workspace.ruleset.rules
+  const index = rules.indexOf(rule)
+  const label = rulesetRuleLabel(rule, index)
+  const enabled = rule.enabled !== false
+  const item = createElement("li", {
+    className: `ruleset-rule-card ${enabled ? "enabled" : "disabled"}`,
+  })
+  item.dataset.ruleId = rule.id || ""
+
+  const heading = createElement("div", { className: "rule-card-heading" })
+  const title = createElement("div", { className: "rule-card-title" })
+  title.append(
+    createElement("span", {
+      className: "rule-card-position",
+      text: String(index + 1),
+    }),
+    createElement("h3", { text: label }),
+  )
+  const badges = createElement("div", {
+    className: "rule-card-badges",
+  })
+  badges.append(
+    createElement("span", {
+      className: `rule-card-badge ${enabled ? "enabled" : "disabled"}`,
+      text: enabled ? "Enabled" : "Disabled",
+    }),
+    createElement("span", {
+      className: "rule-card-badge",
+      text: ruleActionLabel(rule.action),
+    }),
+  )
+  heading.append(title, badges)
+  item.append(heading, ruleCardPreview(workspace, rule))
+  const inspection = document.createElement("details")
+  inspection.className = "rule-card-inspection"
+  inspection.append(
+    createElement("summary", { text: "View rule details" }),
+    createRuleSummary(editableRulePayload(rule), workspace.ruleset.phase, {
+      omitFields: ["description", "enabled", "phase"],
+    }),
+    createRawValueDetails(rule, "Raw rule JSON"),
+  )
+  item.append(inspection)
+
+  const editable = rulesetIsEditable(workspace.ruleset) && !readOnly
+  const comparable = workspaceHasFlattenedRule(workspace, rule.id)
+  if (!editable && !comparable) return item
+
+  const actions = createElement("div", { className: "rule-card-actions" })
+  if (editable) {
+    actions.append(
+      workspaceButton(
+        "Edit",
+        "button button-primary",
+        () => openWorkspaceRuleEditor(rule),
+        {
+          ariaLabel: `Edit ${label}`,
+          title: "Edit this rule after an exact live reread",
+          write: true,
+        },
+      ),
+      workspaceButton(
+        enabled ? "Disable" : "Enable",
+        "button button-quiet",
+        () => toggleWorkspaceRule(rule.id),
+        {
+          ariaLabel: `${enabled ? "Disable" : "Enable"} ${label}`,
+          title: `${enabled ? "Disable" : "Enable"} this rule after an exact live reread`,
+          write: true,
+        },
+      ),
+    )
+  }
+
+  if (comparable && !editable) {
+    actions.append(
+      workspaceButton(
+        "Show in matrix",
+        "button button-quiet",
+        () => showWorkspaceRuleInMatrix(rule.id),
+        {
+          ariaLabel: `Show ${label} in the fleet matrix`,
+          title: "Close this workspace and reveal the flattened fleet comparison",
+        },
+      ),
+    )
+  }
+  if (editable) {
+    const more = document.createElement("details")
+    more.className = "rule-card-more"
+    more.append(createElement("summary", { text: "More" }))
+    const moreActions = createElement("div", { className: "rule-card-more-actions" })
+    if (comparable) {
+      moreActions.append(
+        workspaceButton(
+          "Show in matrix",
+          "button button-quiet",
+          () => showWorkspaceRuleInMatrix(rule.id),
+          {
+            ariaLabel: `Show ${label} in the fleet matrix`,
+            title: "Close this workspace and reveal the flattened fleet comparison",
+          },
+        ),
+      )
+    }
+    moreActions.append(
+      workspaceButton(
+        "Duplicate",
+        "button button-quiet",
+        () => openWorkspaceRuleCreateEditor(duplicateRuleDefinition(rule, index), `Duplicate ${label}`),
+        {
+          ariaLabel: `Duplicate ${label}`,
+          title: "Create a disabled copy after review",
+          write: true,
+        },
+      ),
+      workspaceButton(
+        "Move up",
+        "button button-quiet",
+        () => reorderWorkspaceRule(rule.id, -1),
+        {
+          ariaLabel: `Move ${label} up`,
+          available: index > 0,
+          title: index > 0 ? "Move this rule one position earlier" : "This rule is already first",
+          write: true,
+        },
+      ),
+      workspaceButton(
+        "Move down",
+        "button button-quiet",
+        () => reorderWorkspaceRule(rule.id, 1),
+        {
+          ariaLabel: `Move ${label} down`,
+          available: index < rules.length - 1,
+          title: index < rules.length - 1 ? "Move this rule one position later" : "This rule is already last",
+          write: true,
+        },
+      ),
+      workspaceButton(
+        "Delete",
+        "button button-danger",
+        () => deleteWorkspaceRule(rule.id),
+        {
+          ariaLabel: `Delete ${label}`,
+          title: "Delete this rule after reviewing its live definition",
+          write: true,
+        },
+      ),
+    )
+    more.append(moreActions)
+    actions.append(more)
+  }
+  item.append(actions)
+  return item
+}
+
+function renderRulesetRuleList(workspace) {
+  const rules = workspace.ruleset?.rules
+  elements.rulesetRuleList.replaceChildren()
+  elements.rulesetLoadMore.hidden = true
+  if (!Array.isArray(rules)) {
+    elements.rulesetRuleList.append(
+      createElement("li", {
+        className: "ruleset-empty",
+        text: workspace.loading
+          ? "Loading the live rule catalog"
+          : "Rule details are unavailable in the loaded snapshot",
+      }),
+    )
+    return
+  }
+
+  const page = rulesetRulePage(rules, {
+    limit: workspace.limit,
+    query: workspace.query,
+    status: workspace.status,
+  })
+  if (page.visible.length === 0) {
+    elements.rulesetRuleList.append(
+      createElement("li", {
+        className: "ruleset-empty",
+        text: rules.length === 0
+          ? "This ruleset contains no rules"
+          : "No rules match these filters",
+      }),
+    )
+  } else {
+    elements.rulesetRuleList.append(
+      ...page.visible.map((rule) => createRulesetRuleCard(workspace, rule)),
+    )
+  }
+  elements.rulesetLoadMore.hidden = !page.hasMore
+  elements.rulesetLoadMore.textContent = `Load more (${page.filteredCount - page.visible.length} remaining)`
+}
+
+function renderRulesetWorkspace() {
+  const workspace = state.rulesetWorkspace
+  if (!workspace) return
+  const ruleset = workspace.ruleset
+  const summary = rulesetSummary(ruleset)
+  const ruleCount = Array.isArray(ruleset?.rules) ? ruleset.rules.length : null
+  const editable = rulesetIsEditable(ruleset) && !readOnly
+
+  elements.rulesetTitle.textContent = rulesetWorkspaceTitle(ruleset)
+  elements.rulesetSearch.setAttribute(
+    "aria-label",
+    `Search rules in ${rulesetWorkspaceTitle(ruleset)}`,
+  )
+  elements.rulesetTarget.textContent = `${workspace.zoneName} | ${ruleset?.name || "unnamed"}`
+  elements.rulesetBadges.replaceChildren(
+    rulesetBadge(summary.kind),
+    rulesetBadge(summary.phase),
+    ...(summary.version ? [rulesetBadge(`Version ${summary.version}`)] : []),
+    ...(ruleCount === null
+      ? []
+      : [rulesetBadge(`${ruleCount} rule${ruleCount === 1 ? "" : "s"}`)]),
+  )
+  elements.rulesetDescription.textContent = summary.description || "No description"
+  elements.rulesetEditDescription.hidden = !editable
+  elements.rulesetEditDescription.dataset.rulesetWrite = ""
+  elements.rulesetEditDescription.dataset.actionTitle = "Edit this ruleset's description while preserving its ordered rules"
+
+  renderRulesetDeployment(workspace)
+  renderRulesetRuleList(workspace)
+
+  const filtered = Array.isArray(ruleset?.rules)
+    ? rulesetRulePage(ruleset.rules, {
+        limit: workspace.limit,
+        query: workspace.query,
+        status: workspace.status,
+      })
+    : null
+  if (workspace.loading) {
+    elements.rulesetStatus.textContent = filtered
+      ? `Showing cached details while refreshing live version ${summary.version || "unknown"}`
+      : "Reading live ruleset details"
+  } else if (workspace.error) {
+    elements.rulesetStatus.textContent = `${workspace.error} Cached details remain available.`
+  } else if (filtered) {
+    elements.rulesetStatus.textContent = `${filtered.filteredCount} matching of ${filtered.totalCount} total | live version ${summary.version || "unknown"}`
+  } else {
+    elements.rulesetStatus.textContent = "Ruleset summary loaded; rule details are unavailable"
+  }
+
+  const template = newRuleDefinition(ruleset)
+  elements.rulesetAddRule.hidden = !editable
+  elements.rulesetAddRule.dataset.rulesetWrite = ""
+  elements.rulesetAddRule.dataset.rulesetAvailable = String(Boolean(template))
+  elements.rulesetAddRule.dataset.actionTitle = template
+    ? "Create a disabled rule using this phase's live schema"
+    : "No safe starter schema is available for an empty ruleset in this phase"
+  elements.rulesetDelete.hidden = !editable || ruleCount !== 0
+  elements.rulesetDelete.dataset.rulesetWrite = ""
+  elements.rulesetDelete.dataset.actionTitle = "Delete this empty ruleset and all of its versions"
+  updateRulesetActionAvailability()
+}
+
+async function refreshRulesetWorkspace() {
+  const workspace = state.rulesetWorkspace
+  if (!workspace || workspace.loading || !state.transportAvailable) return
+  workspace.loading = true
+  workspace.error = ""
+  renderRulesetWorkspace()
+  const readAction = {
+    rulesetId: workspace.action.rulesetId,
+    type: READ_ACTION.RULESET_INSPECT,
+    zoneId: workspace.action.zoneId,
+  }
+  try {
+    const resourceId = actionResourceId(readAction)
+    const liveData = await executeActionReadPlan(api, [readAction])
+    if (state.rulesetWorkspace !== workspace) return
+    const liveRuleset = liveData.resources.get(resourceId)
+    if (!liveRuleset) throw new Error("Cloudflare returned no ruleset detail")
+    workspace.ruleset = normalizeRulesetDetail(liveRuleset)
+    workspace.action = {
+      ...workspace.action,
+      kind: workspace.ruleset.kind,
+      name: workspace.ruleset.name,
+      phase: workspace.ruleset.phase,
+    }
+  } catch (error) {
+    if (state.rulesetWorkspace !== workspace) return
+    workspace.error = error instanceof Error ? error.message : String(error)
+  } finally {
+    if (state.rulesetWorkspace === workspace) {
+      workspace.loading = false
+      renderRulesetWorkspace()
+    }
+  }
+}
+
+function rulesetSurfaceSummary(ruleset) {
+  const summary = {
+    ...ruleset,
+  }
+  delete summary.rules
+  return summary
+}
+
+function patchVerifiedRuleset(action, ruleset, options = {}) {
+  const inventory = state.inventory
+  if (!inventory) throw new Error("The fleet snapshot is unavailable")
+  const zones = inventory.zones.map((zone) => {
+    if (zone.meta.id !== action.zoneId) return zone
+    const summaries = zone.surfaces.rulesets?.result || []
+    const nextSummaries = options.deleted
+      ? summaries.filter((entry) => entry.id !== action.rulesetId)
+      : [
+          ...summaries.filter((entry) => entry.id !== action.rulesetId),
+          rulesetSurfaceSummary(ruleset),
+        ]
+    const nextDetails = zone.ruleDetails
+      .filter((detail) => !detail.ok || detail.result.id !== action.rulesetId)
+    if (!options.deleted && rulesetIsEditable(ruleset)) {
+      nextDetails.push({
+        ok: true,
+        result: ruleset,
+        status: 200,
+      })
+    }
+    return {
+      ...zone,
+      ruleDetails: nextDetails,
+      surfaces: {
+        ...zone.surfaces,
+        rulesets: {
+          ...zone.surfaces.rulesets,
+          ok: true,
+          result: nextSummaries,
+          status: 200,
+        },
+      },
+    }
+  })
+  const patched = {
+    ...inventory,
+    zones,
+  }
+  renderInventory(patched, state.inventorySource)
+  const workspace = state.rulesetWorkspace
+  if (workspace
+    && workspace.action.zoneId === action.zoneId
+    && workspace.action.rulesetId === action.rulesetId
+    && !options.deleted) {
+    workspace.ruleset = ruleset
+    workspace.error = ""
+    workspace.loading = false
+    renderRulesetWorkspace()
+  }
+  return patched
+}
+
+async function verifyRulesetAction(action, options = {}) {
+  setStatus(`Verifying ${action.phase || "ruleset"} on ${zoneById(action.zoneId)?.meta.name || "zone"}`)
+  let ruleset = null
+  if (options.deleted) {
+    const response = await api.request(
+      `zones/${encodeURIComponent(action.zoneId)}/rulesets`,
+    )
+    if ((response.result || []).some((entry) => entry.id === action.rulesetId)) {
+      throw new Error("Cloudflare still reports the deleted ruleset")
+    }
+  } else {
+    const readAction = {
+      rulesetId: action.rulesetId,
+      type: READ_ACTION.RULESET_INSPECT,
+      zoneId: action.zoneId,
+    }
+    const resourceId = actionResourceId(readAction)
+    const liveData = await executeActionReadPlan(api, [readAction])
+    ruleset = normalizeRulesetDetail(liveData.resources.get(resourceId))
+    if (!ruleset) throw new Error("Ruleset verification returned no live detail")
+  }
+  const patched = patchVerifiedRuleset(action, ruleset, options)
+  const serializedSnapshot = serializeLiveSnapshot(patched)
+  window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
+  try {
+    await api.persistSnapshot(serializedSnapshot)
+  } catch (error) {
+    setRefreshDetail(
+      `Live ruleset verified, but the snapshot was not saved: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    )
+  }
+  restoreInventoryStatus()
+}
+
+function openRulesetWorkspace(action) {
+  const zone = zoneById(action.zoneId)
+  if (!zone) {
+    toast("The selected zone is no longer available", "error")
+    return
+  }
+  const dialogWasOpen = elements.rulesetDialog.open
+  const cached = cachedRulesetForAction(action) || {
+    id: action.rulesetId,
+    kind: action.kind,
+    name: action.name,
+    phase: action.phase,
+  }
+  state.rulesetWorkspace = {
+    action,
+    deployment: null,
+    error: "",
+    limit: RULESET_RULE_PAGE_SIZE,
+    loading: false,
+    query: "",
+    ruleset: cached,
+    status: "all",
+    zoneName: zone.meta.name,
+  }
+  elements.rulesetSearch.value = ""
+  elements.rulesetStatusFilter.value = "all"
+  renderRulesetWorkspace()
+  if (!dialogWasOpen) {
+    showDialog(elements.rulesetDialog, {
+      initialFocus: elements.rulesetSearch,
+    })
+  } else {
+    elements.rulesetDialog.scrollTop = 0
+    elements.rulesetSearch.focus({ preventScroll: true })
+  }
+  refreshRulesetWorkspace()
+}
+
+function showWorkspaceRuleInMatrix(ruleId) {
+  const workspace = state.rulesetWorkspace
+  if (!workspace) return
+  const { ruleset } = workspace
+  const zoneId = workspace.action.zoneId
+  elements.rulesetDialog.close()
+  elements.search.value = ""
+  elements.category.value = "Ruleset rules"
+  elements.scope.value = MATRIX_SCOPE.ALL
+  elements.dnsType.value = ""
+  elements.differenceToggle.setAttribute("aria-pressed", "false")
+  elements.differenceToggle.textContent = "All rows"
+  syncDnsTypeAvailability()
+  filterRows()
+  const selector = `.matrix-cell[data-zone-id="${CSS.escape(zoneId)}"][data-ruleset-id="${CSS.escape(ruleset.id)}"][data-rule-id="${CSS.escape(ruleId)}"]`
+  const cell = elements.matrixBody.querySelector(selector)
+  if (!cell) {
+    toast("The flattened rule row is unavailable in this matrix snapshot", "error")
+    return
+  }
+  const action = cell.querySelector(MATRIX_CONTROL_SELECTOR)
+  cell.scrollIntoView({
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    block: "center",
+    inline: "center",
+  })
+  if (action && !action.disabled) focusMatrixAction(action)
+}
+
+function focusRulesetMatrixOpener(action) {
+  const button = [...elements.matrixBody.querySelectorAll(".open-ruleset")]
+    .find((candidate) => {
+      const candidateAction = workspaceActionByButton.get(candidate)
+      return candidateAction?.zoneId === action.zoneId
+        && candidateAction?.rulesetId === action.rulesetId
+    })
+  if (button && !button.disabled) focusMatrixAction(button)
+}
+
 function policyExceptionComponentLabel(component) {
   return POLICY_EXCEPTION_COMPONENT_LABELS[component]
     || humanizeValueField(component)
@@ -546,10 +1248,15 @@ function followSkipLink(event) {
   window.history.replaceState(null, "", `#${targetId}`)
 }
 
+function matrixActionIsAvailable(action) {
+  return !action.disabled
+    && !action.closest("tr")?.classList.contains("hidden-row")
+    && action.getClientRects().length > 0
+}
+
 function visibleEnabledMatrixActions() {
   return [...elements.matrixBody.querySelectorAll(MATRIX_CONTROL_SELECTOR)]
-    .filter((button) => !button.disabled)
-    .filter((button) => !button.closest("tr")?.classList.contains("hidden-row"))
+    .filter(matrixActionIsAvailable)
 }
 
 function syncMatrixActionTabStop(preferred = null) {
@@ -578,7 +1285,7 @@ function matrixActionDescriptors() {
   return [...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)")]
     .flatMap((row, rowIndex) => [...row.children].flatMap(
       (cell, cellIndex) => [...cell.querySelectorAll(MATRIX_CONTROL_SELECTOR)]
-        .filter((button) => !button.disabled)
+        .filter(matrixActionIsAvailable)
         .map((button, actionIndex) => ({
           actionIndex,
           cellIndex,
@@ -1025,6 +1732,10 @@ function matrixCell(row, zone) {
     return td
   }
 
+  if (cell.action?.type === "ruleset-rule") {
+    td.dataset.ruleId = cell.action.ruleId
+    td.dataset.rulesetId = cell.action.rulesetId
+  }
   td.classList.add(`variant-${row.variantIndexes.get(cell.canonical) || 0}`)
   const directlyEditable = Boolean(cell.action && !readOnly)
   const structuredValue = cell.inspectionValue !== null
@@ -1067,8 +1778,32 @@ function matrixCell(row, zone) {
     editActionByCell.set(td, cell.action)
   }
 
-  if (directlyEditable || (cell.secondaryAction && !readOnly)) {
+  const hasWriteSecondaryAction = Boolean(cell.secondaryAction && !readOnly)
+  const hasWorkspaceAction = Boolean(cell.workspaceAction || cell.parentAction)
+  if (directlyEditable || hasWriteSecondaryAction || hasWorkspaceAction) {
     const actions = createElement("div", { className: "cell-actions" })
+    if (cell.workspaceAction) {
+      const openButton = createElement("button", {
+        className: "cell-action open-ruleset",
+        text: "Open",
+      })
+      openButton.type = "button"
+      openButton.setAttribute("aria-label", `Open ${row.label} on ${zone.meta.name}`)
+      openButton.title = "Open this ruleset and inspect its ordered rules"
+      workspaceActionByButton.set(openButton, cell.workspaceAction)
+      actions.append(openButton)
+    }
+    if (cell.parentAction) {
+      const parentButton = createElement("button", {
+        className: "cell-action open-ruleset",
+        text: "Ruleset",
+      })
+      parentButton.type = "button"
+      parentButton.setAttribute("aria-label", `Open the parent ruleset for ${row.label} on ${zone.meta.name}`)
+      parentButton.title = "Open the parent ruleset workspace"
+      workspaceActionByButton.set(parentButton, cell.parentAction)
+      actions.append(parentButton)
+    }
     if (directlyEditable) {
       const editButton = createElement("button", {
         className: "cell-action edit-cell",
@@ -1080,7 +1815,7 @@ function matrixCell(row, zone) {
       editButton.disabled = state.busy
       actions.append(editButton)
     }
-    if (cell.secondaryAction && !readOnly) {
+    if (hasWriteSecondaryAction) {
       td.classList.add("has-secondary-action")
       const button = createElement("button", {
         className: "cell-action copy-rule",
@@ -1501,7 +2236,7 @@ function confirmPlans(title, planSet) {
   elements.confirmTitle.textContent = title
   const operations = operationPreview(actionable)
   const validationTime = new Date(planSet.validatedAt).toLocaleTimeString()
-  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} zone${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the full fleet will be re-read.`
+  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} zone${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.`
   elements.confirmOperations.replaceChildren()
   for (const operation of operations) {
     const item = createElement("div", { className: "operation" })
@@ -1542,26 +2277,37 @@ function confirmPlans(title, planSet) {
   })
 }
 
-async function applyPlans(title, planSet) {
+async function applyPlans(title, planSet, options = {}) {
   if (!planSet?.[LIVE_PLAN_SET]) {
     toast("This change has not passed live validation", "error")
-    return
+    return false
   }
-  if (!await confirmPlans(title, planSet)) return
+  if (!await confirmPlans(title, planSet)) return false
   const plans = planSet.plans
   setBusy(true)
+  let writesCompleted = false
   try {
     await executePlans(api, plans, {
       onProgress: ({ completed, total, operation, plan }) => {
         if (operation) setStatus(`Writing ${completed + 1}/${total}: ${plan.zoneName}`)
       },
     })
-    toast("Writes succeeded; re-reading the fleet for verification")
-    await refreshInventory({ preserveSelection: true })
+    writesCompleted = true
+    toast("Writes succeeded; re-reading live state for verification")
+    if (options.verify) await options.verify()
+    else await refreshInventory({ preserveSelection: true })
+    toast(options.successMessage || "Writes succeeded and live verification passed")
+    return true
   } catch (error) {
-    setStatus("Write failed", "error")
+    setStatus(writesCompleted ? "Verification failed" : "Write failed", "error")
     toast(error instanceof Error ? error.message : String(error), "error")
-    await refreshInventory({ preserveSelection: true })
+    try {
+      if (options.verify) await options.verify()
+      else await refreshInventory({ preserveSelection: true })
+    } catch {
+      restoreInventoryStatus()
+    }
+    return false
   } finally {
     setBusy(false)
   }
@@ -2184,15 +2930,41 @@ function createObjectValueField(value, path, label, options) {
     return group
   }
   const fields = createElement("div", { className: "value-group-fields" })
+  const editableKeys = EDITABLE_OBJECT_KEY_FIELDS.has(String(path.at(-1)))
   for (const [key, entry] of entries) {
-    fields.append(
-      createValueField(
-        entry,
-        [...path, key],
-        humanizeValueField(key),
-        options,
-      ),
+    const valueField = createValueField(
+      entry,
+      [...path, key],
+      humanizeValueField(key),
+      options,
     )
+    if (!editableKeys) {
+      fields.append(valueField)
+      continue
+    }
+    const mapEntry = createElement("div", {
+      className: "value-map-entry",
+    })
+    const keyField = createElement("div", {
+      className: "value-field value-map-key",
+    })
+    const controlId = valueEditorControlId()
+    const keyLabel = createElement("label", {
+      text: "Header name",
+    })
+    keyLabel.htmlFor = controlId
+    const keyControl = document.createElement("input")
+    keyControl.id = controlId
+    keyControl.type = "text"
+    keyControl.autocomplete = "off"
+    keyControl.spellcheck = false
+    keyControl.className = "value-control value-object-key-control"
+    keyControl.value = key
+    keyControl.dataset.objectKeyOriginal = key
+    keyControl.dataset.objectKeyPath = encodeValuePath(path)
+    keyField.append(keyLabel, keyControl)
+    mapEntry.append(keyField, valueField)
+    fields.append(mapEntry)
   }
   group.append(fields)
   return group
@@ -2360,6 +3132,68 @@ function updateGeneratedEditorControl(event) {
     )
   } catch (error) {
     control.setCustomValidity(error instanceof Error ? error.message : String(error))
+  }
+}
+
+function remapEditorObjectKeyPaths(mapEntry, path, currentKey, desiredKey) {
+  const pathAttributes = [
+    "arrayPath",
+    "nullPath",
+    "objectKeyPath",
+    "valuePath",
+  ]
+  for (const attribute of pathAttributes) {
+    for (const candidate of mapEntry.querySelectorAll(`[data-${attribute.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}]`)) {
+      const currentPath = decodeValuePath(candidate.dataset[attribute])
+      const sameParent = path.every(
+        (segment, index) => currentPath[index] === segment,
+      )
+      if (sameParent && currentPath[path.length] === currentKey) {
+        currentPath[path.length] = desiredKey
+        candidate.dataset[attribute] = encodeValuePath(currentPath)
+      }
+    }
+  }
+}
+
+function renameGeneratedEditorObjectKey(event) {
+  const control = event.target.closest("[data-object-key-path]")
+  if (!control || !state.editor) return
+  const path = decodeValuePath(control.dataset.objectKeyPath)
+  const currentKey = control.dataset.objectKeyOriginal
+  const desiredKey = control.value.trim()
+  try {
+    if (!HTTP_HEADER_NAME_PATTERN.test(desiredKey)) {
+      throw new TypeError("Enter a valid HTTP header name")
+    }
+    const object = valueAtPath(state.editor.draft, path)
+    const collision = Object.keys(object).find(
+      (key) => key !== currentKey
+        && key.toLowerCase() === desiredKey.toLowerCase(),
+    )
+    if (collision) throw new Error(`Header ${collision} already exists`)
+    control.setCustomValidity("")
+    const mapEntry = control.closest(".value-map-entry")
+    const nextDraft = renameObjectKeyAtPath(
+      state.editor.draft,
+      path,
+      currentKey,
+      desiredKey,
+    )
+    replaceEditorDraft(
+      nextDraft,
+      { render: false },
+    )
+    control.dataset.objectKeyOriginal = desiredKey
+    remapEditorObjectKeyPaths(mapEntry, path, currentKey, desiredKey)
+    const legend = mapEntry.querySelector(":scope > .value-group > legend")
+    if (legend?.firstChild) {
+      legend.firstChild.textContent = humanizeValueField(desiredKey)
+    }
+  } catch (error) {
+    control.setCustomValidity(error instanceof Error ? error.message : String(error))
+    control.reportValidity()
+    control.focus()
   }
 }
 
@@ -2559,6 +3393,47 @@ function openInlineSettingEditor(cell, action, zone, setting) {
   if (control instanceof HTMLInputElement && control.type === "text") control.select()
 }
 
+function openDesiredStateEditor(options) {
+  const {
+    action,
+    afterApply = null,
+    entries,
+    kind,
+    suggestions = collectValueSuggestions(entries.map((entry) => entry.value)),
+    target,
+    title,
+    valueLabel,
+    verify = null,
+    zone,
+  } = options
+  state.editor = {
+    action,
+    afterApply,
+    entries,
+    suggestions,
+    verify,
+    zone,
+  }
+  elements.editorKind.textContent = kind
+  elements.editorTitle.textContent = title
+  elements.editorTarget.textContent = target
+    || `${zone.meta.name} | cached state shown; only the live facts needed for this change will be reread before confirmation`
+  elements.editorValueLabel.textContent = valueLabel
+  clearFieldError(elements.editorValue, elements.editorError)
+  elements.editorChoice.replaceChildren(...entries.map((entry) => {
+    const option = createElement("option", { text: entry.label })
+    option.value = entry.id
+    return option
+  }))
+  elements.editorChoiceRow.hidden = entries.length <= 1
+  renderSelectedEditorEntry()
+  const initialFocus = elements.valueEditorFields.querySelector(".value-control")
+    || elements.editorChoice
+  showDialog(elements.editorDialog, {
+    initialFocus,
+  })
+}
+
 function openCellEditor(cell) {
   if (state.busy || readOnly || !state.transportAvailable) return
   const action = editActionByCell.get(cell)
@@ -2646,29 +3521,309 @@ function openCellEditor(cell) {
     return
   }
 
-  state.editor = {
+  openDesiredStateEditor({
     action,
     entries,
+    kind,
     suggestions,
+    title,
+    valueLabel,
     zone,
-  }
-  elements.editorKind.textContent = kind
-  elements.editorTitle.textContent = title
-  elements.editorTarget.textContent = `${zone.meta.name} | cached state shown; only the live facts needed for this change will be reread before confirmation`
-  elements.editorValueLabel.textContent = valueLabel
-  clearFieldError(elements.editorValue, elements.editorError)
-  elements.editorChoice.replaceChildren(...entries.map((entry) => {
-    const option = createElement("option", { text: entry.label })
-    option.value = entry.id
-    return option
-  }))
-  elements.editorChoiceRow.hidden = entries.length <= 1
-  renderSelectedEditorEntry()
-  const initialFocus = elements.valueEditorFields.querySelector(".value-control")
-    || elements.editorChoice
-  showDialog(elements.editorDialog, {
-    initialFocus,
   })
+}
+
+function workspaceEditorTarget(zone, ruleset) {
+  return `${zone.meta.name} | ${rulesetWorkspaceTitle(ruleset)} | cached definition shown; the exact ruleset will be reread before confirmation`
+}
+
+async function refreshWorkspaceAfterApply(applied) {
+  if (!applied || !elements.rulesetDialog.open || !state.rulesetWorkspace) return
+  renderRulesetWorkspace()
+}
+
+function openWorkspaceRuleEditor(rule, targetRuleset = null) {
+  const workspace = state.rulesetWorkspace
+  const zone = workspace ? zoneById(workspace.action.zoneId) : null
+  const ruleset = targetRuleset || workspace?.ruleset
+  if (!workspace || !zone || !ruleset || !rule) {
+    toast("The selected rule is no longer available", "error")
+    return
+  }
+  const index = ruleset.rules?.findIndex((entry) => entry.id === rule.id) ?? -1
+  const label = rulesetRuleLabel(rule, Math.max(index, 0))
+  const action = {
+    phase: ruleset.phase,
+    ruleId: rule.id,
+    rulesetId: ruleset.id,
+    type: READ_ACTION.RULE_EDIT,
+    zoneId: zone.meta.id,
+  }
+  openDesiredStateEditor({
+    action,
+    afterApply: refreshWorkspaceAfterApply,
+    entries: [
+      {
+        id: rule.id,
+        label,
+        presentation: {
+          kind: "rule",
+          phase: ruleset.phase,
+        },
+        value: editableRulePayload(rule),
+      },
+    ],
+    kind: "Ruleset rule",
+    target: workspaceEditorTarget(zone, ruleset),
+    title: label,
+    valueLabel: "Desired rule definition",
+    verify: () => verifyRulesetAction(action),
+    zone,
+  })
+}
+
+function openWorkspaceRuleCreateEditor(definition, title = "Add rule") {
+  const workspace = state.rulesetWorkspace
+  const zone = workspace ? zoneById(workspace.action.zoneId) : null
+  if (!workspace || !zone || !definition || !rulesetIsEditable(workspace.ruleset)) {
+    toast("A safe starter definition is unavailable for this ruleset", "error")
+    return
+  }
+  const action = {
+    phase: workspace.ruleset.phase,
+    rulesetId: workspace.ruleset.id,
+    type: READ_ACTION.RULE_CREATE,
+    zoneId: zone.meta.id,
+  }
+  openDesiredStateEditor({
+    action,
+    afterApply: refreshWorkspaceAfterApply,
+    entries: [
+      {
+        id: "new-rule",
+        label: definition.description || "New rule",
+        presentation: {
+          kind: "rule",
+          phase: workspace.ruleset.phase,
+        },
+        value: definition,
+      },
+    ],
+    kind: "New ruleset rule",
+    target: workspaceEditorTarget(zone, workspace.ruleset),
+    title,
+    valueLabel: "New rule definition",
+    verify: () => verifyRulesetAction(action),
+    zone,
+  })
+}
+
+async function liveRulesetContext(action, readType, label) {
+  const zone = zoneById(action.zoneId)
+  if (!zone) throw new Error("The selected zone is no longer available")
+  const readAction = {
+    phase: action.phase,
+    rulesetId: action.rulesetId,
+    type: readType,
+    zoneId: action.zoneId,
+  }
+  const liveData = await runWritePreflight(
+    `${label} on ${zone.meta.name}`,
+    () => executePreflightRead([readAction]),
+  )
+  if (liveData.inventory) {
+    assertSurfaceReads(liveData.inventory, ["rulesets"], `${label} rulesets`)
+    const liveZone = selectedLiveZones(liveData.inventory, [action.zoneId])[0]
+    const detail = liveZone.ruleDetails.find(
+      (entry) => entry.result?.id === action.rulesetId,
+    )
+    if (!detail?.ok) throw new Error("Live validation returned no ruleset detail")
+    return {
+      ruleset: detail.result,
+      zone: liveZone,
+    }
+  }
+  const resourceId = actionResourceId(readAction)
+  const ruleset = liveData.resources.get(resourceId)
+  if (!ruleset) throw new Error("Live validation returned no ruleset detail")
+  const otherDetails = workspaceZoneRulesets(zone)
+    .filter((entry) => entry.id !== ruleset.id)
+    .map((entry) => ({
+      ok: true,
+      result: entry,
+    }))
+  return {
+    ruleset,
+    zone: {
+      meta: zone.meta,
+      ruleDetails: [
+        ...otherDetails,
+        {
+          ok: true,
+          result: ruleset,
+        },
+      ],
+      surfaces: {},
+    },
+  }
+}
+
+async function planRuleCreate(editor, desiredDefinition) {
+  const context = await liveRulesetContext(
+    editor.action,
+    READ_ACTION.RULE_CREATE,
+    "new rule",
+  )
+  return buildRuleCreatePlan(context.zone, context.ruleset, desiredDefinition)
+}
+
+async function applyWorkspaceMutation(title, readType, label, buildPlan, options = {}) {
+  const workspace = state.rulesetWorkspace
+  if (!workspace || workspaceWriteLocked()) return false
+  const action = {
+    phase: workspace.ruleset.phase,
+    rulesetId: workspace.ruleset.id,
+    zoneId: workspace.action.zoneId,
+  }
+  try {
+    const context = await liveRulesetContext(action, readType, label)
+    const plan = buildPlan(context)
+    const applied = await applyPlans(
+      title,
+      createLivePlanSet([plan]),
+      {
+        verify: () => verifyRulesetAction(action, {
+          deleted: options.closeWorkspace,
+        }),
+      },
+    )
+    if (!applied) return false
+    if (options.closeWorkspace) {
+      if (elements.rulesetDialog.open) elements.rulesetDialog.close()
+    } else if (elements.rulesetDialog.open && state.rulesetWorkspace) {
+      renderRulesetWorkspace()
+    }
+    return true
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error), "error")
+    return false
+  }
+}
+
+function toggleWorkspaceRule(ruleId) {
+  const workspace = state.rulesetWorkspace
+  if (!workspace) return
+  applyWorkspaceMutation(
+    "Update rule status",
+    READ_ACTION.RULE_EDIT,
+    "rule status",
+    ({ ruleset, zone }) => {
+      const rule = ruleset.rules?.find((entry) => entry.id === ruleId)
+      if (!rule) throw new Error("The rule is no longer available")
+      const desired = editableRulePayload(rule)
+      desired.enabled = rule.enabled === false
+      return buildRuleEditPlan(zone, {
+        phase: ruleset.phase,
+        ruleId,
+        rulesetId: ruleset.id,
+      }, desired)
+    },
+  )
+}
+
+function reorderWorkspaceRule(ruleId, direction) {
+  applyWorkspaceMutation(
+    "Reorder ruleset rule",
+    READ_ACTION.RULE_REORDER,
+    "rule order",
+    ({ ruleset, zone }) => {
+      const currentIndex = ruleset.rules?.findIndex((entry) => entry.id === ruleId) ?? -1
+      if (currentIndex === -1) throw new Error("The rule is no longer available")
+      return buildRuleReorderPlan(
+        zone,
+        ruleset,
+        ruleId,
+        currentIndex + direction,
+      )
+    },
+  )
+}
+
+function deleteWorkspaceRule(ruleId) {
+  applyWorkspaceMutation(
+    "Delete ruleset rule",
+    READ_ACTION.RULE_DELETE,
+    "rule deletion",
+    ({ ruleset, zone }) => buildRuleDeletePlan(zone, ruleset, ruleId),
+  )
+}
+
+function deleteWorkspaceRuleset() {
+  applyWorkspaceMutation(
+    "Delete empty ruleset",
+    READ_ACTION.RULESET_DELETE,
+    "ruleset deletion",
+    ({ ruleset, zone }) => buildRulesetDeletePlan(zone, ruleset),
+    {
+      closeWorkspace: true,
+    },
+  )
+}
+
+function openRulesetDescriptionEditor() {
+  const workspace = state.rulesetWorkspace
+  if (!workspace || workspaceWriteLocked()) return
+  elements.rulesetDescriptionValue.value = workspace.ruleset.description || ""
+  clearFieldError(
+    elements.rulesetDescriptionValue,
+    elements.rulesetDescriptionError,
+  )
+  showDialog(elements.rulesetDescriptionDialog, {
+    initialFocus: elements.rulesetDescriptionValue,
+  })
+  elements.rulesetDescriptionValue.select()
+}
+
+async function reviewRulesetDescription(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const workspace = state.rulesetWorkspace
+  if (!workspace) {
+    showFieldError(
+      elements.rulesetDescriptionValue,
+      elements.rulesetDescriptionError,
+      "The ruleset workspace is unavailable",
+    )
+    return
+  }
+  try {
+    const context = await liveRulesetContext(
+      workspace.action,
+      READ_ACTION.RULESET_EDIT,
+      "ruleset description",
+    )
+    const plan = buildRulesetDescriptionPlan(
+      context.zone,
+      context.ruleset,
+      elements.rulesetDescriptionValue.value,
+    )
+    if (!elements.rulesetDescriptionDialog.open) return
+    elements.rulesetDescriptionDialog.close()
+    const applied = await applyPlans(
+      "Update ruleset description",
+      createLivePlanSet([plan]),
+      {
+        verify: () => verifyRulesetAction(workspace.action),
+      },
+    )
+    await refreshWorkspaceAfterApply(applied)
+  } catch (error) {
+    if (!elements.rulesetDescriptionDialog.open) return
+    showFieldError(
+      elements.rulesetDescriptionValue,
+      elements.rulesetDescriptionError,
+      error,
+    )
+  }
 }
 
 function editorError(error) {
@@ -2797,6 +3952,9 @@ async function reviewEditorChange(event) {
     } else if (editor.action.type === "ruleset-rule") {
       plan = await planRuleEdit(editor, desired)
       confirmationTitle = "Update ruleset rule"
+    } else if (editor.action.type === READ_ACTION.RULE_CREATE) {
+      plan = await planRuleCreate(editor, desired)
+      confirmationTitle = "Create ruleset rule"
     } else {
       throw new Error(`Editor support is unavailable for ${editor.action.type}`)
     }
@@ -2809,7 +3967,16 @@ async function reviewEditorChange(event) {
   clearFieldError(elements.editorValue, elements.editorError)
   elements.editorDialog.close()
   state.editor = null
-  await applyPlans(confirmationTitle, createLivePlanSet([plan]))
+  const applied = await applyPlans(
+    confirmationTitle,
+    createLivePlanSet([plan]),
+    editor.verify
+      ? {
+          verify: editor.verify,
+        }
+      : {},
+  )
+  await editor.afterApply?.(applied)
 }
 
 function renderInventory(inventory, source) {
@@ -2922,14 +4089,14 @@ api.startSessionMonitor({
   onConnected: () => {
     state.transportAvailable = true
     restoreInventoryStatus()
-    updateActionButtons()
+    updateTransportDependentControls()
   },
   onDisconnected: () => {
     state.transportAvailable = false
     setStatus("Session broker offline", "error")
     setRefreshDetail("The loaded matrix remains available; relaunch to restore live reads and writes", "error")
     setWriteReadiness("Session broker offline; the loaded dashboard is read-only")
-    updateActionButtons()
+    updateTransportDependentControls()
   },
 })
 
@@ -2962,6 +4129,16 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
+  const rulesetButton = event.target.closest(".open-ruleset")
+  if (rulesetButton) {
+    const action = workspaceActionByButton.get(rulesetButton)
+    if (!action || action.type !== RULESET_ACTION_KIND.OPEN) {
+      toast("The selected ruleset is no longer available", "error")
+      return
+    }
+    openRulesetWorkspace(action)
+    return
+  }
   const bulkFillButton = event.target.closest(".bulk-fill")
   if (bulkFillButton) {
     fillDnsTargetsFromRow(bulkFillButton)
@@ -3039,11 +4216,77 @@ elements.editorValue.addEventListener("input", () => {
 })
 elements.valueEditorFields.addEventListener("input", updateGeneratedEditorControl)
 elements.valueEditorFields.addEventListener("change", changeNullEditorType)
+elements.valueEditorFields.addEventListener("change", renameGeneratedEditorObjectKey)
 elements.valueEditorFields.addEventListener("click", handleValueEditorAction)
 elements.editorDialog.addEventListener("close", () => {
   state.editor = null
 })
 elements.editorForm.addEventListener("submit", reviewEditorChange)
+elements.rulesetSearch.addEventListener("input", () => {
+  if (!state.rulesetWorkspace) return
+  state.rulesetWorkspace.query = elements.rulesetSearch.value
+  state.rulesetWorkspace.limit = RULESET_RULE_PAGE_SIZE
+  renderRulesetWorkspace()
+})
+elements.rulesetStatusFilter.addEventListener("change", () => {
+  if (!state.rulesetWorkspace) return
+  state.rulesetWorkspace.status = elements.rulesetStatusFilter.value
+  state.rulesetWorkspace.limit = RULESET_RULE_PAGE_SIZE
+  renderRulesetWorkspace()
+})
+elements.rulesetLoadMore.addEventListener("click", () => {
+  if (!state.rulesetWorkspace) return
+  state.rulesetWorkspace.limit += RULESET_RULE_PAGE_SIZE
+  renderRulesetWorkspace()
+})
+elements.rulesetRefresh.addEventListener("click", refreshRulesetWorkspace)
+elements.rulesetAddRule.addEventListener("click", () => {
+  const workspace = state.rulesetWorkspace
+  if (!workspace) return
+  openWorkspaceRuleCreateEditor(
+    newRuleDefinition(workspace.ruleset),
+    `Add rule to ${rulesetWorkspaceTitle(workspace.ruleset)}`,
+  )
+})
+elements.rulesetEditDescription.addEventListener("click", openRulesetDescriptionEditor)
+elements.rulesetDelete.addEventListener("click", deleteWorkspaceRuleset)
+elements.rulesetConfigureDeployment.addEventListener("click", () => {
+  const workspace = state.rulesetWorkspace
+  const deployment = workspace?.deployment
+  if (!workspace || !deployment) return
+  if (readOnly) {
+    openRulesetWorkspace({
+      kind: deployment.ruleset.kind,
+      name: deployment.ruleset.name,
+      phase: deployment.ruleset.phase,
+      rulesetId: deployment.ruleset.id,
+      type: RULESET_ACTION_KIND.OPEN,
+      zoneId: workspace.action.zoneId,
+    })
+    return
+  }
+  openWorkspaceRuleEditor(deployment.rule, deployment.ruleset)
+})
+elements.rulesetDialog.addEventListener("close", () => {
+  const action = state.rulesetWorkspace?.action
+  state.rulesetWorkspace = null
+  if (!action) return
+  requestAnimationFrame(() => {
+    const activeElement = document.activeElement
+    if (activeElement === document.body
+      || !activeElement?.isConnected
+      || elements.rulesetDialog.contains(activeElement)) {
+      focusRulesetMatrixOpener(action)
+    }
+  })
+})
+elements.rulesetDescriptionDialog.addEventListener("close", () => {
+  clearFieldError(
+    elements.rulesetDescriptionValue,
+    elements.rulesetDescriptionError,
+  )
+})
+elements.rulesetDescriptionForm.addEventListener("submit", reviewRulesetDescription)
 elements.holeSource.addEventListener("change", renderHoleCandidate)
 elements.holeDialog.addEventListener("close", () => {
   state.holeResolution = null

@@ -1,6 +1,8 @@
 import { loadInventory } from "./inventory.mjs"
 import {
   FLEET_ACTION_KIND,
+  RULESET_ACTION_KIND,
+  RULESET_KIND,
   WAF_PHASE,
 } from "./constants.mjs"
 
@@ -14,11 +16,25 @@ export const READ_ACTION = Object.freeze({
   DNS_RECORD_EDIT: "dns-record-edit",
   EMAIL_ALIGNMENT: "email-alignment",
   RULE_COPY: "ruleset-rule-copy",
+  RULE_CREATE: "ruleset-rule-create",
+  RULE_DELETE: "ruleset-rule-delete",
   RULE_EDIT: "ruleset-rule",
   RULE_RENAME: FLEET_ACTION_KIND.RULE_RENAME,
+  RULE_REORDER: "ruleset-rule-reorder",
+  RULESET_DELETE: "ruleset-delete",
+  RULESET_EDIT: "ruleset-edit",
+  RULESET_INSPECT: RULESET_ACTION_KIND.OPEN,
   WAF_ALIGNMENT: "waf-alignment",
   ZONE_SETTING_EDIT: "zone-setting",
 })
+const EXACT_RULESET_ACTIONS = new Set([
+  READ_ACTION.RULE_DELETE,
+  READ_ACTION.RULE_EDIT,
+  READ_ACTION.RULE_REORDER,
+  READ_ACTION.RULESET_DELETE,
+  READ_ACTION.RULESET_EDIT,
+  READ_ACTION.RULESET_INSPECT,
+])
 const EMAIL_SURFACE_IDS = Object.freeze([
   "dns",
   "email",
@@ -112,7 +128,7 @@ export function actionResourceId(action) {
   if (action.type === READ_ACTION.DNS_RECORD_EDIT) {
     return `dns-record:${requiredIdentifier(action.zoneId, "DNS record zone identifier")}:${requiredIdentifier(action.recordId, "DNS record identifier")}`
   }
-  if (action.type === READ_ACTION.RULE_EDIT) {
+  if (EXACT_RULESET_ACTIONS.has(action.type)) {
     return rulesetResourceId(action.zoneId, action.rulesetId)
   }
   return null
@@ -199,7 +215,26 @@ export function readRequirementsForAction(action) {
       )),
     ]
   }
-  if (action.type === READ_ACTION.RULE_EDIT) {
+  if (action.type === READ_ACTION.RULE_CREATE) {
+    requiredIdentifier(action.rulesetId, "Rule create ruleset identifier")
+    return [
+      inventoryRead({
+        includeRuleDetails: true,
+        ruleDetailKinds: [
+          RULESET_KIND.ZONE,
+          RULESET_KIND.CUSTOM,
+        ],
+        ruleDetailPhases: [
+          requiredIdentifier(action.phase, "Rule create phase"),
+        ],
+        surfaceIds: RULESET_SURFACE_IDS,
+        zoneIds: [
+          requiredIdentifier(action.zoneId, "Rule create zone identifier"),
+        ],
+      }),
+    ]
+  }
+  if (EXACT_RULESET_ACTIONS.has(action.type)) {
     const id = actionResourceId(action)
     return [
       resourceRead(

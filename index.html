@@ -158,6 +158,68 @@
     </footer>
   </div>
 
+  <dialog class="ruleset-dialog" id="ruleset-dialog" aria-labelledby="ruleset-title" aria-describedby="ruleset-target ruleset-status">
+    <div class="ruleset-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close ruleset workspace">&times;</button>
+      <header class="ruleset-heading">
+        <div>
+          <p class="dialog-kicker">Ruleset workspace</p>
+          <h2 id="ruleset-title">Ruleset</h2>
+          <p id="ruleset-target"></p>
+        </div>
+        <div class="ruleset-badges" id="ruleset-badges" aria-label="Ruleset metadata"></div>
+      </header>
+      <section class="ruleset-description" aria-labelledby="ruleset-description-heading">
+        <div>
+          <h3 id="ruleset-description-heading">Description</h3>
+          <p id="ruleset-description"></p>
+        </div>
+        <button class="button button-quiet" id="ruleset-edit-description" type="button">Edit description</button>
+      </section>
+      <section class="ruleset-deployment" id="ruleset-deployment" aria-labelledby="ruleset-deployment-heading" hidden>
+        <div>
+          <h3 id="ruleset-deployment-heading">Deployment</h3>
+          <p id="ruleset-deployment-summary"></p>
+        </div>
+        <button class="button button-quiet" id="ruleset-configure-deployment" type="button" hidden>Configure deployment</button>
+      </section>
+      <div class="ruleset-toolbar" role="search">
+        <label class="sr-only" for="ruleset-search">Search rules in this ruleset</label>
+        <input id="ruleset-search" type="search" placeholder="Search rules, actions, or expressions">
+        <label class="sr-only" for="ruleset-status-filter">Filter rules by status</label>
+        <select id="ruleset-status-filter">
+          <option value="all">All statuses</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <button class="button button-quiet" id="ruleset-refresh" type="button">Refresh</button>
+        <button class="button button-accent" id="ruleset-add-rule" type="button">Add rule</button>
+      </div>
+      <p class="ruleset-status" id="ruleset-status" role="status" aria-live="polite">Loading ruleset details</p>
+      <ol class="ruleset-rule-list" id="ruleset-rule-list"></ol>
+      <div class="ruleset-footer-actions">
+        <button class="button button-quiet" id="ruleset-load-more" type="button" hidden>Load more</button>
+        <button class="button button-danger" id="ruleset-delete" type="button" hidden>Delete empty ruleset</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="ruleset-description-dialog" aria-labelledby="ruleset-description-title" aria-describedby="ruleset-description-help">
+    <form method="dialog" id="ruleset-description-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close description editor">&times;</button>
+      <p class="dialog-kicker">Ruleset metadata</p>
+      <h2 id="ruleset-description-title">Edit ruleset description</h2>
+      <p id="ruleset-description-help">Cloudflare replaces the ruleset definition when its description changes. The dashboard will reread and preserve every live rule in order.</p>
+      <label for="ruleset-description-value">Description</label>
+      <textarea id="ruleset-description-value" aria-describedby="ruleset-description-help ruleset-description-error"></textarea>
+      <p class="field-error" id="ruleset-description-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="ruleset-description-review" value="review">Review description change</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="editor-dialog" aria-labelledby="editor-title" aria-describedby="editor-target">
     <form method="dialog" id="editor-form" novalidate>
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close editor">&times;</button>

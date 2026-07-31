@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 
 import {
+  cacheRecordUpdatedAt,
   CACHE_SNAPSHOT_GLOBAL,
   isCacheRecord,
 } from "./cache.mjs"
@@ -172,9 +173,10 @@ export async function watchSession(options) {
           const serialized = await evaluate(target.webSocketDebuggerUrl, snapshotExpression)
           if (typeof serialized === "string") {
             const record = JSON.parse(serialized)
-            if (isCacheRecord(record) && record.loadedAt !== lastSavedAt) {
+            if (isCacheRecord(record)
+              && cacheRecordUpdatedAt(record) !== lastSavedAt) {
               await persistCacheRecord(options.cacheDir, options.sessionId, record)
-              lastSavedAt = record.loadedAt
+              lastSavedAt = cacheRecordUpdatedAt(record)
             }
           }
         }

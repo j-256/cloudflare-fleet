@@ -5,9 +5,14 @@ import {
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
+  buildRuleCreatePlan,
   buildRuleCopyPlans,
+  buildRuleDeletePlan,
   buildRuleEditPlan,
   buildRuleRenamePlans,
+  buildRuleReorderPlan,
+  buildRulesetDeletePlan,
+  buildRulesetDescriptionPlan,
   buildWafAlignmentPlan,
   buildZoneSettingPlan,
   deriveEmailDestination,
@@ -1251,6 +1256,109 @@ test("zone setting planner returns a no-op for the live desired value", () => {
   assert.deepEqual(
     buildZoneSettingPlan(zone, "always_use_https", "on").operations,
     [],
+  )
+})
+
+test("ruleset rule lifecycle planners preserve live definitions and order", () => {
+  const ruleset = fleetRuleset()
+  const zone = makeZone("alpha.example", {
+    ruleDetails: [ok(ruleset)],
+  })
+  const desired = {
+    action: "block",
+    description: "Temporary disabled rule",
+    enabled: false,
+    expression: "false",
+  }
+
+  const create = buildRuleCreatePlan(zone, ruleset, desired)
+  assert.equal(create.operations[0].method, "POST")
+  assert.equal(
+    create.operations[0].path,
+    "zones/zone-alpha.example/rulesets/ruleset-id/rules",
+  )
+  assert.deepEqual(create.operations[0].body, desired)
+
+  const reorder = buildRuleReorderPlan(
+    zone,
+    ruleset,
+    ruleset.rules[1].id,
+    0,
+  )
+  assert.equal(reorder.operations[0].method, "PATCH")
+  assert.deepEqual(reorder.operations[0].body, {
+    position: {
+      before: ruleset.rules[0].id,
+    },
+  })
+  assert.deepEqual(
+    buildRuleReorderPlan(zone, ruleset, ruleset.rules[0].id, 0).operations,
+    [],
+  )
+
+  const deletion = buildRuleDeletePlan(zone, ruleset, ruleset.rules[0].id)
+  assert.equal(deletion.operations[0].method, "DELETE")
+  assert.deepEqual(deletion.operations[0].currentValue, {
+    position: 1,
+    rule: editableRulePayload(ruleset.rules[0]),
+  })
+})
+
+test("ruleset description updates preserve every writable live rule", () => {
+  const ruleset = fleetRuleset({
+    description: "Old description",
+  })
+  const zone = makeZone("alpha.example", {
+    ruleDetails: [ok(ruleset)],
+  })
+  const plan = buildRulesetDescriptionPlan(zone, ruleset, "New description")
+
+  assert.equal(plan.operations[0].method, "PUT")
+  assert.deepEqual(plan.operations[0].body, {
+    description: "New description",
+    rules: ruleset.rules.map(editableRulePayload),
+  })
+  assert.equal(
+    buildRulesetDescriptionPlan(zone, ruleset, "Old description").operations.length,
+    0,
+  )
+})
+
+test("whole ruleset deletion requires an editable empty ruleset", () => {
+  const empty = fleetRuleset({
+    rules: [],
+  })
+  const zone = makeZone("alpha.example", {
+    ruleDetails: [ok(empty)],
+  })
+  const plan = buildRulesetDeletePlan(zone, empty)
+
+  assert.equal(plan.operations[0].method, "DELETE")
+  assert.equal(
+    plan.operations[0].path,
+    "zones/zone-alpha.example/rulesets/ruleset-id",
+  )
+  assert.throws(
+    () => buildRulesetDeletePlan(zone, fleetRuleset()),
+    /Delete every rule/,
+  )
+  assert.throws(
+    () => buildRuleCreatePlan(zone, {
+      ...empty,
+      kind: "managed",
+    }, {
+      action: "block",
+      enabled: false,
+      expression: "false",
+    }),
+    /Managed rule definitions/,
+  )
+  assert.throws(
+    () => buildRulesetDeletePlan(zone, {
+      ...empty,
+      kind: "root",
+    }),
+    /not editable at the zone level/,
   )
 })
 

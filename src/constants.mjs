@@ -4,6 +4,7 @@ export const DEFAULT_PAGE_SIZE = 100
 export const ZONE_PAGE_SIZE = 50
 
 export const HTTP_METHOD = Object.freeze({
+  DELETE: "DELETE",
   GET: "GET",
   PATCH: "PATCH",
   POST: "POST",
@@ -11,6 +12,17 @@ export const HTTP_METHOD = Object.freeze({
 })
 
 export const WAF_PHASE = "http_request_firewall_custom"
+
+export const RULESET_KIND = Object.freeze({
+  CUSTOM: "custom",
+  MANAGED: "managed",
+  ROOT: "root",
+  ZONE: "zone",
+})
+
+export const RULESET_ACTION_KIND = Object.freeze({
+  OPEN: "ruleset-open",
+})
 
 export const EMAIL_POLICY_COMPONENT = Object.freeze({
   SPF: "spf",

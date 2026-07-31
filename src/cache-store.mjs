@@ -3,6 +3,7 @@ import path from "node:path"
 
 import {
   CACHE_RECORD_GLOBAL,
+  compareCacheRecordsNewestFirst,
   isCacheRecord,
   newestCacheRecord,
 } from "./cache.mjs"
@@ -84,7 +85,9 @@ async function pruneCacheFiles(cacheDir) {
   }
 
   for (const group of groups.values()) {
-    group.sort((left, right) => Date.parse(right.record.loadedAt) - Date.parse(left.record.loadedAt))
+    group.sort((left, right) => (
+      compareCacheRecordsNewestFirst(left.record, right.record)
+    ))
     for (const entry of group.slice(MAX_CACHE_FILES_PER_ACCOUNT)) {
       await fs.rm(entry.filePath, { force: true })
     }

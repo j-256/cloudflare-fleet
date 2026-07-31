@@ -148,6 +148,61 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   assert.equal(cell.presentation.rule.action, "redirect")
   assert.equal(cell.presentation.rule.expression, "http.host eq \"{zone}\"")
   assert.deepEqual(cell.inspectionValue, cell.presentation.rule)
+  assert.deepEqual(cell.parentAction, {
+    kind: "zone",
+    name: "default",
+    phase: "http_request_dynamic_redirect",
+    rulesetId: "redirect-entrypoint",
+    type: "ruleset-open",
+    zoneId: "zone-alpha.example",
+  })
+  const parentRow = matrix.rows.find(
+    (entry) => entry.category === "Rulesets"
+      && entry.label === "Dynamic redirects entrypoint",
+  )
+  assert.deepEqual(
+    parentRow.cells.get("alpha.example").workspaceAction,
+    cell.parentAction,
+  )
+})
+
+test("matrix exposes managed rulesets as individual workspaces", () => {
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      rulesets: [
+        {
+          id: "managed-firewall",
+          kind: "managed",
+          name: "Cloudflare Managed Free Ruleset",
+          phase: "http_request_firewall_managed",
+          version: "12",
+        },
+        {
+          id: "managed-normalization",
+          kind: "managed",
+          name: "Cloudflare Normalization Ruleset",
+          phase: "http_request_sanitize",
+          version: "7",
+        },
+      ],
+    }),
+  ]))
+  const managedRows = matrix.rows.filter(
+    (entry) => entry.category === "Rulesets"
+      && entry.key.startsWith("managed:"),
+  )
+
+  assert.deepEqual(
+    managedRows.map((row) => row.label).sort(),
+    [
+      "Cloudflare Managed Free Ruleset",
+      "Cloudflare Normalization Ruleset",
+    ],
+  )
+  assert.deepEqual(
+    managedRows[0].cells.get("alpha.example").workspaceAction.type,
+    "ruleset-open",
+  )
 })
 
 test("matrix exposes dependency-backed rules for editing but not copying", () => {

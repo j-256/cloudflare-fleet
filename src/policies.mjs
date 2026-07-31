@@ -3,6 +3,7 @@ import {
   FLEET_WAF_RULE_DESCRIPTIONS,
   HTTP_METHOD,
   POLICY_EXCEPTION_STATUS,
+  RULESET_KIND,
   WAF_PHASE,
 } from "./constants.mjs"
 import {
@@ -15,11 +16,6 @@ import {
 const EMAIL_CATCH_ALL_NAME = "Catch-all to Gmail"
 const DMARC_NAME = "_dmarc"
 const DMARC_PREFIX = "v=dmarc1;"
-const RULESET_KIND = Object.freeze({
-  CUSTOM: "custom",
-  MANAGED: "managed",
-  ZONE: "zone",
-})
 const RULE_COPY_DEPENDENCY_KEYS = new Set([
   "id",
   "list_id",
@@ -90,6 +86,13 @@ const DNS_RECORD_PRIVATE_ROUTING_TYPES = new Set([
   "A",
   "AAAA",
 ])
+const RULESET_PLAN_KIND = Object.freeze({
+  CREATE_RULE: "rule-create",
+  DELETE_RULE: "rule-delete",
+  DELETE_RULESET: "ruleset-delete",
+  EDIT_DESCRIPTION: "ruleset-description",
+  REORDER_RULE: "rule-reorder",
+})
 const FREE_PLAN_NAME = "Free Website"
 const FREE_RULE_LIMIT_BY_PHASE = Object.freeze({
   http_config_settings: 10,
@@ -1316,6 +1319,20 @@ export function buildDnsRecordEditPlan(zone, liveRecord, desiredDefinition) {
   }
 }
 
+function assertEditableRulesetDetail(zone, ruleset) {
+  if (!ruleset || typeof ruleset !== "object") {
+    throw new Error(`The ruleset is no longer available on ${zone.meta.name}`)
+  }
+  if (![RULESET_KIND.ZONE, RULESET_KIND.CUSTOM].includes(ruleset.kind)) {
+    throw new Error(
+      ruleset.kind === RULESET_KIND.MANAGED
+        ? "Managed rule definitions cannot be edited directly"
+        : `Ruleset kind ${ruleset.kind || "unknown"} is not editable at the zone level`,
+    )
+  }
+  return ruleset
+}
+
 function editableRuleset(zone, source) {
   const ruleset = zone.ruleDetails
     .filter((entry) => entry.ok)
@@ -1324,9 +1341,7 @@ function editableRuleset(zone, source) {
   if (!ruleset) {
     throw new Error(`The ${source.phase} ruleset is no longer available on ${zone.meta.name}`)
   }
-  if (ruleset.kind === RULESET_KIND.MANAGED) {
-    throw new Error("Managed rule definitions cannot be edited directly")
-  }
+  assertEditableRulesetDetail(zone, ruleset)
   const rule = ruleset.rules?.find((entry) => entry.id === source.ruleId)
   if (!rule) throw new Error(`The rule is no longer available on ${zone.meta.name}`)
   return {
@@ -1364,6 +1379,170 @@ export function buildRuleEditPlan(zone, source, desiredDefinition) {
     summary: operations.length === 0
       ? `${label} already matches the desired definition`
       : `Update ${label} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildRuleCreatePlan(zone, ruleset, desiredDefinition) {
+  assertEditableRulesetDetail(zone, ruleset)
+  const desired = desiredPayload(
+    desiredDefinition,
+    [...RULE_WRITABLE_FIELDS, "ref"],
+    ["action", "enabled", "expression"],
+    "Rule definition",
+  )
+  const ruleCount = Math.max(
+    knownQuotaRuleCount(zone, ruleset.phase, ruleset),
+    ruleset.rules?.length || 0,
+  )
+  validateRuleAppend(zone, ruleset.phase, ruleCount)
+  const label = ruleLabel(desired)
+  return {
+    id: `rule-create:${zone.meta.id}:${ruleset.id}:${label}`,
+    kind: RULESET_PLAN_KIND.CREATE_RULE,
+    operations: [
+      {
+        body: desired,
+        label: `Create ${label}`,
+        method: HTTP_METHOD.POST,
+        path: `zones/${zone.meta.id}/rulesets/${ruleset.id}/rules`,
+      },
+    ],
+    summary: `Create ${label} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildRuleDeletePlan(zone, ruleset, ruleId) {
+  assertEditableRulesetDetail(zone, ruleset)
+  const rules = ruleset.rules || []
+  const index = rules.findIndex((rule) => rule.id === ruleId)
+  if (index === -1) throw new Error(`The rule is no longer available on ${zone.meta.name}`)
+  const rule = rules[index]
+  const label = ruleLabel(rule)
+  return {
+    id: `rule-delete:${zone.meta.id}:${rule.id}`,
+    kind: RULESET_PLAN_KIND.DELETE_RULE,
+    operations: [
+      {
+        currentValue: {
+          position: index + 1,
+          rule: editableRulePayload(rule),
+        },
+        label: `Delete ${label}`,
+        method: HTTP_METHOD.DELETE,
+        path: `zones/${zone.meta.id}/rulesets/${ruleset.id}/rules/${rule.id}`,
+      },
+    ],
+    summary: `Delete ${label} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildRuleReorderPlan(zone, ruleset, ruleId, targetIndex) {
+  assertEditableRulesetDetail(zone, ruleset)
+  const rules = ruleset.rules || []
+  const currentIndex = rules.findIndex((rule) => rule.id === ruleId)
+  if (currentIndex === -1) {
+    throw new Error(`The rule is no longer available on ${zone.meta.name}`)
+  }
+  if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= rules.length) {
+    throw new RangeError("The desired rule position is unavailable")
+  }
+  const rule = rules[currentIndex]
+  const label = ruleLabel(rule)
+  const operations = []
+  if (targetIndex !== currentIndex) {
+    const anchor = rules[targetIndex]
+    operations.push({
+      body: {
+        position: targetIndex < currentIndex
+          ? { before: anchor.id }
+          : { after: anchor.id },
+      },
+      currentValue: {
+        position: currentIndex + 1,
+      },
+      label: `Move ${label} from position ${currentIndex + 1} to ${targetIndex + 1}`,
+      method: HTTP_METHOD.PATCH,
+      path: `zones/${zone.meta.id}/rulesets/${ruleset.id}/rules/${rule.id}`,
+    })
+  }
+  return {
+    id: `rule-reorder:${zone.meta.id}:${rule.id}`,
+    kind: RULESET_PLAN_KIND.REORDER_RULE,
+    operations,
+    summary: operations.length === 0
+      ? `${label} is already in position ${currentIndex + 1}`
+      : `Reorder ${label} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildRulesetDescriptionPlan(zone, ruleset, desiredDescription) {
+  assertEditableRulesetDetail(zone, ruleset)
+  if (typeof desiredDescription !== "string") {
+    throw new TypeError("Ruleset description must be a string")
+  }
+  const desired = desiredDescription.trim()
+  const current = typeof ruleset.description === "string" ? ruleset.description : ""
+  const rules = (ruleset.rules || []).map(editableRulePayload)
+  const operations = current === desired
+    ? []
+    : [
+        {
+          body: {
+            description: desired,
+            rules,
+          },
+          currentValue: {
+            description: current,
+            rules,
+          },
+          label: `Update the ruleset description while preserving ${rules.length} ordered rule${rules.length === 1 ? "" : "s"}`,
+          method: HTTP_METHOD.PUT,
+          path: `zones/${zone.meta.id}/rulesets/${ruleset.id}`,
+        },
+      ]
+  return {
+    id: `ruleset-description:${zone.meta.id}:${ruleset.id}`,
+    kind: RULESET_PLAN_KIND.EDIT_DESCRIPTION,
+    operations,
+    summary: operations.length === 0
+      ? `${ruleset.name} already has the desired description`
+      : `Update ${ruleset.name} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildRulesetDeletePlan(zone, ruleset) {
+  assertEditableRulesetDetail(zone, ruleset)
+  const rules = ruleset.rules || []
+  if (rules.length > 0) {
+    throw new Error("Delete every rule before deleting this ruleset")
+  }
+  return {
+    id: `ruleset-delete:${zone.meta.id}:${ruleset.id}`,
+    kind: RULESET_PLAN_KIND.DELETE_RULESET,
+    operations: [
+      {
+        currentValue: {
+          description: ruleset.description || "",
+          kind: ruleset.kind,
+          name: ruleset.name,
+          phase: ruleset.phase,
+        },
+        label: `Delete empty ruleset ${ruleset.name}`,
+        method: HTTP_METHOD.DELETE,
+        path: `zones/${zone.meta.id}/rulesets/${ruleset.id}`,
+      },
+    ],
+    summary: `Delete ${ruleset.name} on ${zone.meta.name}`,
     zoneId: zone.meta.id,
     zoneName: zone.meta.name,
   }

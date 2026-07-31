@@ -76,6 +76,73 @@ test("broker transport keeps the Cloudflare token out of browser requests", asyn
   assert.equal(Object.hasOwn(captured.request.headers, "Authorization"), false)
 })
 
+test("broker monitor reports connection and terminal disconnection", async () => {
+  let closeStream
+  const stream = new ReadableStream({
+    start(controller) {
+      closeStream = () => controller.close()
+    },
+  })
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async () => new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+      },
+    }),
+  })
+  const events = []
+  let connected
+  let disconnected
+  const connectedPromise = new Promise((resolve) => {
+    connected = resolve
+  })
+  const disconnectedPromise = new Promise((resolve) => {
+    disconnected = resolve
+  })
+
+  const stop = api.startSessionMonitor({
+    onConnected() {
+      events.push("connected")
+      connected()
+    },
+    onDisconnected() {
+      events.push("disconnected")
+      disconnected()
+    },
+  })
+
+  await connectedPromise
+  closeStream()
+  await disconnectedPromise
+  stop()
+  assert.deepEqual(events, ["connected", "disconnected"])
+})
+
+test("broker monitor reports an initial connection failure", async () => {
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async () => {
+      throw new Error("offline")
+    },
+  })
+  let disconnected
+  const disconnectedPromise = new Promise((resolve) => {
+    disconnected = resolve
+  })
+
+  const stop = api.startSessionMonitor({
+    onDisconnected: disconnected,
+  })
+
+  await disconnectedPromise
+  stop()
+})
+
 test("executeOperation serializes a write body", async () => {
   let captured
   const api = new CloudflareApi({
@@ -101,6 +168,27 @@ test("executeOperation serializes a write body", async () => {
   assert.equal(captured.request.headers["Content-Type"], "application/json")
   assert.equal(captured.request.body, "{\"value\":\"on\"}")
   assert.equal(captured.url.pathname, "/client/v4/zones/zone-id/settings/always_use_https")
+})
+
+test("request accepts an empty successful delete response", async () => {
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => new Response(null, {
+      status: 204,
+    }),
+  })
+
+  assert.deepEqual(
+    await api.request("zones/zone-id/rulesets/ruleset-id", {
+      method: "DELETE",
+    }),
+    {
+      result: null,
+      resultInfo: null,
+      status: 204,
+    },
+  )
 })
 
 test("getZoneSetting reads one live setting", async () => {

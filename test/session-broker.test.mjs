@@ -253,6 +253,32 @@ test("read-only session broker rejects Cloudflare writes", async () => {
   }
 })
 
+test("session broker forwards delete operations without a request body", async () => {
+  const fixture = await brokerFixture()
+  try {
+    const response = await fetch(
+      new URL(
+        "api/cloudflare/zones/zone-id/rulesets/ruleset-id/rules/rule-id",
+        fixture.broker.sessionUrl,
+      ),
+      {
+        headers: {
+          [BROKER_SESSION_HEADER]: "session-secret",
+          Origin: fixture.broker.origin,
+        },
+        method: "DELETE",
+      },
+    )
+
+    assert.equal(response.status, 200)
+    assert.equal(fixture.calls.length, 1)
+    assert.equal(fixture.calls[0].request.method, "DELETE")
+    assert.equal(fixture.calls[0].request.body, undefined)
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
 test("session broker exits after its last dashboard connection closes", async () => {
   const fixture = await brokerFixture({
     shutdownGraceMs: 20,

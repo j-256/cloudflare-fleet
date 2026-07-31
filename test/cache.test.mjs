@@ -5,6 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  cacheRecordUpdatedAt,
   CACHE_RECORD_GLOBAL,
   CACHE_SCHEMA_VERSION,
   createCacheRecord,
@@ -33,11 +34,18 @@ function inventoryAt(timestamp, accountId = "account-id") {
 
 test("cache records are account-scoped and schema-versioned", () => {
   const record = createCacheRecord("account-id", inventoryAt("2026-07-29T01:00:00Z"))
+  const legacyRecord = {
+    ...record,
+  }
+  delete legacyRecord.updatedAt
 
   assert.equal(record.schemaVersion, CACHE_SCHEMA_VERSION)
   assert.equal(isCacheRecord(record, "account-id"), true)
+  assert.equal(isCacheRecord(legacyRecord, "account-id"), true)
+  assert.equal(cacheRecordUpdatedAt(legacyRecord), legacyRecord.loadedAt)
   assert.equal(isCacheRecord(record, "another-account"), false)
   assert.equal(isCacheRecord({ ...record, schemaVersion: 0 }), false)
+  assert.equal(isCacheRecord({ ...record, updatedAt: "invalid" }), false)
 })
 
 test("cache records contain inventory but not launcher credentials", () => {
@@ -49,12 +57,53 @@ test("cache records contain inventory but not launcher credentials", () => {
 })
 
 test("newestCacheRecord ignores invalid and older records", () => {
-  const older = createCacheRecord("account-id", inventoryAt("2026-07-29T01:00:00Z"))
-  const newer = createCacheRecord("account-id", inventoryAt("2026-07-29T02:00:00Z"))
+  const older = createCacheRecord(
+    "account-id",
+    inventoryAt("2026-07-29T01:00:00Z"),
+    {
+      updatedAt: "2026-07-29T01:05:00Z",
+    },
+  )
+  const newer = createCacheRecord(
+    "account-id",
+    inventoryAt("2026-07-29T02:00:00Z"),
+    {
+      updatedAt: "2026-07-29T02:05:00Z",
+    },
+  )
 
   assert.equal(
     newestCacheRecord([null, newer, older], "account-id").loadedAt,
     "2026-07-29T02:00:00Z",
+  )
+})
+
+test("newestCacheRecord prefers a later scoped update over its older audit", () => {
+  const newerAudit = createCacheRecord(
+    "account-id",
+    inventoryAt("2026-07-29T02:00:00Z"),
+    {
+      updatedAt: "2026-07-29T02:05:00Z",
+    },
+  )
+  const patchedOlderAudit = createCacheRecord(
+    "account-id",
+    inventoryAt("2026-07-29T01:00:00Z"),
+    {
+      updatedAt: "2026-07-29T02:10:00Z",
+    },
+  )
+
+  assert.equal(
+    newestCacheRecord(
+      [newerAudit, patchedOlderAudit],
+      "account-id",
+    ),
+    patchedOlderAudit,
+  )
+  assert.equal(
+    cacheRecordUpdatedAt(patchedOlderAudit),
+    "2026-07-29T02:10:00Z",
   )
 })
 

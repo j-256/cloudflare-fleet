@@ -183,6 +183,29 @@ export function removeArrayItemAtPath(root, path, index) {
   )
 }
 
+export function renameObjectKeyAtPath(root, path, currentKey, desiredKey) {
+  const object = valueAtPath(root, path)
+  if (!object || typeof object !== "object" || Array.isArray(object)) {
+    throw new TypeError("The selected JSON value is not an object")
+  }
+  if (typeof currentKey !== "string" || !Object.hasOwn(object, currentKey)) {
+    throw new Error("The selected object field is unavailable")
+  }
+  if (typeof desiredKey !== "string" || desiredKey.length === 0) {
+    throw new TypeError("Enter an object field name")
+  }
+  if (desiredKey !== currentKey && Object.hasOwn(object, desiredKey)) {
+    throw new Error(`Object field ${desiredKey} already exists`)
+  }
+  const replacement = Object.fromEntries(
+    Object.entries(object).map(([key, value]) => [
+      key === currentKey ? desiredKey : key,
+      value,
+    ]),
+  )
+  return replaceValueAtPath(root, path, replacement)
+}
+
 export function defaultValueForKind(kind) {
   if (kind === JSON_VALUE_KIND.ARRAY) return []
   if (kind === JSON_VALUE_KIND.BOOLEAN) return false

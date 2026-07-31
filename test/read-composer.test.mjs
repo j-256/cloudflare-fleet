@@ -241,6 +241,58 @@ test("rule edits compose to the exact live ruleset resource", () => {
   })
 })
 
+test("existing ruleset workspace actions deduplicate to one exact detail read", () => {
+  const actionTypes = [
+    READ_ACTION.RULE_DELETE,
+    READ_ACTION.RULE_EDIT,
+    READ_ACTION.RULE_REORDER,
+    READ_ACTION.RULESET_DELETE,
+    READ_ACTION.RULESET_EDIT,
+    READ_ACTION.RULESET_INSPECT,
+  ]
+  const plan = composeActionReadPlan(actionTypes.map((type) => ({
+    rulesetId: "ruleset-id",
+    type,
+    zoneId: "zone-alpha",
+  })))
+
+  assert.deepEqual(plan, {
+    inventory: null,
+    resources: [
+      {
+        id: "ruleset:zone-alpha:ruleset-id",
+        kind: "resource",
+        path: "zones/zone-alpha/rulesets/ruleset-id",
+      },
+    ],
+    rulePhases: [],
+  })
+})
+
+test("rule creation reads every quota-bearing ruleset in the target phase", () => {
+  const plan = composeActionReadPlan([
+    {
+      phase: "http_request_firewall_custom",
+      rulesetId: "ruleset-id",
+      type: READ_ACTION.RULE_CREATE,
+      zoneId: "zone-alpha",
+    },
+  ])
+
+  assert.deepEqual(plan, {
+    inventory: {
+      includeEmailAddresses: false,
+      includeRuleDetails: true,
+      ruleDetailKinds: ["zone", "custom"],
+      ruleDetailPhases: ["http_request_firewall_custom"],
+      surfaceIds: ["rulesets"],
+      zoneIds: ["zone-alpha"],
+    },
+    resources: [],
+    rulePhases: [],
+  })
+})
+
 test("fleet rule rename reads live metadata and exact rulesets only", () => {
   const plan = composeActionReadPlan([
     {
@@ -387,7 +439,7 @@ test("rule copy actions execute metadata, exact source, and target phase reads",
   ])
 })
 
-test("action composer rejects incomplete direct and rule-copy actions", () => {
+test("action composer rejects incomplete action inputs", () => {
   assert.throws(
     () => composeActionReadPlan([
       {
@@ -407,5 +459,25 @@ test("action composer rejects incomplete direct and rule-copy actions", () => {
       },
     ]),
     /source ruleset identifier is required/,
+  )
+  assert.throws(
+    () => composeActionReadPlan([
+      {
+        phase: "http_request_firewall_custom",
+        type: READ_ACTION.RULE_CREATE,
+        zoneId: "zone-alpha",
+      },
+    ]),
+    /Rule create ruleset identifier is required/,
+  )
+  assert.throws(
+    () => composeActionReadPlan([
+      {
+        rulesetId: "ruleset-id",
+        type: READ_ACTION.RULE_CREATE,
+        zoneId: "zone-alpha",
+      },
+    ]),
+    /Rule create phase is required/,
   )
 })

@@ -4,6 +4,7 @@ const RULE_ACTION_LABELS = Object.freeze({
   block: "Block",
   challenge: "Challenge",
   compress_response: "Compress response",
+  ddos_dynamic: "DDoS dynamic",
   execute: "Execute ruleset",
   force_connection_close: "Close connection",
   js_challenge: "JavaScript challenge",
@@ -19,6 +20,7 @@ const RULE_ACTION_LABELS = Object.freeze({
 })
 
 const RULE_PHASE_LABELS = Object.freeze({
+  ddos_l7: "DDoS L7",
   http_config_settings: "Configuration settings",
   http_ratelimit: "Rate limiting",
   http_request_cache_settings: "Cache settings",
