@@ -1868,6 +1868,10 @@ dialog form {
   gap: 8px;
 }
 
+.intent-value-constraint-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 dialog .intent-value-source-option {
   display: flex;
   gap: 9px;

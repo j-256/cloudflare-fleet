@@ -11,9 +11,13 @@ import {
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
   FLEET_INTENT_MISSING_CANONICAL,
+  FLEET_INTENT_SCHEMA_VERSION,
+  FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
   fleetIntentExpectedIsAuthored,
+  fleetIntentPolicyValueConstraint,
   isFleetIntentDocument,
+  migrateFleetIntentDocument,
   removeFleetIntentGroup,
   removeFleetIntentPolicy,
   replaceFleetIntentAcknowledgement,
@@ -30,8 +34,14 @@ function fixture() {
   const row = {
     category: "Zone settings",
     cells: new Map([
-      ["a.example", { canonical: '"on"' }],
-      ["b.example", { canonical: '"off"' }],
+      ["a.example", {
+        canonical: '"on"',
+        uniquenessCanonical: '"a-value"',
+      }],
+      ["b.example", {
+        canonical: '"off"',
+        uniquenessCanonical: '"b-value"',
+      }],
     ]),
     different: true,
     key: "always_use_https",
@@ -50,15 +60,17 @@ function fixture() {
 }
 
 function policy(row, options = {}) {
-  return {
-    expected: options.expected || {
-      canonical: options.canonical || '"on"',
-      display: options.display || "on",
-      resolutionCanonical: options.resolutionCanonical || '"on"',
-      sourceZoneId: "zone-a",
-      sourceZoneName: "a.example",
-      value: options.value || "on",
-    },
+  const entry = {
+    expected: Object.prototype.hasOwnProperty.call(options, "expected")
+      ? options.expected
+      : {
+        canonical: options.canonical || '"on"',
+        display: options.display || "on",
+        resolutionCanonical: options.resolutionCanonical || '"on"',
+        sourceZoneId: "zone-a",
+        sourceZoneName: "a.example",
+        value: options.value || "on",
+      },
     facet: {
       category: row.category,
       description: "",
@@ -68,6 +80,8 @@ function policy(row, options = {}) {
     groupId: options.groupId || FLEET_INTENT_ALL_ZONES_GROUP_ID,
     id: options.id || "policy-one",
   }
+  if (options.valueConstraint) entry.valueConstraint = options.valueConstraint
+  return entry
 }
 
 test("empty fleet intent is valid and includes a dynamic all-zones group", () => {
@@ -117,6 +131,10 @@ test("legacy observed values remain valid while authored values reject fake sour
   let document = createEmptyFleetIntentDocument("account-id")
   document = replaceFleetIntentPolicy(document, policy(row))
   assert.equal(isFleetIntentDocument(document, "account-id"), true)
+  assert.equal(
+    fleetIntentPolicyValueConstraint(document.policies[0]),
+    FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  )
 
   const expected = {
     ...createAuthoredFleetIntentExpected("on"),
@@ -127,6 +145,159 @@ test("legacy observed values remain valid while authored values reject fake sour
     () => replaceFleetIntentPolicy(document, policy(row, { expected })),
     /invalid/,
   )
+})
+
+test("legacy documents migrate exact policies without changing their revision", () => {
+  const { row } = fixture()
+  let legacy = createEmptyFleetIntentDocument("account-id")
+  legacy = replaceFleetIntentPolicy(legacy, policy(row))
+  legacy.schemaVersion = 1
+  legacy.revision = "a".repeat(64)
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+
+  assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.equal(migrated.revision, legacy.revision)
+  assert.equal(
+    migrated.policies[0].valueConstraint,
+    FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  )
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+  assert.throws(
+    () => migrateFleetIntentDocument({
+      ...legacy,
+      policies: [{
+        ...legacy.policies[0],
+        expected: null,
+        valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+      }],
+    }, "account-id"),
+    /cannot be migrated/,
+  )
+})
+
+test("non-exact constraints are source-free and reject contradictory expectations", () => {
+  const { row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+  assert.equal(isFleetIntentDocument(document, "account-id"), true)
+
+  assert.throws(
+    () => replaceFleetIntentPolicy(document, policy(row, {
+      valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+    })),
+    /invalid/,
+  )
+  assert.throws(
+    () => replaceFleetIntentPolicy(document, {
+      ...policy(row),
+      valueConstraint: "sometimes-different",
+    }),
+    /invalid/,
+  )
+})
+
+test("may-differ intent accepts every present value and still requires presence", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
+  assert.equal(evaluation.summary.actionableCells, 1)
+})
+
+test("must-differ intent flags every duplicate while accepting distinct values", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+  }))
+
+  let evaluation = evaluateFleetIntent(document, inventory, matrix)
+  let rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
+
+  row.cells.get("b.example").uniquenessCanonical = '"a-value"'
+  evaluation = evaluateFleetIntent(document, inventory, matrix)
+  rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.deepEqual(rowState.cells.get("zone-a").duplicateZoneNames, ["b.example"])
+  assert.deepEqual(rowState.cells.get("zone-b").duplicateZoneNames, ["a.example"])
+  assert.equal(evaluation.summary.actionableCells, 3)
+})
+
+test("must-differ intent preserves literal zone-relative uniqueness", () => {
+  const { inventory, matrix, row } = fixture()
+  row.cells.set("a.example", {
+    canonical: '"{zone}"',
+    intentCanonical: '"{zone}"',
+    uniquenessCanonical: '"a.example"',
+  })
+  row.cells.set("b.example", {
+    canonical: '"{zone}"',
+    intentCanonical: '"{zone}"',
+    uniquenessCanonical: '"b.example"',
+  })
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+})
+
+test("must-differ acknowledgements stay local and become stale when a collision clears", () => {
+  const { inventory, matrix, row } = fixture()
+  row.cells.get("b.example").uniquenessCanonical = '"a-value"'
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+  }))
+  const timestamp = new Date().toISOString()
+  document = replaceFleetIntentAcknowledgement(document, {
+    createdAt: timestamp,
+    id: "ack-duplicate",
+    observedCanonical: '"off"',
+    policyId: "policy-one",
+    reason: "Migration overlap",
+    updatedAt: timestamp,
+    zoneId: "zone-b",
+    zoneName: "b.example",
+  })
+
+  let evaluation = evaluateFleetIntent(document, inventory, matrix)
+  let rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED)
+
+  row.cells.get("b.example").uniquenessCanonical = '"new-b-value"'
+  evaluation = evaluateFleetIntent(document, inventory, matrix)
+  rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(
+    evaluation.acknowledgementStates[0].status,
+    FLEET_INTENT_ACKNOWLEDGEMENT_STATUS.STALE,
+  )
+  assert.match(evaluation.acknowledgementStates[0].reason, /satisfies intent/)
 })
 
 test("authored expected values participate in exact intent evaluation", () => {

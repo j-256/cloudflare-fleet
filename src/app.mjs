@@ -38,9 +38,11 @@ import {
   FLEET_INTENT_LABEL_MAX_LENGTH,
   FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_REASON_MAX_LENGTH,
+  FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
   fleetIntentExpectedIsAuthored,
   fleetIntentGroupZoneIds,
+  fleetIntentPolicyValueConstraint,
   isFleetIntentDocument,
   removeFleetIntentAcknowledgement,
   removeFleetIntentGroup,
@@ -347,8 +349,12 @@ const elements = {
   intentPolicyCustomJson: document.querySelector("#intent-policy-custom-json"),
   intentPolicyCustomKind: document.querySelector("#intent-policy-custom-kind"),
   intentPolicyCustomRaw: document.querySelector("#intent-policy-custom-raw"),
+  intentPolicyConstraintExact: document.querySelector("#intent-policy-constraint-exact"),
+  intentPolicyConstraintMayDiffer: document.querySelector("#intent-policy-constraint-may-differ"),
+  intentPolicyConstraintMustDiffer: document.querySelector("#intent-policy-constraint-must-differ"),
   intentPolicyDrift: document.querySelector("#intent-policy-drift"),
   intentPolicyError: document.querySelector("#intent-policy-error"),
+  intentPolicyExactFields: document.querySelector("#intent-policy-exact-fields"),
   intentPolicyForm: document.querySelector("#intent-policy-form"),
   intentPolicyGroup: document.querySelector("#intent-policy-group"),
   intentPolicyList: document.querySelector("#intent-policy-list"),
@@ -2602,7 +2608,7 @@ function rowIntentVariants(row, policy = null) {
       variant.value = structuredClone(cell.inspectionValue)
     }
   }
-  if (policy
+  if (policy?.expected
     && !fleetIntentExpectedIsAuthored(policy.expected)
     && !variants.has(policy.expected.canonical)) {
     variants.set(policy.expected.canonical, {
@@ -2637,6 +2643,27 @@ function selectedIntentPolicyValueMode() {
     : INTENT_POLICY_VALUE_MODE.OBSERVED
 }
 
+function selectedIntentPolicyValueConstraint() {
+  if (elements.intentPolicyConstraintMayDiffer.checked) {
+    return FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+  }
+  if (elements.intentPolicyConstraintMustDiffer.checked) {
+    return FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+  }
+  return FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+}
+
+function intentPolicyConstraintLabel(policy) {
+  const valueConstraint = fleetIntentPolicyValueConstraint(policy)
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
+    return "May differ"
+  }
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+    return "Must differ"
+  }
+  return "Exact value"
+}
+
 function observedIntentExpected(variant) {
   if (!variant) return null
   return {
@@ -2651,12 +2678,16 @@ function observedIntentExpected(variant) {
 }
 
 function intentExpectedSourceLabel(expected) {
+  if (!expected) return ""
   return fleetIntentExpectedIsAuthored(expected)
     ? "custom value"
     : `source ${expected.sourceZoneName}`
 }
 
 function selectedIntentPolicyExpected() {
+  if (selectedIntentPolicyValueConstraint() !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
+    return null
+  }
   if (selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM) {
     const draft = state.intentPolicyDraft?.customDraft
     if (draft === undefined) return null
@@ -2672,14 +2703,51 @@ function selectedIntentPolicyExpected() {
   return observedIntentExpected(selectedIntentPolicyVariant())
 }
 
-function intentPolicyRemediation(row, expected) {
-  if (!row || !expected) {
+function intentPolicyRemediation(
+  row,
+  expected,
+  valueConstraint = FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+) {
+  if (!row) {
+    return {
+      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+      text: "This facet is unavailable, so remediation cannot be evaluated.",
+    }
+  }
+  const directEdit = [...row.cells.values()].some((cell) => Boolean(cell.action))
+  const anyFill = [...row.missingResolutions.values()].some(
+    (resolution) => resolution?.available,
+  )
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
+    if (anyFill || directEdit) {
+      return {
+        className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+        text: "Remediable: any value satisfies this policy, so missing cells can use an available create or fleet-copy flow.",
+      }
+    }
+    return {
+      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+      text: "Compare only: this facet has no direct editor or create flow. Intent will still require a value in every covered zone.",
+    }
+  }
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+    if (directEdit) {
+      return {
+        className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+        text: "Partly remediable: duplicate values can be edited directly. Missing cells need a new value because copying another covered zone would violate uniqueness.",
+      }
+    }
+    return {
+      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+      text: "Compare only: intent detects missing and duplicate values, but no direct editor can create a distinct replacement.",
+    }
+  }
+  if (!expected) {
     return {
       className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
       text: "Choose an expected value to see its remediation support.",
     }
   }
-  const directEdit = [...row.cells.values()].some((cell) => Boolean(cell.action))
   const matchingSource = expected.resolutionCanonical !== null
     && [...row.cells.values()].some((cell) => (
       cell.resolutionCanonical === expected.resolutionCanonical
@@ -2722,6 +2790,7 @@ function renderIntentPolicyRemediation() {
   const support = intentPolicyRemediation(
     state.intentPolicyDraft?.row,
     selectedIntentPolicyExpected(),
+    selectedIntentPolicyValueConstraint(),
   )
   elements.intentPolicyRemediation.className = `intent-remediation-status ${support.className}`
   elements.intentPolicyRemediation.textContent = support.text
@@ -2780,11 +2849,17 @@ function seedIntentPolicyCustomDraft() {
 }
 
 function renderIntentPolicyValueMode() {
-  const custom = selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
-  elements.intentPolicyObservedFields.hidden = custom
+  const exact = selectedIntentPolicyValueConstraint() === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  const custom = exact
+    && selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
+  elements.intentPolicyExactFields.hidden = !exact
+  elements.intentPolicyModeObserved.disabled = !exact
+    || state.intentPolicyDraft?.variants.length === 0
+  elements.intentPolicyModeCustom.disabled = !exact
+  elements.intentPolicyObservedFields.hidden = !exact || custom
   elements.intentPolicyCustomEditor.hidden = !custom
-  elements.intentPolicyValue.disabled = custom
-  elements.intentPolicyValue.required = !custom
+  elements.intentPolicyValue.disabled = !exact || custom
+  elements.intentPolicyValue.required = exact && !custom
   for (const control of elements.intentPolicyCustomEditor.querySelectorAll(
     "button, input, select, textarea",
   )) {
@@ -2833,6 +2908,11 @@ function changeIntentPolicyValueMode() {
   renderIntentPolicyPreview()
 }
 
+function changeIntentPolicyValueConstraint() {
+  renderIntentPolicyValueMode()
+  renderIntentPolicyPreview()
+}
+
 function changeObservedIntentPolicyValue() {
   seedIntentPolicyCustomDraft()
   renderIntentPolicyValueMode()
@@ -2845,8 +2925,10 @@ function openIntentPolicyEditor(row, policy = null) {
     return
   }
   const variants = rowIntentVariants(row, policy)
-  const policyIsAuthored = fleetIntentExpectedIsAuthored(policy?.expected)
-  const selected = policy && !policyIsAuthored
+  const valueConstraint = fleetIntentPolicyValueConstraint(policy)
+  const exact = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  const policyIsAuthored = exact && fleetIntentExpectedIsAuthored(policy?.expected)
+  const selected = policy?.expected && !policyIsAuthored
     ? variants.find((variant) => variant.canonical === policy.expected.canonical)
     : variants[0]
   const customSeed = policyIsAuthored
@@ -2889,7 +2971,11 @@ function openIntentPolicyEditor(row, policy = null) {
     elements.intentPolicyValue.append(option)
   }
   elements.intentPolicyValue.value = selected?.optionValue || ""
-  elements.intentPolicyModeObserved.disabled = variants.length === 0
+  elements.intentPolicyConstraintExact.checked = exact
+  elements.intentPolicyConstraintMayDiffer.checked = valueConstraint
+    === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+  elements.intentPolicyConstraintMustDiffer.checked = valueConstraint
+    === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
   elements.intentPolicyModeObserved.checked = !policyIsAuthored && variants.length > 0
   elements.intentPolicyModeCustom.checked = policyIsAuthored || variants.length === 0
   elements.intentPolicyCustomJson.open = false
@@ -2908,6 +2994,7 @@ async function saveIntentPolicy(event) {
   if (event.submitter?.value === "cancel") return
   event.preventDefault()
   const draft = state.intentPolicyDraft
+  const valueConstraint = selectedIntentPolicyValueConstraint()
   const expected = selectedIntentPolicyExpected()
   const group = intentGroupById(elements.intentPolicyGroup.value)
   if (draft && draft.baseRevision !== state.intent.revision) {
@@ -2915,12 +3002,14 @@ async function saveIntentPolicy(event) {
     elements.intentPolicyError.hidden = false
     return
   }
-  if (!draft || !expected || !group) {
-    elements.intentPolicyError.textContent = "Choose an expected group and value"
+  if (!draft || !group
+    || (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT && !expected)) {
+    elements.intentPolicyError.textContent = "Choose expected coverage and a value relationship"
     elements.intentPolicyError.hidden = false
     return
   }
-  if (selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    && selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
     && draft.customJsonInvalid) {
     showFieldError(
       elements.intentPolicyCustomRaw,
@@ -2941,6 +3030,7 @@ async function saveIntentPolicy(event) {
     },
     groupId: group.id,
     id: draft.policy?.id || intentId("policy"),
+    valueConstraint,
   }
   let document
   try {
@@ -3315,7 +3405,12 @@ function renderIntentPolicies() {
         ? conflicted ? "Conflict" : `${actionableCount} actionable`
         : "Aligned"
     const group = intentGroupById(policy.groupId)
-    const remediation = intentPolicyRemediation(row, policy.expected)
+    const valueConstraint = fleetIntentPolicyValueConstraint(policy)
+    const remediation = intentPolicyRemediation(
+      row,
+      policy.expected,
+      valueConstraint,
+    )
     const item = createElement("article", { className: `intent-item ${status}` })
     const heading = createElement("div", { className: "intent-item-heading" })
     const badges = createElement("div", { className: "intent-item-badges" })
@@ -3341,12 +3436,21 @@ function renderIntentPolicies() {
         text: [
           policy.facet.category,
           group?.name || "Missing group",
-          intentExpectedSourceLabel(policy.expected),
+          intentPolicyConstraintLabel(policy),
+          valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+            ? intentExpectedSourceLabel(policy.expected)
+            : "comparison policy",
         ].join(" | "),
       }),
     )
     const value = createElement("div", { className: "intent-item-value" })
-    value.append(structuredValueElement(policy.expected.value))
+    if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
+      value.append(structuredValueElement(policy.expected.value))
+    } else {
+      value.textContent = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+        ? "Any present value is allowed"
+        : "Every covered zone must have a distinct value"
+    }
     item.append(value)
     const actions = intentItemActions()
     actions.append(
@@ -3356,7 +3460,7 @@ function renderIntentPolicies() {
       actions.append(
         intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), { write: true }),
         intentActionButton("Add coverage", () => openIntentPolicyEditor(row), {
-          title: "Add another zone group and expected value for this facet",
+          title: "Add another zone group and value relationship for this facet",
           write: true,
         }),
       )
@@ -3583,6 +3687,8 @@ function cellIntentStatus(state) {
   if (!state
     || state.status === FLEET_INTENT_CELL_STATUS.UNGOVERNED
     || state.status === FLEET_INTENT_CELL_STATUS.OUT_OF_SCOPE) return null
+  const valueConstraint = fleetIntentPolicyValueConstraint(state.policy)
+  const duplicateZones = state.duplicateZoneNames?.join(", ") || "another covered zone"
   const definitions = {
     [FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED]: {
       label: "Acknowledged",
@@ -3594,15 +3700,25 @@ function cellIntentStatus(state) {
     },
     [FLEET_INTENT_CELL_STATUS.MATCH]: {
       label: "Intent match",
-      title: "Matches the expected value for this policy",
+      title: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+        ? "A value is present; this policy allows covered zones to differ"
+        : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+          ? "This value is distinct among the covered zones"
+          : "Matches the expected value for this policy",
     },
     [FLEET_INTENT_CELL_STATUS.MISSING]: {
       label: "Intent drift",
-      title: "This policy expects a value in this missing cell",
+      title: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+        ? "This policy requires a present, distinct value in every covered zone"
+        : "This policy requires a value in every covered zone",
     },
     [FLEET_INTENT_CELL_STATUS.VARIANT]: {
-      label: "Intent drift",
-      title: "The observed value differs from fleet intent",
+      label: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+        ? "Duplicate"
+        : "Intent drift",
+      title: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+        ? `Duplicates ${duplicateZones}; every covered zone must differ`
+        : "The observed value differs from fleet intent",
     },
   }
   const definition = definitions[state.status]
@@ -3684,16 +3800,20 @@ function matrixCell(row, zone) {
     const intentCell = applyIntentCellPresentation(td, row, zone)
     td.append(createElement("span", { className: "cell-state", text: "Missing" }))
     const resolution = row.missingResolutions.get(zone.meta.name)
-    const intentExpected = intentCell?.policy?.expected || null
+    const intentPolicy = intentCell?.policy || null
+    const intentExpected = intentPolicy?.expected || null
+    const intentValueConstraint = fleetIntentPolicyValueConstraint(intentPolicy)
     const matchingIntentSource = intentExpected?.resolutionCanonical
       ? resolution?.candidates?.some(
           (candidate) => candidate.canonical === intentExpected.resolutionCanonical,
         )
       : false
-    const intentResolutionAvailable = !intentExpected
-      || (resolution?.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
-        ? !fleetIntentExpectedIsAuthored(intentExpected)
-        : matchingIntentSource)
+    const intentResolutionAvailable = !intentPolicy
+      || intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+      || (intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+        && (resolution?.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
+          ? !fleetIntentExpectedIsAuthored(intentExpected)
+          : matchingIntentSource))
     if (resolution?.available && intentResolutionAvailable && !readOnly) {
       const action = {
         category: row.category,
@@ -3705,6 +3825,7 @@ function matrixCell(row, zone) {
           intentExpected,
         ),
         intentExpectedCanonical: intentExpected?.resolutionCanonical || null,
+        intentValueConstraint,
       }
       const label = `Fill ${row.label} on ${zone.meta.name}`
       td.classList.add("actionable-cell", "fillable-hole")
@@ -3720,8 +3841,10 @@ function matrixCell(row, zone) {
       fillButton.title = "Build a live plan from the fleet value"
       fillButton.disabled = state.busy
       td.append(fillButton)
-    } else if (intentExpected && resolution?.available && !intentResolutionAvailable) {
-      td.title = "Intent detects this missing value, but no matching fleet source or product-specific create flow is available"
+    } else if (intentPolicy && resolution?.available && !intentResolutionAvailable) {
+      td.title = intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+        ? "Intent requires a new distinct value; copying an existing fleet value would violate uniqueness"
+        : "Intent detects this missing value, but no matching fleet source or product-specific create flow is available"
       td.setAttribute(
         "aria-label",
         `Missing ${row.label} on ${zone.meta.name}. ${td.title}`,
@@ -3946,7 +4069,7 @@ function renderMatrix() {
         text: policies.length === 0
           ? "Set intent"
           : policies.length === 1
-            ? `Intent: ${policyGroup?.name || "Configured"}`
+            ? `Intent: ${intentPolicyConstraintLabel(policies[0])}`
             : `Intent (${policies.length})`,
       })
       intentButton.type = "button"
@@ -3959,7 +4082,9 @@ function renderMatrix() {
       )
       intentButton.title = policies.length > 1
         ? "Review overlapping policies in Fleet intent"
-        : "Choose expected coverage and an observed or custom normalized value"
+        : policies.length === 1
+          ? `${policyGroup?.name || "Configured coverage"} | ${intentPolicyConstraintLabel(policies[0])}. Click to edit.`
+          : "Choose coverage and an exact, may-differ, or must-differ value relationship"
       intentPolicyRowByButton.set(intentButton, {
         policy: policies.length === 1 ? policies[0] : null,
         row,
@@ -4119,6 +4244,41 @@ function selectZoneIds(zoneIds) {
   syncSelectionControls()
 }
 
+function intentCompatibleDnsTargetFillBatch(row) {
+  const batch = dnsTargetFillBatch(row, state.inventory, state.selectedZoneIds)
+  if (!batch.available) return batch
+  for (const zoneId of batch.targetZoneIds) {
+    const intentCell = row.intentState?.cells.get(zoneId)
+    if (!intentCell
+      || intentCell.status === FLEET_INTENT_CELL_STATUS.UNGOVERNED
+      || intentCell.status === FLEET_INTENT_CELL_STATUS.OUT_OF_SCOPE) continue
+    if (intentCell.status === FLEET_INTENT_CELL_STATUS.CONFLICT) {
+      return {
+        ...batch,
+        available: false,
+        reason: "Overlapping fleet intent policies must be resolved before bulk fill",
+      }
+    }
+    const valueConstraint = fleetIntentPolicyValueConstraint(intentCell.policy)
+    if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+      return {
+        ...batch,
+        available: false,
+        reason: "Must-differ intent requires a new distinct value for each missing zone",
+      }
+    }
+    if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+      && batch.candidate.canonical !== intentCell.policy.expected.resolutionCanonical) {
+      return {
+        ...batch,
+        available: false,
+        reason: "The bulk fill source does not match the exact fleet intent value",
+      }
+    }
+  }
+  return batch
+}
+
 function updateActionButtons() {
   const hasSelection = state.selectedZoneIds.size > 0
   const writeLocked = state.busy
@@ -4158,7 +4318,7 @@ function updateActionButtons() {
   for (const button of document.querySelectorAll(".bulk-fill")) {
     const row = bulkFillRowByButton.get(button)
     const batch = row
-      ? dnsTargetFillBatch(row, state.inventory, state.selectedZoneIds)
+      ? intentCompatibleDnsTargetFillBatch(row)
       : {
           available: false,
           reason: "The DNS facet is unavailable",
@@ -4749,7 +4909,7 @@ async function fillDnsTargetsFromRow(button) {
     toast("The DNS facet is no longer available", "error")
     return
   }
-  const batch = dnsTargetFillBatch(row, state.inventory, state.selectedZoneIds)
+  const batch = intentCompatibleDnsTargetFillBatch(row)
   if (!batch.available) {
     toast(batch.reason, "error")
     return
@@ -4828,6 +4988,10 @@ function openHoleResolution(cell) {
     toast(action?.resolution?.reason || "This missing value cannot be filled automatically", "error")
     return
   }
+  if (action.intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+    toast("This policy requires a new distinct value. Copying an existing fleet value would violate uniqueness.", "error")
+    return
+  }
   if (action.resolution.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY) {
     if (action.intentExpectedAuthored) {
       toast("This custom intent has no product-specific create plan. It can detect this missing value but will not apply a different Email policy.", "error")
@@ -4843,7 +5007,8 @@ function openHoleResolution(cell) {
     fillHole(action, intended)
     return
   }
-  if (action.intentGoverned) {
+  if (action.intentGoverned
+    && action.intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
     toast("No fleet source matches this intent value. Edit an existing value or use a product-specific create flow instead.", "error")
     return
   }
@@ -6913,6 +7078,9 @@ elements.intentGroupDialog.addEventListener("close", () => {
 })
 elements.intentPolicyModeObserved.addEventListener("change", changeIntentPolicyValueMode)
 elements.intentPolicyModeCustom.addEventListener("change", changeIntentPolicyValueMode)
+elements.intentPolicyConstraintExact.addEventListener("change", changeIntentPolicyValueConstraint)
+elements.intentPolicyConstraintMayDiffer.addEventListener("change", changeIntentPolicyValueConstraint)
+elements.intentPolicyConstraintMustDiffer.addEventListener("change", changeIntentPolicyValueConstraint)
 elements.intentPolicyValue.addEventListener("change", changeObservedIntentPolicyValue)
 elements.intentPolicyCustomKind.addEventListener("change", changeIntentPolicyCustomKind)
 elements.intentPolicyCustomRaw.addEventListener("input", syncIntentPolicyCustomFromJson)

@@ -1,6 +1,7 @@
 import {
   displayJson,
   groupBy,
+  materializeValue,
   normalizeText,
   normalizeValue,
   relativeName,
@@ -165,6 +166,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     full: options.full ?? displayJson(normalized),
     inspectionValue: inspectionValue(inspected),
     intentCanonical: stableString(intentValue),
+    uniquenessCanonical: stableString(materializeValue(intentValue, zone.meta.name)),
     presentation: options.presentation || null,
     parentAction: options.parentAction || null,
     resolutionCanonical: stableString(resolutionValue),
@@ -1151,6 +1153,7 @@ export function matrixRenderKey(inventory, matrix) {
           display: cell.display,
           full: cell.full,
           intentCanonical: cell.intentCanonical,
+          uniquenessCanonical: cell.uniquenessCanonical,
           resolutionCanonical: cell.resolutionCanonical,
           resolutionSource: cell.resolutionSource,
           secondaryAction: cell.secondaryAction,

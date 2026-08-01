@@ -403,43 +403,62 @@
       <p id="intent-policy-target"></p>
       <label for="intent-policy-group">Expected coverage</label>
       <select id="intent-policy-group" required></select>
-      <fieldset class="intent-value-source">
-        <legend>Expected value source</legend>
-        <div class="intent-value-source-options">
-          <label class="intent-value-source-option" for="intent-policy-mode-observed">
-            <input id="intent-policy-mode-observed" name="intent-policy-mode" type="radio" value="observed" aria-controls="intent-policy-observed-fields">
-            <span><strong>Observed fleet value</strong><small>Use a normalized value already present in the loaded zones</small></span>
+      <fieldset class="intent-value-source intent-value-constraint">
+        <legend>Value relationship</legend>
+        <div class="intent-value-source-options intent-value-constraint-options">
+          <label class="intent-value-source-option" for="intent-policy-constraint-exact">
+            <input id="intent-policy-constraint-exact" name="intent-policy-constraint" type="radio" value="exact" aria-controls="intent-policy-exact-fields">
+            <span><strong>Exact value</strong><small>Every covered zone must match one normalized value</small></span>
           </label>
-          <label class="intent-value-source-option" for="intent-policy-mode-custom">
-            <input id="intent-policy-mode-custom" name="intent-policy-mode" type="radio" value="custom" aria-controls="intent-policy-custom-editor">
-            <span><strong>Custom value</strong><small>Define any JSON-compatible expected state</small></span>
+          <label class="intent-value-source-option" for="intent-policy-constraint-may-differ">
+            <input id="intent-policy-constraint-may-differ" name="intent-policy-constraint" type="radio" value="may-differ" aria-controls="intent-policy-exact-fields">
+            <span><strong>May differ</strong><small>Every covered zone must have a value, but values can differ</small></span>
+          </label>
+          <label class="intent-value-source-option" for="intent-policy-constraint-must-differ">
+            <input id="intent-policy-constraint-must-differ" name="intent-policy-constraint" type="radio" value="must-differ" aria-controls="intent-policy-exact-fields">
+            <span><strong>Must differ</strong><small>Every covered zone must have a distinct value</small></span>
           </label>
         </div>
       </fieldset>
-      <div id="intent-policy-observed-fields">
-        <label for="intent-policy-value">Observed value</label>
-        <select id="intent-policy-value" required></select>
-        <div class="intent-value-preview" id="intent-policy-preview"></div>
-        <details class="raw-value">
-          <summary>Show normalized value</summary>
-          <pre id="intent-policy-raw"></pre>
-        </details>
-      </div>
-      <section class="value-editor intent-custom-editor" id="intent-policy-custom-editor" aria-labelledby="intent-policy-custom-heading" hidden>
-        <div class="value-editor-heading">
-          <h3 id="intent-policy-custom-heading">Custom normalized value</h3>
-          <p>Use {zone} for each zone's own domain</p>
+      <div id="intent-policy-exact-fields">
+        <fieldset class="intent-value-source">
+          <legend>Expected value source</legend>
+          <div class="intent-value-source-options">
+            <label class="intent-value-source-option" for="intent-policy-mode-observed">
+              <input id="intent-policy-mode-observed" name="intent-policy-mode" type="radio" value="observed" aria-controls="intent-policy-observed-fields">
+              <span><strong>Observed fleet value</strong><small>Use a normalized value already present in the loaded zones</small></span>
+            </label>
+            <label class="intent-value-source-option" for="intent-policy-mode-custom">
+              <input id="intent-policy-mode-custom" name="intent-policy-mode" type="radio" value="custom" aria-controls="intent-policy-custom-editor">
+              <span><strong>Custom value</strong><small>Define any JSON-compatible expected state</small></span>
+            </label>
+          </div>
+        </fieldset>
+        <div id="intent-policy-observed-fields">
+          <label for="intent-policy-value">Observed value</label>
+          <select id="intent-policy-value" required></select>
+          <div class="intent-value-preview" id="intent-policy-preview"></div>
+          <details class="raw-value">
+            <summary>Show normalized value</summary>
+            <pre id="intent-policy-raw"></pre>
+          </details>
         </div>
-        <label for="intent-policy-custom-kind">Value type</label>
-        <select id="intent-policy-custom-kind"></select>
-        <div class="value-editor-fields intent-custom-fields" id="intent-policy-custom-fields"></div>
-        <details class="editor-json" id="intent-policy-custom-json">
-          <summary>Show raw JSON</summary>
-          <p id="intent-policy-custom-json-help">The exact normalized value stays synchronized with the friendly fields above. Use raw JSON to add uncommon object fields.</p>
-          <label for="intent-policy-custom-raw">Normalized expected value</label>
-          <textarea id="intent-policy-custom-raw" spellcheck="false" aria-describedby="intent-policy-custom-json-help intent-policy-target" aria-errormessage="intent-policy-error"></textarea>
-        </details>
-      </section>
+        <section class="value-editor intent-custom-editor" id="intent-policy-custom-editor" aria-labelledby="intent-policy-custom-heading" hidden>
+          <div class="value-editor-heading">
+            <h3 id="intent-policy-custom-heading">Custom normalized value</h3>
+            <p>Use {zone} for each zone's own domain</p>
+          </div>
+          <label for="intent-policy-custom-kind">Value type</label>
+          <select id="intent-policy-custom-kind"></select>
+          <div class="value-editor-fields intent-custom-fields" id="intent-policy-custom-fields"></div>
+          <details class="editor-json" id="intent-policy-custom-json">
+            <summary>Show raw JSON</summary>
+            <p id="intent-policy-custom-json-help">The exact normalized value stays synchronized with the friendly fields above. Use raw JSON to add uncommon object fields.</p>
+            <label for="intent-policy-custom-raw">Normalized expected value</label>
+            <textarea id="intent-policy-custom-raw" spellcheck="false" aria-describedby="intent-policy-custom-json-help intent-policy-target" aria-errormessage="intent-policy-error"></textarea>
+          </details>
+        </section>
+      </div>
       <p class="intent-remediation-status" id="intent-policy-remediation" role="status"></p>
       <p class="field-error" id="intent-policy-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">

@@ -181,6 +181,28 @@ test("matrix intent compares setting values independently of edit capability", (
   assert.equal(editableCell.intentCanonical, unavailableCell.intentCanonical)
 })
 
+test("matrix uniqueness preserves literal zone-relative values", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      settings: [{ editable: true, id: "custom_host", value: "alpha.example" }],
+    }),
+    makeZone("beta.example", {
+      settings: [{ editable: true, id: "custom_host", value: "beta.example" }],
+    }),
+  ])
+
+  const row = buildMatrix(inventory).rows.find(
+    (entry) => entry.category === "Zone settings" && entry.label === "custom_host",
+  )
+  const alpha = row.cells.get("alpha.example")
+  const beta = row.cells.get("beta.example")
+
+  assert.equal(alpha.intentCanonical, beta.intentCanonical)
+  assert.notEqual(alpha.uniquenessCanonical, beta.uniquenessCanonical)
+  assert.equal(alpha.uniquenessCanonical, '"alpha.example"')
+  assert.equal(beta.uniquenessCanonical, '"beta.example"')
+})
+
 test("matrix leads with rule names and separates direct edits from copying", () => {
   const ruleset = {
     id: "redirect-entrypoint",

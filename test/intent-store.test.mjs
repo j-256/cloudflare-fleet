@@ -7,6 +7,8 @@ import test from "node:test"
 import {
   createEmptyFleetIntentDocument,
   FLEET_INTENT_DOCUMENT_GLOBAL,
+  FLEET_INTENT_SCHEMA_VERSION,
+  FLEET_INTENT_VALUE_CONSTRAINT,
 } from "../src/fleet-intent.mjs"
 import {
   FleetIntentRevisionConflictError,
@@ -64,6 +66,63 @@ test("intent store atomically persists a restrictive revisioned document", async
   assert.equal((await fs.stat(persistedPath)).mode & 0o777, 0o600)
   assert.equal(entries.some((entry) => entry.endsWith(".tmp")), false)
   assert.equal(entries.some((entry) => entry.endsWith(".lock")), false)
+})
+
+test("intent store persists source-free value constraints", async (context) => {
+  const directory = await temporaryDirectory(context)
+  const document = createEmptyFleetIntentDocument("account-one")
+  document.policies.push({
+    expected: null,
+    facet: {
+      category: "DNS records",
+      description: "",
+      key: "TXT selector",
+      label: "TXT selector",
+    },
+    groupId: "all-zones",
+    id: "unique-selector",
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+  })
+
+  const saved = await persistFleetIntentDocument(
+    directory,
+    "account-one",
+    document.revision,
+    document,
+  )
+  const reread = await readFleetIntentDocument(directory, "account-one")
+
+  assert.deepEqual(reread, saved)
+  assert.equal(reread.policies[0].expected, null)
+  assert.equal(
+    reread.policies[0].valueConstraint,
+    FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+  )
+})
+
+test("intent store reads legacy documents through the schema migration", async (context) => {
+  const directory = await temporaryDirectory(context)
+  const document = createEmptyFleetIntentDocument("account-one")
+  const saved = await persistFleetIntentDocument(
+    directory,
+    "account-one",
+    document.revision,
+    document,
+  )
+  const entries = await fs.readdir(directory)
+  const persistedPath = path.join(
+    directory,
+    entries.find((entry) => entry.startsWith("intent-") && entry.endsWith(".json")),
+  )
+  await fs.writeFile(persistedPath, `${JSON.stringify({
+    ...saved,
+    schemaVersion: 1,
+  })}\n`)
+
+  const migrated = await readFleetIntentDocument(directory, "account-one")
+
+  assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.equal(migrated.revision, saved.revision)
 })
 
 test("intent store rejects stale revisions with the latest document", async (context) => {

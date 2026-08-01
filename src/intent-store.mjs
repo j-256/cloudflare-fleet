@@ -7,6 +7,7 @@ import {
   createEmptyFleetIntentDocument,
   FLEET_INTENT_DOCUMENT_GLOBAL,
   isFleetIntentDocument,
+  migrateFleetIntentDocument,
 } from "./fleet-intent.mjs"
 
 const INTENT_FILE_PREFIX = "intent-"
@@ -102,7 +103,9 @@ async function readIntentFile(filePath, accountId) {
   } catch {
     throw new Error("Persisted fleet intent is not valid JSON")
   }
-  if (!isFleetIntentDocument(document, accountId)) {
+  try {
+    document = migrateFleetIntentDocument(document, accountId)
+  } catch {
     throw new Error("Persisted fleet intent is invalid for this account")
   }
   return document

@@ -3,7 +3,7 @@ import {
   stableString,
 } from "./normalize.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 1
+export const FLEET_INTENT_SCHEMA_VERSION = 2
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -36,7 +36,14 @@ export const FLEET_INTENT_EXPECTED_ORIGIN = Object.freeze({
   OBSERVED: "observed",
 })
 
+export const FLEET_INTENT_VALUE_CONSTRAINT = Object.freeze({
+  EXACT: "exact",
+  MAY_DIFFER: "may-differ",
+  MUST_DIFFER: "must-differ",
+})
+
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION = 1
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 
 function isObject(value) {
@@ -108,14 +115,35 @@ function isGroup(group) {
     && new Set(group.members.map((member) => member.zoneId)).size === group.members.length
 }
 
-function isPolicy(policy) {
-  const expectedOrigin = policy?.expected?.origin
+function isExpected(expected) {
+  const expectedOrigin = expected?.origin
     ?? FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED
   const sourceValid = expectedOrigin === FLEET_INTENT_EXPECTED_ORIGIN.AUTHORED
-    ? policy.expected.sourceZoneId === null
-      && policy.expected.sourceZoneName === null
-    : isLabel(policy?.expected?.sourceZoneId)
-      && isLabel(policy?.expected?.sourceZoneName)
+    ? expected?.sourceZoneId === null
+      && expected?.sourceZoneName === null
+    : isLabel(expected?.sourceZoneId)
+      && isLabel(expected?.sourceZoneName)
+  return isObject(expected)
+    && Object.values(FLEET_INTENT_EXPECTED_ORIGIN).includes(expectedOrigin)
+    && isLabel(expected.canonical, 100000)
+    && typeof expected.display === "string"
+    && isJsonValue(expected.value)
+    && sourceValid
+    && (expected.resolutionCanonical === null
+      || isLabel(expected.resolutionCanonical, 100000))
+}
+
+export function fleetIntentPolicyValueConstraint(policy) {
+  return policy?.valueConstraint === undefined
+    ? FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    : policy.valueConstraint
+}
+
+function isPolicy(policy) {
+  const valueConstraint = fleetIntentPolicyValueConstraint(policy)
+  const expectedValid = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    ? isExpected(policy?.expected)
+    : policy?.expected === null
   return isObject(policy)
     && isIdentifier(policy.id)
     && isIdentifier(policy.groupId)
@@ -125,14 +153,8 @@ function isPolicy(policy) {
     && isLabel(policy.facet.label)
     && (policy.facet.description === undefined
       || typeof policy.facet.description === "string")
-    && isObject(policy.expected)
-    && Object.values(FLEET_INTENT_EXPECTED_ORIGIN).includes(expectedOrigin)
-    && isLabel(policy.expected.canonical, 100000)
-    && typeof policy.expected.display === "string"
-    && isJsonValue(policy.expected.value)
-    && sourceValid
-    && (policy.expected.resolutionCanonical === null
-      || isLabel(policy.expected.resolutionCanonical, 100000))
+    && Object.values(FLEET_INTENT_VALUE_CONSTRAINT).includes(valueConstraint)
+    && expectedValid
 }
 
 export function createAuthoredFleetIntentExpected(value) {
@@ -166,9 +188,9 @@ function isAcknowledgement(acknowledgement) {
     && isTimestamp(acknowledgement.updatedAt)
 }
 
-export function isFleetIntentDocument(value, accountId = null) {
+function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   if (!isObject(value)) return false
-  if (value.schemaVersion !== FLEET_INTENT_SCHEMA_VERSION) return false
+  if (value.schemaVersion !== schemaVersion) return false
   if (!isLabel(value.accountId)) return false
   if (accountId !== null && value.accountId !== accountId) return false
   if (value.revision !== FLEET_INTENT_EMPTY_REVISION
@@ -195,6 +217,36 @@ export function isFleetIntentDocument(value, accountId = null) {
   return value.acknowledgements.every(
     (acknowledgement) => policyIds.has(acknowledgement.policyId),
   )
+}
+
+export function isFleetIntentDocument(value, accountId = null) {
+  return isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    FLEET_INTENT_SCHEMA_VERSION,
+  )
+}
+
+export function migrateFleetIntentDocument(value, accountId = null) {
+  if (isFleetIntentDocument(value, accountId)) return structuredClone(value)
+  const legacyValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION,
+  ) && value.policies.every((policy) => policy.valueConstraint === undefined)
+  if (!legacyValid) throw new TypeError("Fleet intent document cannot be migrated")
+  const migrated = {
+    ...structuredClone(value),
+    policies: value.policies.map((policy) => ({
+      ...structuredClone(policy),
+      valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+    })),
+    schemaVersion: FLEET_INTENT_SCHEMA_VERSION,
+  }
+  if (!isFleetIntentDocument(migrated, accountId)) {
+    throw new TypeError("Fleet intent migration produced an invalid document")
+  }
+  return migrated
 }
 
 export function fleetIntentFacetId(category, key) {
@@ -313,35 +365,85 @@ function observedCanonical(row, zoneName) {
     ?? FLEET_INTENT_MISSING_CANONICAL
 }
 
+function uniquenessCanonical(row, zoneName) {
+  const cell = row?.cells.get(zoneName)
+  return cell?.uniquenessCanonical
+    ?? cell?.intentCanonical
+    ?? cell?.canonical
+    ?? FLEET_INTENT_MISSING_CANONICAL
+}
+
+function basePolicyCellStatus(valueConstraint, expected, observation, duplicateCount) {
+  if (observation.observedCanonical === FLEET_INTENT_MISSING_CANONICAL) {
+    return FLEET_INTENT_CELL_STATUS.MISSING
+  }
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
+    return FLEET_INTENT_CELL_STATUS.MATCH
+  }
+  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+    return duplicateCount > 1
+      ? FLEET_INTENT_CELL_STATUS.VARIANT
+      : FLEET_INTENT_CELL_STATUS.MATCH
+  }
+  return observation.observedCanonical === expected.canonical
+    ? FLEET_INTENT_CELL_STATUS.MATCH
+    : FLEET_INTENT_CELL_STATUS.VARIANT
+}
+
 function policyEvaluation(policy, group, row, inventory, acknowledgements) {
   const zoneById = new Map(inventory.zones.map((zone) => [zone.meta.id, zone]))
   const targetedZoneIds = fleetIntentGroupZoneIds(group, inventory)
+  const valueConstraint = fleetIntentPolicyValueConstraint(policy)
+  const observations = targetedZoneIds
+    .map((zoneId) => zoneById.get(zoneId))
+    .filter(Boolean)
+    .map((zone) => ({
+      observedCanonical: observedCanonical(row, zone.meta.name),
+      uniquenessCanonical: uniquenessCanonical(row, zone.meta.name),
+      zone,
+    }))
+  const uniquenessCounts = new Map()
+  for (const observation of observations) {
+    if (observation.observedCanonical === FLEET_INTENT_MISSING_CANONICAL) continue
+    uniquenessCounts.set(
+      observation.uniquenessCanonical,
+      (uniquenessCounts.get(observation.uniquenessCanonical) || 0) + 1,
+    )
+  }
   const cells = new Map()
-  for (const zoneId of targetedZoneIds) {
-    const zone = zoneById.get(zoneId)
-    if (!zone) continue
-    const observed = observedCanonical(row, zone.meta.name)
+  for (const observation of observations) {
+    const duplicateCount = uniquenessCounts.get(observation.uniquenessCanonical) || 0
+    const statusWithoutAcknowledgement = basePolicyCellStatus(
+      valueConstraint,
+      policy.expected,
+      observation,
+      duplicateCount,
+    )
     const acknowledgement = acknowledgements.find(
       (entry) => entry.policyId === policy.id
-        && entry.zoneId === zoneId
-        && entry.observedCanonical === observed,
+        && entry.zoneId === observation.zone.meta.id
+        && entry.observedCanonical === observation.observedCanonical,
     ) || null
-    let status
-    if (observed === policy.expected.canonical) {
-      status = FLEET_INTENT_CELL_STATUS.MATCH
-    } else if (acknowledgement) {
-      status = FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED
-    } else if (observed === FLEET_INTENT_MISSING_CANONICAL) {
-      status = FLEET_INTENT_CELL_STATUS.MISSING
-    } else {
-      status = FLEET_INTENT_CELL_STATUS.VARIANT
-    }
-    cells.set(zoneId, {
+    const actionable = statusWithoutAcknowledgement === FLEET_INTENT_CELL_STATUS.MISSING
+      || statusWithoutAcknowledgement === FLEET_INTENT_CELL_STATUS.VARIANT
+    const duplicateZoneNames = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+      && statusWithoutAcknowledgement === FLEET_INTENT_CELL_STATUS.VARIANT
+      ? observations
+          .filter((candidate) => candidate.zone.meta.id !== observation.zone.meta.id
+            && candidate.uniquenessCanonical === observation.uniquenessCanonical)
+          .map((candidate) => candidate.zone.meta.name)
+      : []
+    cells.set(observation.zone.meta.id, {
       acknowledgement,
-      observedCanonical: observed,
+      duplicateZoneNames,
+      observedCanonical: observation.observedCanonical,
       policy,
-      status,
-      zone,
+      status: acknowledgement && actionable
+        ? FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED
+        : statusWithoutAcknowledgement,
+      statusWithoutAcknowledgement,
+      uniquenessCanonical: observation.uniquenessCanonical,
+      zone: observation.zone,
     })
   }
   const statuses = [...cells.values()].map((cell) => cell.status)
@@ -386,7 +488,10 @@ function acknowledgementEvaluation(
   }
   else {
     const observed = observedCanonical(row, zone.meta.name)
-    if (observed === policy.expected.canonical) reason = "The cell now matches intent"
+    const policyCell = policyState.cells.get(zone.meta.id)
+    if (policyCell?.statusWithoutAcknowledgement === FLEET_INTENT_CELL_STATUS.MATCH) {
+      reason = "The cell now satisfies intent"
+    }
     else if (observed !== acknowledgement.observedCanonical) reason = "The observed state changed"
   }
   return {
