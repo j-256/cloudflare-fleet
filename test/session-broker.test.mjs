@@ -14,6 +14,12 @@ import {
   readNewestCacheRecord,
 } from "../src/cache-store.mjs"
 import {
+  createEmptyFleetIntentDocument,
+} from "../src/fleet-intent.mjs"
+import {
+  readFleetIntentDocument,
+} from "../src/intent-store.mjs"
+import {
   startSessionBroker,
 } from "../src/session-broker.mjs"
 import {
@@ -36,6 +42,7 @@ async function brokerFixture(options = {}) {
   )
   await fs.writeFile(path.join(runtimeDir, "styles.css"), "\n")
   await fs.writeFile(path.join(runtimeDir, "cache.js"), "\n")
+  await fs.writeFile(path.join(runtimeDir, "intent.js"), "\n")
   const calls = []
   const broker = await startSessionBroker({
     accountId: "account-id",
@@ -248,6 +255,110 @@ test("read-only session broker rejects Cloudflare writes", async () => {
 
     assert.equal(response.status, 403)
     assert.equal(fixture.calls.length, 0)
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker reads and writes authorized fleet intent", async () => {
+  const fixture = await brokerFixture()
+  try {
+    const url = new URL("api/intent", fixture.broker.sessionUrl)
+    const headers = {
+      "Content-Type": "application/json",
+      [BROKER_SESSION_HEADER]: "session-secret",
+      Origin: fixture.broker.origin,
+    }
+    const initialResponse = await fetch(url, { headers })
+    const initial = (await initialResponse.json()).result
+    assert.deepEqual(initial, createEmptyFleetIntentDocument("account-id"))
+
+    initial.groups.push({
+      id: "primary-zones",
+      members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+      mode: "members",
+      name: "Primary zones",
+    })
+    const savedResponse = await fetch(url, {
+      body: JSON.stringify({
+        document: initial,
+        expectedRevision: initial.revision,
+      }),
+      headers,
+      method: "PUT",
+    })
+    const saved = (await savedResponse.json()).result
+
+    assert.equal(savedResponse.status, 200)
+    assert.deepEqual(
+      await readFleetIntentDocument(fixture.cacheDir, "account-id"),
+      saved,
+    )
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker returns the latest intent on revision conflict", async () => {
+  const fixture = await brokerFixture()
+  try {
+    const url = new URL("api/intent", fixture.broker.sessionUrl)
+    const headers = {
+      "Content-Type": "application/json",
+      [BROKER_SESSION_HEADER]: "session-secret",
+      Origin: fixture.broker.origin,
+    }
+    const original = createEmptyFleetIntentDocument("account-id")
+    const firstResponse = await fetch(url, {
+      body: JSON.stringify({
+        document: original,
+        expectedRevision: "",
+      }),
+      headers,
+      method: "PUT",
+    })
+    const saved = (await firstResponse.json()).result
+    const conflictResponse = await fetch(url, {
+      body: JSON.stringify({
+        document: original,
+        expectedRevision: "",
+      }),
+      headers,
+      method: "PUT",
+    })
+    const conflict = await conflictResponse.json()
+
+    assert.equal(conflictResponse.status, 409)
+    assert.deepEqual(conflict.result, saved)
+    assert.match(conflict.errors[0].message, /another dashboard window/)
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("read-only session broker rejects fleet intent writes", async () => {
+  const fixture = await brokerFixture({
+    readOnly: true,
+  })
+  try {
+    const document = createEmptyFleetIntentDocument("account-id")
+    const response = await fetch(
+      new URL("api/intent", fixture.broker.sessionUrl),
+      {
+        body: JSON.stringify({
+          document,
+          expectedRevision: document.revision,
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          [BROKER_SESSION_HEADER]: "session-secret",
+          Origin: fixture.broker.origin,
+        },
+        method: "PUT",
+      },
+    )
+
+    assert.equal(response.status, 403)
   } finally {
     await closeFixture(fixture)
   }

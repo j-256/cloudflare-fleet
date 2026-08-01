@@ -19,6 +19,11 @@ import {
   persistCacheRecord,
 } from "./cache-store.mjs"
 import {
+  FleetIntentRevisionConflictError,
+  persistFleetIntentDocument,
+  readFleetIntentDocument,
+} from "./intent-store.mjs"
+import {
   runtimePathIsSafe,
 } from "./session-watcher.mjs"
 
@@ -91,7 +96,9 @@ function staticFileFor(runtimeDir, relativePath) {
   if (relativePath === "/" || relativePath === "/index.html") {
     return path.join(runtimeDir, "index.html")
   }
-  if (relativePath === "/styles.css" || relativePath === "/cache.js") {
+  if (relativePath === "/styles.css"
+    || relativePath === "/cache.js"
+    || relativePath === "/intent.js") {
     return path.join(runtimeDir, relativePath.slice(1))
   }
   if (/^\/src\/[A-Za-z0-9._-]+\.mjs$/.test(relativePath)) {
@@ -225,6 +232,65 @@ async function persistSnapshot(request, response, options) {
   })
 }
 
+async function handleFleetIntent(request, response, options) {
+  if (request.method === HTTP_METHOD.GET) {
+    const document = await readFleetIntentDocument(
+      options.cacheDir,
+      options.accountId,
+    )
+    jsonResponse(response, 200, {
+      result: document,
+      success: true,
+    })
+    return
+  }
+  if (request.method !== HTTP_METHOD.PUT) {
+    errorResponse(response, 405, "Fleet intent method is not allowed")
+    return
+  }
+  if (options.readOnly) {
+    errorResponse(response, 403, "Fleet intent writes are disabled for this session")
+    return
+  }
+  let payload
+  try {
+    payload = JSON.parse((await requestBody(request)).toString("utf8"))
+  } catch {
+    errorResponse(response, 400, "Fleet intent body is not valid JSON")
+    return
+  }
+  if (typeof payload?.expectedRevision !== "string" || !payload.document) {
+    errorResponse(response, 400, "Fleet intent body is incomplete")
+    return
+  }
+  try {
+    const document = await persistFleetIntentDocument(
+      options.cacheDir,
+      options.accountId,
+      payload.expectedRevision,
+      payload.document,
+    )
+    jsonResponse(response, 200, {
+      result: document,
+      success: true,
+    })
+  } catch (error) {
+    if (error instanceof FleetIntentRevisionConflictError) {
+      jsonResponse(response, 409, {
+        errors: [{ message: error.message }],
+        result: error.currentDocument,
+        success: false,
+      })
+      return
+    }
+    if (error instanceof TypeError) {
+      errorResponse(response, 400, error.message)
+      return
+    }
+    throw error
+  }
+}
+
 export async function startSessionBroker(options) {
   if (!options.accountId || !options.apiToken || !options.cacheDir || !options.runtimeDir
     || !options.sessionId || !options.sessionSecret) {
@@ -323,6 +389,10 @@ export async function startSessionBroker(options) {
       }
       if (apiPath === "cache") {
         await persistSnapshot(request, response, options)
+        return
+      }
+      if (apiPath === "intent") {
+        await handleFleetIntent(request, response, options)
         return
       }
       const cloudflarePrefix = "cloudflare/"

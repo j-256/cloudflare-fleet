@@ -39,7 +39,7 @@
       <div class="summary-grid" role="list" aria-label="Fleet summary">
         <div class="summary-card" role="listitem"><strong id="zone-count">0</strong><span>Zones</span></div>
         <div class="summary-card" role="listitem"><strong id="facet-count">0</strong><span>Comparable facets</span></div>
-        <div class="summary-card" role="listitem"><strong id="drift-count">0</strong><span>Facets with drift</span></div>
+        <div class="summary-card" role="listitem"><strong id="drift-count">0</strong><span>Drift queue</span></div>
         <div class="summary-card" role="listitem"><strong id="hole-count">0</strong><span>Missing cells</span></div>
       </div>
       <progress class="load-progress" id="load-progress" max="100" value="0" aria-label="Fleet loading progress" hidden></progress>
@@ -88,6 +88,20 @@
       </section>
 
       <section class="policy-grid" aria-label="Fleet policies">
+        <article class="policy-card intent-policy-card">
+          <div>
+            <p class="policy-kicker">Desired state</p>
+            <h2>Fleet intent</h2>
+            <p id="intent-policy-detail">No facets governed yet</p>
+          </div>
+          <div class="policy-actions">
+            <div class="policy-badges">
+              <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
+              <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
+            </div>
+            <button class="button button-accent" id="manage-intent" type="button">Manage intent</button>
+          </div>
+        </article>
         <article class="policy-card">
           <div>
             <p class="policy-kicker">Email policy</p>
@@ -130,6 +144,8 @@
           <span class="editable">Editable</span>
           <span class="copyable">Copyable</span>
           <span class="renameable">Fleet rename</span>
+          <span class="intent-drift">Intent drift</span>
+          <span class="acknowledged">Acknowledged</span>
         </aside>
         <span class="matrix-shortcuts" aria-hidden="true">/ search | arrows navigate</span>
       </div>
@@ -312,6 +328,126 @@
     </form>
   </dialog>
 
+  <dialog class="intent-dialog" id="intent-dialog" aria-labelledby="intent-title" aria-describedby="intent-summary">
+    <div class="intent-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close fleet intent">&times;</button>
+      <header class="intent-heading">
+        <div>
+          <p class="dialog-kicker">Desired state</p>
+          <h2 id="intent-title">Fleet intent</h2>
+          <p id="intent-summary">Define expected coverage and exact values without hiding observed differences.</p>
+        </div>
+        <div class="intent-metrics" id="intent-metrics" aria-label="Fleet intent summary"></div>
+      </header>
+      <section class="intent-section" aria-labelledby="intent-groups-title">
+        <div class="intent-section-heading">
+          <div>
+            <h3 id="intent-groups-title">Zone groups</h3>
+            <p>Use all zones or name a stable subset for policy coverage.</p>
+          </div>
+          <button class="button button-quiet" id="intent-add-group" type="button">New group</button>
+        </div>
+        <div class="intent-list" id="intent-group-list"></div>
+      </section>
+      <section class="intent-section" aria-labelledby="intent-policies-title">
+        <div class="intent-section-heading">
+          <div>
+            <h3 id="intent-policies-title">Facet policies</h3>
+            <p>Each policy combines one matrix facet, one zone group, and one expected fleet value.</p>
+          </div>
+        </div>
+        <div class="intent-list" id="intent-policy-list"></div>
+      </section>
+      <section class="intent-section" aria-labelledby="intent-acknowledgements-title">
+        <div class="intent-section-heading">
+          <div>
+            <h3 id="intent-acknowledgements-title">Acknowledgements</h3>
+            <p>Exact accepted states become stale as soon as the observed value changes.</p>
+          </div>
+        </div>
+        <div class="intent-list" id="intent-acknowledgement-list"></div>
+      </section>
+      <div class="dialog-actions">
+        <button class="button button-primary" type="button" data-dialog-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="intent-group-dialog" aria-labelledby="intent-group-title" aria-describedby="intent-group-help">
+    <form method="dialog" id="intent-group-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close zone group editor">&times;</button>
+      <p class="dialog-kicker">Fleet intent coverage</p>
+      <h2 id="intent-group-title">New zone group</h2>
+      <p id="intent-group-help">Group membership is stored by zone identifier, with the current domain retained for review.</p>
+      <label for="intent-group-name">Group name</label>
+      <input id="intent-group-name" type="text" autocomplete="off" spellcheck="false" aria-errormessage="intent-group-error" required>
+      <div class="target-tools">
+        <button class="button button-quiet" id="intent-group-select-all" type="button">Select all</button>
+        <button class="button button-quiet" id="intent-group-clear" type="button">Clear</button>
+      </div>
+      <p class="target-selection-summary" id="intent-group-selection-summary" role="status" aria-live="polite">No zones selected</p>
+      <div class="target-options" id="intent-group-members"></div>
+      <p class="field-error" id="intent-group-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="intent-group-save" value="save">Save group</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="intent-policy-dialog" aria-labelledby="intent-policy-title" aria-describedby="intent-policy-target">
+    <form method="dialog" id="intent-policy-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close facet policy editor">&times;</button>
+      <p class="dialog-kicker">Fleet intent policy</p>
+      <h2 id="intent-policy-title">Set facet intent</h2>
+      <p id="intent-policy-target"></p>
+      <label for="intent-policy-group">Expected coverage</label>
+      <select id="intent-policy-group" required></select>
+      <label for="intent-policy-value">Expected value</label>
+      <select id="intent-policy-value" required></select>
+      <div class="intent-value-preview" id="intent-policy-preview"></div>
+      <details class="raw-value">
+        <summary>Show normalized value</summary>
+        <pre id="intent-policy-raw"></pre>
+      </details>
+      <p class="field-error" id="intent-policy-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="intent-policy-save" value="save">Save intent</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="intent-acknowledgement-dialog" aria-labelledby="intent-acknowledgement-title" aria-describedby="intent-acknowledgement-target">
+    <form method="dialog" id="intent-acknowledgement-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close acknowledgement editor">&times;</button>
+      <p class="dialog-kicker">Intentional difference</p>
+      <h2 id="intent-acknowledgement-title">Acknowledge exact state</h2>
+      <p id="intent-acknowledgement-target"></p>
+      <div class="intent-value-preview" id="intent-acknowledgement-preview"></div>
+      <label for="intent-acknowledgement-reason">Reason</label>
+      <textarea id="intent-acknowledgement-reason" aria-errormessage="intent-acknowledgement-error" required></textarea>
+      <p class="field-error" id="intent-acknowledgement-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="intent-acknowledgement-save" value="save">Acknowledge state</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="intent-delete-dialog" aria-labelledby="intent-delete-title" aria-describedby="intent-delete-summary">
+    <form method="dialog" id="intent-delete-form">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close removal confirmation">&times;</button>
+      <p class="dialog-kicker">Fleet intent</p>
+      <h2 id="intent-delete-title">Remove intent item</h2>
+      <p id="intent-delete-summary"></p>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-danger" id="intent-delete-apply" value="remove">Remove</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-summary">
     <form method="dialog">
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close write confirmation">&times;</button>
@@ -358,6 +494,7 @@
   </div>
 
   <script src="cache.js"></script>
+  <script src="intent.js"></script>
   <script src="auth.js"></script>
   <script type="module" src="src/app.mjs"></script>
 </body>

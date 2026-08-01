@@ -154,6 +154,9 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
   const resolutionValue = Object.prototype.hasOwnProperty.call(options, "resolutionValue")
     ? options.resolutionValue
     : normalized
+  const intentValue = Object.prototype.hasOwnProperty.call(options, "intentValue")
+    ? options.intentValue
+    : normalized
   row.cells.set(zone.meta.name, {
     action: options.action || null,
     canonical: stableString(normalized),
@@ -161,6 +164,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     display: options.display ?? shortDisplay(normalized),
     full: options.full ?? displayJson(normalized),
     inspectionValue: inspectionValue(inspected),
+    intentCanonical: stableString(intentValue),
     presentation: options.presentation || null,
     parentAction: options.parentAction || null,
     resolutionCanonical: stableString(resolutionValue),
@@ -236,6 +240,7 @@ function addSettingRows(rows, inventory) {
             value: normalizeValue(setting.value, zone.meta.name),
           }),
           inspectionValue: normalizeValue(setting.value, zone.meta.name),
+          intentValue: normalizeValue(setting.value, zone.meta.name),
         },
       )
     }
@@ -1145,6 +1150,7 @@ export function matrixRenderKey(inventory, matrix) {
           capability: cell.capability,
           display: cell.display,
           full: cell.full,
+          intentCanonical: cell.intentCanonical,
           resolutionCanonical: cell.resolutionCanonical,
           resolutionSource: cell.resolutionSource,
           secondaryAction: cell.secondaryAction,

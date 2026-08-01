@@ -19,6 +19,14 @@ export class CloudflareApiError extends Error {
   }
 }
 
+export class FleetIntentApiConflictError extends Error {
+  constructor(message, currentDocument) {
+    super(message)
+    this.name = "FleetIntentApiConflictError"
+    this.currentDocument = currentDocument
+  }
+}
+
 export class CloudflareApi {
   constructor({
     apiToken,
@@ -136,6 +144,54 @@ export class CloudflareApi {
     if (!response.ok) {
       throw new Error(`Snapshot persistence returned HTTP ${response.status}`)
     }
+  }
+
+  async loadFleetIntent(options = {}) {
+    if (!this.usesBroker) {
+      throw new Error("Fleet intent persistence requires the loopback session broker")
+    }
+    const response = await this.fetchImpl(new URL("intent", this.brokerBaseUrl), {
+      headers: {
+        Accept: "application/json",
+        [BROKER_SESSION_HEADER]: this.brokerSecret,
+      },
+      signal: options.signal,
+    })
+    const envelope = await response.json()
+    if (!response.ok || envelope.success !== true) {
+      throw new Error(envelope.errors?.[0]?.message || `Fleet intent returned HTTP ${response.status}`)
+    }
+    return envelope.result
+  }
+
+  async persistFleetIntent(document, options = {}) {
+    if (!this.usesBroker) {
+      throw new Error("Fleet intent persistence requires the loopback session broker")
+    }
+    const response = await this.fetchImpl(new URL("intent", this.brokerBaseUrl), {
+      body: JSON.stringify({
+        document,
+        expectedRevision: document.revision,
+      }),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        [BROKER_SESSION_HEADER]: this.brokerSecret,
+      },
+      method: HTTP_METHOD.PUT,
+      signal: options.signal,
+    })
+    const envelope = await response.json()
+    if (response.status === 409) {
+      throw new FleetIntentApiConflictError(
+        envelope.errors?.[0]?.message || "Fleet intent changed in another dashboard window",
+        envelope.result,
+      )
+    }
+    if (!response.ok || envelope.success !== true) {
+      throw new Error(envelope.errors?.[0]?.message || `Fleet intent persistence returned HTTP ${response.status}`)
+    }
+    return envelope.result
   }
 
   startSessionMonitor(handlers = {}) {

@@ -85,3 +85,34 @@ test("matrix filters redirects by destination type", () => {
     redirectType: "static",
   }), false)
 })
+
+test("matrix drift filter prefers actionable intent over raw difference", () => {
+  const filters = {
+    category: "",
+    differencesOnly: true,
+    query: "",
+    recordType: "",
+    redirectType: "",
+    scope: MATRIX_SCOPE.ALL,
+    targetHolesOnly: false,
+    targetZoneIds: new Set(),
+    zoneCount: 2,
+  }
+  const row = {
+    actionable: false,
+    category: "Zone settings",
+    different: true,
+    missingZoneIds: [],
+    presentCount: 2,
+    recordType: "",
+    redirectTypes: [],
+    search: "zone settings",
+  }
+
+  assert.equal(matrixRowMatchesFilters(row, filters), false)
+  assert.equal(matrixRowMatchesFilters({
+    ...row,
+    actionable: true,
+    different: false,
+  }, filters), true)
+})

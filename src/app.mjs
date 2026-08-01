@@ -1,4 +1,7 @@
-import { CloudflareApi } from "./api.mjs"
+import {
+  CloudflareApi,
+  FleetIntentApiConflictError,
+} from "./api.mjs"
 import {
   CACHE_RECORD_GLOBAL,
   CACHE_SNAPSHOT_GLOBAL,
@@ -22,6 +25,27 @@ import {
   configuredEmailPolicyExceptions,
   emailPolicyExceptionsForZone,
 } from "./fleet-policy.mjs"
+import {
+  createEmptyFleetIntentDocument,
+  evaluateFleetIntent,
+  FLEET_INTENT_ACKNOWLEDGEMENT_STATUS,
+  FLEET_INTENT_ALL_ZONES_GROUP_ID,
+  FLEET_INTENT_CELL_STATUS,
+  FLEET_INTENT_DOCUMENT_GLOBAL,
+  FLEET_INTENT_GROUP_MODE,
+  FLEET_INTENT_LABEL_MAX_LENGTH,
+  FLEET_INTENT_MISSING_CANONICAL,
+  FLEET_INTENT_REASON_MAX_LENGTH,
+  fleetIntentFacetId,
+  fleetIntentGroupZoneIds,
+  isFleetIntentDocument,
+  removeFleetIntentAcknowledgement,
+  removeFleetIntentGroup,
+  removeFleetIntentPolicy,
+  replaceFleetIntentAcknowledgement,
+  replaceFleetIntentGroup,
+  replaceFleetIntentPolicy,
+} from "./fleet-intent.mjs"
 import {
   installDismissibleDialogs,
   showDialog,
@@ -126,6 +150,8 @@ delete window.__CLOUDFLARE_FLEET_AUTH__
 const injectedCache = window[CACHE_RECORD_GLOBAL]
 delete window[CACHE_RECORD_GLOBAL]
 delete window[CACHE_SNAPSHOT_GLOBAL]
+const injectedIntent = window[FLEET_INTENT_DOCUMENT_GLOBAL]
+delete window[FLEET_INTENT_DOCUMENT_GLOBAL]
 
 const fatal = document.querySelector("#fatal")
 const application = document.querySelector("#application")
@@ -141,6 +167,9 @@ application.hidden = false
 const api = new CloudflareApi(auth)
 const readOnly = Boolean(auth.readOnly)
 const cachedRecord = isCacheRecord(injectedCache, auth.accountId) ? injectedCache : null
+const initialIntent = isFleetIntentDocument(injectedIntent, auth.accountId)
+  ? injectedIntent
+  : createEmptyFleetIntentDocument(auth.accountId)
 const INVENTORY_SOURCE = Object.freeze({
   CACHE: "cache",
   LIVE: "live",
@@ -163,6 +192,8 @@ const EDITABLE_OBJECT_KEY_FIELDS = new Set([
 const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const RULESET_RULE_PREVIEW_LIMIT = 220
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
+const INTENT_SYNC_INTERVAL_MS = 5000
+const INTENT_POLICY_VALUE_SEPARATOR = "\u0000"
 const REDIRECT_FROM_VALUE_PATH = Object.freeze([
   "action_parameters",
   "from_value",
@@ -206,6 +237,14 @@ const state = {
   matrixRenderKey: null,
   holeResolution: null,
   inlineEditor: null,
+  intent: initialIntent,
+  intentAcknowledgementDraft: null,
+  intentDeleteDraft: null,
+  intentEvaluation: null,
+  intentGroupDraft: null,
+  intentPolicyDraft: null,
+  intentSaving: false,
+  intentSyncing: false,
   ruleRename: null,
   rulesetWorkspace: null,
   selectedZoneIds: new Set(),
@@ -219,6 +258,8 @@ const fillActionByCell = new WeakMap()
 const bulkFillRowByButton = new WeakMap()
 const fleetActionByButton = new WeakMap()
 const workspaceActionByButton = new WeakMap()
+const intentCellActionByButton = new WeakMap()
+const intentPolicyRowByButton = new WeakMap()
 
 const elements = {
   alignEmail: document.querySelector("#align-email"),
@@ -263,7 +304,47 @@ const elements = {
   holeStructuredPreview: document.querySelector("#hole-structured-preview"),
   holeTarget: document.querySelector("#hole-target"),
   holeTitle: document.querySelector("#hole-title"),
+  intentAcknowledgementDialog: document.querySelector("#intent-acknowledgement-dialog"),
+  intentAcknowledgementError: document.querySelector("#intent-acknowledgement-error"),
+  intentAcknowledgementForm: document.querySelector("#intent-acknowledgement-form"),
+  intentAcknowledgementPreview: document.querySelector("#intent-acknowledgement-preview"),
+  intentAcknowledgementReason: document.querySelector("#intent-acknowledgement-reason"),
+  intentAcknowledgementTarget: document.querySelector("#intent-acknowledgement-target"),
+  intentAcknowledgementList: document.querySelector("#intent-acknowledgement-list"),
+  intentAddGroup: document.querySelector("#intent-add-group"),
+  intentDeleteApply: document.querySelector("#intent-delete-apply"),
+  intentDeleteDialog: document.querySelector("#intent-delete-dialog"),
+  intentDeleteForm: document.querySelector("#intent-delete-form"),
+  intentDeleteSummary: document.querySelector("#intent-delete-summary"),
+  intentDeleteTitle: document.querySelector("#intent-delete-title"),
+  intentDialog: document.querySelector("#intent-dialog"),
+  intentGroupClear: document.querySelector("#intent-group-clear"),
+  intentGroupDialog: document.querySelector("#intent-group-dialog"),
+  intentGroupError: document.querySelector("#intent-group-error"),
+  intentGroupForm: document.querySelector("#intent-group-form"),
+  intentGroupList: document.querySelector("#intent-group-list"),
+  intentGroupMembers: document.querySelector("#intent-group-members"),
+  intentGroupName: document.querySelector("#intent-group-name"),
+  intentGroupSelectAll: document.querySelector("#intent-group-select-all"),
+  intentGroupSelectionSummary: document.querySelector("#intent-group-selection-summary"),
+  intentGroupTitle: document.querySelector("#intent-group-title"),
+  intentMetrics: document.querySelector("#intent-metrics"),
+  intentPolicyDetail: document.querySelector("#intent-policy-detail"),
+  intentPolicyDialog: document.querySelector("#intent-policy-dialog"),
+  intentPolicyDrift: document.querySelector("#intent-policy-drift"),
+  intentPolicyError: document.querySelector("#intent-policy-error"),
+  intentPolicyForm: document.querySelector("#intent-policy-form"),
+  intentPolicyGroup: document.querySelector("#intent-policy-group"),
+  intentPolicyList: document.querySelector("#intent-policy-list"),
+  intentPolicyPreview: document.querySelector("#intent-policy-preview"),
+  intentPolicyRaw: document.querySelector("#intent-policy-raw"),
+  intentPolicyReview: document.querySelector("#intent-policy-review"),
+  intentPolicyTarget: document.querySelector("#intent-policy-target"),
+  intentPolicyTitle: document.querySelector("#intent-policy-title"),
+  intentPolicyValue: document.querySelector("#intent-policy-value"),
+  intentSummary: document.querySelector("#intent-summary"),
   loadProgress: document.querySelector("#load-progress"),
+  manageIntent: document.querySelector("#manage-intent"),
   matrixBody: document.querySelector("#matrix-body"),
   matrixHead: document.querySelector("#matrix-head"),
   policyExceptionDialog: document.querySelector("#policy-exception-dialog"),
@@ -333,6 +414,8 @@ const elements = {
   zoneCount: document.querySelector("#zone-count"),
 }
 
+elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
+elements.intentAcknowledgementReason.maxLength = FLEET_INTENT_REASON_MAX_LENGTH
 elements.sessionMode.textContent = readOnly ? "Read-only session" : "Read/write session"
 elements.writePanel.hidden = readOnly
 elements.alignEmail.hidden = readOnly
@@ -471,6 +554,35 @@ function showFieldError(input, errorElement, error) {
 
 function zoneById(zoneId) {
   return state.inventory?.zones.find((zone) => zone.meta.id === zoneId) || null
+}
+
+function intentMutationSupported() {
+  return !readOnly && api.usesBroker
+}
+
+function intentWritable() {
+  return intentMutationSupported()
+    && !state.busy
+    && state.transportAvailable
+    && !state.intentSaving
+}
+
+function intentId(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`
+}
+
+function intentGroupById(groupId) {
+  return state.intent.groups.find((group) => group.id === groupId) || null
+}
+
+function intentPolicyById(policyId) {
+  return state.intent.policies.find((policy) => policy.id === policyId) || null
+}
+
+function intentRowState(row) {
+  return state.intentEvaluation?.rowStates.get(
+    fleetIntentFacetId(row.category, row.key),
+  ) || null
 }
 
 function policyDriftZoneIds() {
@@ -1542,6 +1654,13 @@ function syncRulesetWorkspaceFromInventory(inventory) {
   renderRulesetWorkspace()
 }
 
+function reportScopedWriteVerification(count) {
+  setRefreshDetail(
+    `${count} changed resource${count === 1 ? "" : "s"} verified; full fleet refresh skipped`,
+    "complete",
+  )
+}
+
 async function verifyChangedWriteTargets(targets) {
   if (targets.length === 0) {
     restoreInventoryStatus()
@@ -1577,10 +1696,7 @@ async function verifyChangedWriteTargets(targets) {
       "error",
     )
   } else {
-    setRefreshDetail(
-      `${targets.length} changed resource${targets.length === 1 ? "" : "s"} verified; full fleet refresh skipped`,
-      "complete",
-    )
+    reportScopedWriteVerification(targets.length)
   }
 }
 
@@ -1661,15 +1777,18 @@ async function verifyRulesetAction(action, options = {}) {
   const patched = patchVerifiedRuleset(action, ruleset, options)
   const serializedSnapshot = serializeLiveSnapshot(patched)
   window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
+  let snapshotSaved = true
   try {
     await api.persistSnapshot(serializedSnapshot)
   } catch (error) {
+    snapshotSaved = false
     setRefreshDetail(
       `Live ruleset verified, but the snapshot was not saved: ${error instanceof Error ? error.message : String(error)}`,
       "error",
     )
   }
   restoreInventoryStatus()
+  if (snapshotSaved) reportScopedWriteVerification(1)
 }
 
 function patchVerifiedEmailRoutingRule(action, rule) {
@@ -1735,15 +1854,18 @@ async function verifyEmailRoutingRuleAction(action) {
   const patched = patchVerifiedEmailRoutingRule(action, liveRule)
   const serializedSnapshot = serializeLiveSnapshot(patched)
   window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
+  let snapshotSaved = true
   try {
     await api.persistSnapshot(serializedSnapshot)
   } catch (error) {
+    snapshotSaved = false
     setRefreshDetail(
       `Live Email Routing rule verified, but the snapshot was not saved: ${error instanceof Error ? error.message : String(error)}`,
       "error",
     )
   }
   restoreInventoryStatus()
+  if (snapshotSaved) reportScopedWriteVerification(1)
 }
 
 function openRulesetWorkspace(action) {
@@ -1977,6 +2099,32 @@ function renderSummary() {
     : current
 }
 
+function renderIntentPolicyCard() {
+  const summary = state.intentEvaluation?.summary || {
+    acknowledgedCells: 0,
+    actionableCells: 0,
+    governedRows: 0,
+    policies: state.intent.policies.length,
+    staleAcknowledgements: 0,
+    unresolvedPolicies: 0,
+  }
+  const customGroupCount = state.intent.groups.filter(
+    (group) => group.id !== FLEET_INTENT_ALL_ZONES_GROUP_ID,
+  ).length
+  elements.intentPolicyDetail.textContent = summary.policies === 0
+    ? `No facets governed yet | ${customGroupCount} custom group${customGroupCount === 1 ? "" : "s"}`
+    : `${summary.governedRows} governed facet${summary.governedRows === 1 ? "" : "s"} | ${summary.acknowledgedCells} acknowledged cell${summary.acknowledgedCells === 1 ? "" : "s"}`
+  elements.intentPolicyDrift.textContent = `${summary.actionableCells} actionable`
+  const reviewCount = summary.staleAcknowledgements + summary.unresolvedPolicies
+  elements.intentPolicyReview.hidden = reviewCount === 0
+  elements.intentPolicyReview.textContent = `${reviewCount} need review`
+  elements.manageIntent.textContent = readOnly
+    ? "View intent"
+    : summary.policies === 0
+      ? "Set up intent"
+      : "Manage intent"
+}
+
 function renderCategories() {
   const previous = elements.category.value
   const counts = new Map()
@@ -2169,8 +2317,19 @@ function renderPolicyCards() {
   }
   elements.wafPolicyDrift.textContent = `${wafDrift.length} drifted`
 
+  renderIntentPolicyCard()
+  const intentDriftZoneIds = state.intentEvaluation
+    ? [...state.intentEvaluation.rowStates.values()].flatMap(
+        (rowState) => rowState.actionableCells.map((cell) => cell.zone.meta.id),
+      )
+    : []
+
   elements.selectDrifted.dataset.zoneIds = JSON.stringify(
-    [...new Set([...emailDrift, ...wafDrift].map((zone) => zone.meta.id))],
+    [...new Set([
+      ...emailDrift.map((zone) => zone.meta.id),
+      ...wafDrift.map((zone) => zone.meta.id),
+      ...intentDriftZoneIds,
+    ])],
   )
 }
 
@@ -2311,6 +2470,773 @@ function openPolicyExceptionDialog() {
   })
 }
 
+function setIntentSaving(saving) {
+  state.intentSaving = saving
+  updateActionButtons()
+  if (elements.intentDialog.open) renderIntentManager()
+}
+
+async function persistIntentDocument(document, successMessage) {
+  if (!intentWritable()) {
+    toast(
+      api.usesBroker
+        ? "Fleet intent is read-only while this session is unavailable"
+        : "Fleet intent persistence requires a normal dashboard session",
+      "error",
+    )
+    return false
+  }
+  setIntentSaving(true)
+  try {
+    const saved = await api.persistFleetIntent(document)
+    if (!isFleetIntentDocument(saved, auth.accountId)) {
+      throw new Error("The broker returned an invalid fleet intent document")
+    }
+    state.intent = saved
+    if (state.inventory) renderInventory(state.inventory, state.inventorySource)
+    else renderIntentPolicyCard()
+    toast(successMessage)
+    return true
+  } catch (error) {
+    if (error instanceof FleetIntentApiConflictError
+      && isFleetIntentDocument(error.currentDocument, auth.accountId)) {
+      state.intent = error.currentDocument
+      if (state.inventory) renderInventory(state.inventory, state.inventorySource)
+      toast("Fleet intent changed in another window. The latest version is loaded; review and retry your edit.", "error")
+      return false
+    }
+    toast(error instanceof Error ? error.message : String(error), "error")
+    return false
+  } finally {
+    setIntentSaving(false)
+  }
+}
+
+async function syncFleetIntent(options = {}) {
+  if (!api.usesBroker || state.intentSaving || state.intentSyncing) return false
+  state.intentSyncing = true
+  try {
+    const latest = await api.loadFleetIntent()
+    if (!isFleetIntentDocument(latest, auth.accountId)) {
+      throw new Error("The broker returned an invalid fleet intent document")
+    }
+    if (latest.revision === state.intent.revision) return false
+    state.intent = latest
+    if (state.inventory) renderInventory(state.inventory, state.inventorySource)
+    else renderIntentPolicyCard()
+    if (!options.silent) toast("Newer fleet intent loaded from another dashboard window")
+    return true
+  } catch (error) {
+    if (!options.silent) {
+      toast(error instanceof Error ? error.message : String(error), "error")
+    }
+    return false
+  } finally {
+    state.intentSyncing = false
+  }
+}
+
+function intentPolicyRow(policy) {
+  return state.matrix?.rows.find(
+    (row) => row.category === policy.facet.category
+      && row.key === policy.facet.key,
+  ) || null
+}
+
+function intentPolicyState(policyId) {
+  return state.intentEvaluation?.policyStates.find(
+    (entry) => entry.policy.id === policyId,
+  ) || null
+}
+
+function rowIntentVariants(row, policy = null) {
+  const variants = new Map()
+  for (const zone of state.inventory.zones) {
+    const cell = row.cells.get(zone.meta.name)
+    if (!cell) continue
+    const canonical = cell.intentCanonical ?? cell.canonical
+    if (!variants.has(canonical)) {
+      variants.set(canonical, {
+        canonical,
+        count: 0,
+        display: cell.display,
+        resolutionCanonical: cell.resolutionCanonical || null,
+        sourceZoneId: zone.meta.id,
+        sourceZoneName: zone.meta.name,
+        value: structuredClone(cell.inspectionValue),
+      })
+    }
+    const variant = variants.get(canonical)
+    variant.count += 1
+    if (!row.cells.get(variant.sourceZoneName)?.resolutionSource
+      && cell.resolutionSource) {
+      variant.resolutionCanonical = cell.resolutionCanonical || null
+      variant.sourceZoneId = zone.meta.id
+      variant.sourceZoneName = zone.meta.name
+      variant.value = structuredClone(cell.inspectionValue)
+    }
+  }
+  if (policy && !variants.has(policy.expected.canonical)) {
+    variants.set(policy.expected.canonical, {
+      canonical: policy.expected.canonical,
+      count: 0,
+      display: policy.expected.display,
+      resolutionCanonical: policy.expected.resolutionCanonical,
+      sourceZoneId: policy.expected.sourceZoneId,
+      sourceZoneName: policy.expected.sourceZoneName,
+      value: structuredClone(policy.expected.value),
+    })
+  }
+  return [...variants.values()]
+    .sort((left, right) => right.count - left.count
+      || left.sourceZoneName.localeCompare(right.sourceZoneName))
+    .map((variant) => ({
+      ...variant,
+      optionValue: `${variant.canonical}${INTENT_POLICY_VALUE_SEPARATOR}${variant.sourceZoneId}`,
+    }))
+}
+
+function selectedIntentPolicyVariant() {
+  return state.intentPolicyDraft?.variants.find(
+    (variant) => variant.optionValue === elements.intentPolicyValue.value,
+  ) || null
+}
+
+function renderIntentPolicyPreview() {
+  const variant = selectedIntentPolicyVariant()
+  elements.intentPolicyPreview.replaceChildren(
+    variant
+      ? structuredValueElement(variant.value)
+      : createElement("span", { text: "No expected value selected" }),
+  )
+  elements.intentPolicyRaw.textContent = variant
+    ? formattedJson(variant.value)
+    : ""
+}
+
+function openIntentPolicyEditor(row, policy = null) {
+  if (!intentWritable()) {
+    toast("Fleet intent editing is unavailable in this session", "error")
+    return
+  }
+  const variants = rowIntentVariants(row, policy)
+  if (variants.length === 0) {
+    toast("This facet has no observed value to establish as intent", "error")
+    return
+  }
+  state.intentPolicyDraft = {
+    baseRevision: state.intent.revision,
+    policy,
+    row,
+    variants,
+  }
+  elements.intentPolicyTitle.textContent = policy ? "Edit facet intent" : "Set facet intent"
+  elements.intentPolicyTarget.textContent = `${row.category} | ${row.label}`
+  elements.intentPolicyGroup.replaceChildren(...state.intent.groups.map((group) => {
+    const option = createElement("option", { text: group.name })
+    const targetCount = fleetIntentGroupZoneIds(group, state.inventory).length
+    option.value = group.id
+    option.textContent = `${group.name} | ${targetCount} zone${targetCount === 1 ? "" : "s"}`
+    return option
+  }))
+  elements.intentPolicyGroup.value = policy?.groupId || FLEET_INTENT_ALL_ZONES_GROUP_ID
+  elements.intentPolicyValue.replaceChildren(...variants.map((variant) => {
+    const option = createElement("option", {
+      text: variant.count > 0
+        ? `${variant.count} zone${variant.count === 1 ? "" : "s"} | ${variant.sourceZoneName} | ${variant.display}`
+        : `Saved value, not observed | ${variant.display}`,
+    })
+    option.value = variant.optionValue
+    return option
+  }))
+  const selected = policy
+    ? variants.find((variant) => variant.canonical === policy.expected.canonical)
+    : variants[0]
+  elements.intentPolicyValue.value = selected?.optionValue || variants[0].optionValue
+  elements.intentPolicyError.hidden = true
+  elements.intentPolicyError.textContent = ""
+  renderIntentPolicyPreview()
+  showDialog(elements.intentPolicyDialog, {
+    initialFocus: elements.intentPolicyGroup,
+  })
+}
+
+async function saveIntentPolicy(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const draft = state.intentPolicyDraft
+  const variant = selectedIntentPolicyVariant()
+  const group = intentGroupById(elements.intentPolicyGroup.value)
+  if (draft && draft.baseRevision !== state.intent.revision) {
+    elements.intentPolicyError.textContent = "Fleet intent changed while this editor was open. Close and reopen it to review the latest policy."
+    elements.intentPolicyError.hidden = false
+    return
+  }
+  if (!draft || !variant || !group) {
+    elements.intentPolicyError.textContent = "Choose an expected group and value"
+    elements.intentPolicyError.hidden = false
+    return
+  }
+  const policy = {
+    expected: {
+      canonical: variant.canonical,
+      display: variant.display,
+      resolutionCanonical: variant.resolutionCanonical,
+      sourceZoneId: variant.sourceZoneId,
+      sourceZoneName: variant.sourceZoneName,
+      value: structuredClone(variant.value),
+    },
+    facet: {
+      category: draft.row.category,
+      description: draft.row.description || "",
+      key: draft.row.key,
+      label: draft.row.label,
+    },
+    groupId: group.id,
+    id: draft.policy?.id || intentId("policy"),
+  }
+  let document
+  try {
+    document = replaceFleetIntentPolicy(state.intent, policy)
+  } catch (error) {
+    elements.intentPolicyError.textContent = error instanceof Error ? error.message : String(error)
+    elements.intentPolicyError.hidden = false
+    return
+  }
+  const saved = await persistIntentDocument(
+    document,
+    `${draft.row.label} intent saved for ${group.name}`,
+  )
+  if (saved) elements.intentPolicyDialog.close()
+}
+
+function renderIntentGroupMembers(selectedZoneIds) {
+  const fragment = document.createDocumentFragment()
+  for (const zone of state.inventory?.zones || []) {
+    const label = createElement("label", { className: "target-option" })
+    const checkbox = document.createElement("input")
+    checkbox.type = "checkbox"
+    checkbox.checked = selectedZoneIds.has(zone.meta.id)
+    checkbox.dataset.zoneId = zone.meta.id
+    const copy = createElement("span")
+    copy.append(createElement("strong", { text: zone.meta.name }))
+    label.append(checkbox, copy)
+    fragment.append(label)
+  }
+  elements.intentGroupMembers.replaceChildren(fragment)
+  updateIntentGroupSelectionSummary()
+}
+
+function updateIntentGroupSelectionSummary() {
+  const count = elements.intentGroupMembers.querySelectorAll("input:checked").length
+  elements.intentGroupSelectionSummary.textContent = count === 0
+    ? "No zones selected"
+    : `${count} zone${count === 1 ? "" : "s"} selected`
+}
+
+function openIntentGroupEditor(group = null) {
+  if (!intentWritable()) {
+    toast("Fleet intent editing is unavailable in this session", "error")
+    return
+  }
+  state.intentGroupDraft = {
+    baseRevision: state.intent.revision,
+    group,
+  }
+  elements.intentGroupTitle.textContent = group ? "Edit zone group" : "New zone group"
+  elements.intentGroupName.value = group?.name || ""
+  elements.intentGroupError.hidden = true
+  elements.intentGroupError.textContent = ""
+  renderIntentGroupMembers(new Set(
+    group?.members.map((member) => member.zoneId) || [],
+  ))
+  showDialog(elements.intentGroupDialog, {
+    initialFocus: elements.intentGroupName,
+  })
+  elements.intentGroupName.select()
+}
+
+async function saveIntentGroup(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const name = elements.intentGroupName.value.trim()
+  const zoneIds = [...elements.intentGroupMembers.querySelectorAll("input:checked")]
+    .map((checkbox) => checkbox.dataset.zoneId)
+  if (state.intentGroupDraft?.baseRevision !== state.intent.revision) {
+    showFieldError(
+      elements.intentGroupName,
+      elements.intentGroupError,
+      new Error("Fleet intent changed while this editor was open. Close and reopen it to review the latest groups."),
+    )
+    return
+  }
+  if (!name) {
+    showFieldError(
+      elements.intentGroupName,
+      elements.intentGroupError,
+      new Error("Enter a group name"),
+    )
+    return
+  }
+  if (zoneIds.length === 0) {
+    elements.intentGroupError.textContent = "Select at least one zone"
+    elements.intentGroupError.hidden = false
+    return
+  }
+  const group = {
+    id: state.intentGroupDraft?.group?.id || intentId("group"),
+    members: zoneIds.map((zoneId) => {
+      const zone = zoneById(zoneId)
+      return {
+        zoneId,
+        zoneName: zone.meta.name,
+      }
+    }),
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name,
+  }
+  let document
+  try {
+    document = replaceFleetIntentGroup(state.intent, group)
+  } catch (error) {
+    showFieldError(elements.intentGroupName, elements.intentGroupError, error)
+    return
+  }
+  const saved = await persistIntentDocument(document, `${group.name} group saved`)
+  if (saved) elements.intentGroupDialog.close()
+}
+
+function observedIntentValue(row, zone) {
+  const cell = row.cells.get(zone.meta.name)
+  return cell ? structuredClone(cell.inspectionValue) : null
+}
+
+function openIntentAcknowledgement(action) {
+  if (!intentWritable()) return
+  const policy = action.intentCell.policy
+  const existing = state.intent.acknowledgements.find(
+    (acknowledgement) => acknowledgement.policyId === policy.id
+      && acknowledgement.zoneId === action.zone.meta.id,
+  ) || null
+  state.intentAcknowledgementDraft = {
+    ...action,
+    baseRevision: state.intent.revision,
+    existing,
+    policy,
+  }
+  elements.intentAcknowledgementTarget.textContent = `${action.zone.meta.name} | ${action.row.category} | ${action.row.label}. Only the exact state shown below will be accepted.`
+  elements.intentAcknowledgementPreview.replaceChildren(
+    action.intentCell.observedCanonical === FLEET_INTENT_MISSING_CANONICAL
+      ? createElement("strong", { text: "Missing" })
+      : structuredValueElement(observedIntentValue(action.row, action.zone)),
+  )
+  elements.intentAcknowledgementReason.value = existing?.reason || ""
+  elements.intentAcknowledgementError.hidden = true
+  elements.intentAcknowledgementError.textContent = ""
+  showDialog(elements.intentAcknowledgementDialog, {
+    initialFocus: elements.intentAcknowledgementReason,
+  })
+}
+
+async function saveIntentAcknowledgement(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const draft = state.intentAcknowledgementDraft
+  const reason = elements.intentAcknowledgementReason.value.trim()
+  if (draft && draft.baseRevision !== state.intent.revision) {
+    showFieldError(
+      elements.intentAcknowledgementReason,
+      elements.intentAcknowledgementError,
+      new Error("Fleet intent changed while this editor was open. Close and reopen it to review the latest acknowledgement."),
+    )
+    return
+  }
+  if (!draft || !reason) {
+    showFieldError(
+      elements.intentAcknowledgementReason,
+      elements.intentAcknowledgementError,
+      new Error("Explain why this exact state is intentional"),
+    )
+    return
+  }
+  const now = new Date().toISOString()
+  const acknowledgement = {
+    createdAt: draft.existing?.createdAt || now,
+    id: draft.existing?.id || intentId("ack"),
+    observedCanonical: draft.intentCell.observedCanonical,
+    policyId: draft.policy.id,
+    reason,
+    updatedAt: now,
+    zoneId: draft.zone.meta.id,
+    zoneName: draft.zone.meta.name,
+  }
+  let document
+  try {
+    document = replaceFleetIntentAcknowledgement(state.intent, acknowledgement)
+  } catch (error) {
+    showFieldError(
+      elements.intentAcknowledgementReason,
+      elements.intentAcknowledgementError,
+      error,
+    )
+    return
+  }
+  const saved = await persistIntentDocument(
+    document,
+    `${draft.row.label} acknowledged on ${draft.zone.meta.name}`,
+  )
+  if (saved) elements.intentAcknowledgementDialog.close()
+}
+
+function requestIntentRemoval(options) {
+  if (!intentWritable()) return
+  state.intentDeleteDraft = {
+    ...options,
+    baseRevision: state.intent.revision,
+  }
+  elements.intentDeleteTitle.textContent = options.title
+  elements.intentDeleteSummary.textContent = options.summary
+  showDialog(elements.intentDeleteDialog, {
+    initialFocus: elements.intentDeleteDialog.querySelector("[data-dialog-close]"),
+  })
+}
+
+async function applyIntentRemoval(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const draft = state.intentDeleteDraft
+  if (!draft) return
+  if (draft.baseRevision !== state.intent.revision) {
+    elements.intentDeleteDialog.close()
+    toast("Fleet intent changed while this confirmation was open. Review the latest state and try again.", "error")
+    return
+  }
+  let document
+  try {
+    document = draft.remove(state.intent)
+  } catch (error) {
+    elements.intentDeleteDialog.close()
+    toast(error instanceof Error ? error.message : String(error), "error")
+    return
+  }
+  const saved = await persistIntentDocument(document, draft.successMessage)
+  if (saved) elements.intentDeleteDialog.close()
+}
+
+function showIntentPolicyInMatrix(policy) {
+  const row = intentPolicyRow(policy)
+  if (!row) {
+    toast("This intent facet is not present in the loaded matrix", "error")
+    return
+  }
+  elements.intentDialog.close()
+  elements.search.value = ""
+  elements.category.value = row.category
+  elements.scope.value = MATRIX_SCOPE.ALL
+  elements.dnsType.value = ""
+  elements.redirectType.value = ""
+  elements.differenceToggle.setAttribute("aria-pressed", "false")
+  elements.targetHoles.setAttribute("aria-pressed", "false")
+  elements.targetHoles.textContent = "Target holes"
+  syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
+  filterRows()
+  const tableRow = [...elements.matrixBody.querySelectorAll("tr")].find(
+    (candidate) => candidate.dataset.category === row.category
+      && candidate.dataset.facetKey === row.key,
+  )
+  tableRow?.scrollIntoView({
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    block: "center",
+  })
+  const focusTarget = tableRow?.querySelector(".intent-set-policy, .cell-action")
+  if (focusTarget && !focusTarget.disabled) focusMatrixAction(focusTarget)
+}
+
+function intentStatusBadge(text, status) {
+  return createElement("span", {
+    className: `intent-status-badge ${status}`,
+    text,
+  })
+}
+
+function intentItemActions() {
+  return createElement("div", { className: "intent-item-actions" })
+}
+
+function intentActionButton(label, action, options = {}) {
+  const button = createElement("button", {
+    className: `button ${options.danger ? "button-danger" : "button-quiet"}`,
+    text: label,
+  })
+  button.type = "button"
+  button.disabled = Boolean(options.write && !intentWritable())
+  if (options.write) button.dataset.intentWrite = ""
+  if (options.title) button.title = options.title
+  button.addEventListener("click", action)
+  return button
+}
+
+function renderIntentGroups() {
+  const fragment = document.createDocumentFragment()
+  const loadedZoneIds = state.inventory
+    ? new Set(state.inventory.zones.map((zone) => zone.meta.id))
+    : null
+  for (const group of state.intent.groups) {
+    const zoneIds = state.inventory
+      ? fleetIntentGroupZoneIds(group, state.inventory)
+      : group.members.map((member) => member.zoneId)
+    const unavailableMembers = group.mode === FLEET_INTENT_GROUP_MODE.MEMBERS
+      && loadedZoneIds
+      ? group.members.filter((member) => !loadedZoneIds.has(member.zoneId))
+      : []
+    const unavailableZoneIds = new Set(
+      unavailableMembers.map((member) => member.zoneId),
+    )
+    const item = createElement("article", {
+      className: `intent-item${unavailableMembers.length > 0 ? " unresolved" : ""}`,
+    })
+    const heading = createElement("div", { className: "intent-item-heading" })
+    heading.append(
+      createElement("h4", { text: group.name }),
+      intentStatusBadge(
+        group.mode === FLEET_INTENT_GROUP_MODE.ALL
+          ? "Dynamic"
+          : unavailableMembers.length > 0
+            ? `${unavailableMembers.length} unavailable`
+            : "Named",
+        unavailableMembers.length > 0 ? "unresolved" : "active",
+      ),
+    )
+    const summary = createElement("p", {
+      className: "intent-item-summary",
+      text: `${zoneIds.length} zone${zoneIds.length === 1 ? "" : "s"}${group.mode === FLEET_INTENT_GROUP_MODE.ALL ? " from the loaded inventory" : " with stable membership"}`,
+    })
+    item.append(heading, summary)
+    if (group.mode === FLEET_INTENT_GROUP_MODE.MEMBERS) {
+      item.append(createElement("div", {
+        className: "intent-item-value",
+        text: group.members.map((member) => unavailableZoneIds.has(member.zoneId)
+          ? `${member.zoneName} (unavailable)`
+          : member.zoneName).join(", "),
+      }))
+      const actions = intentItemActions()
+      const inUse = state.intent.policies.some((policy) => policy.groupId === group.id)
+      actions.append(
+        intentActionButton("Edit", () => openIntentGroupEditor(group), { write: true }),
+        intentActionButton("Remove", () => requestIntentRemoval({
+          remove: (document) => removeFleetIntentGroup(document, group.id),
+          successMessage: `${group.name} group removed`,
+          summary: `Remove ${group.name}? Its saved membership will be discarded.`,
+          title: "Remove zone group",
+        }), {
+          danger: true,
+          title: inUse ? "Remove or retarget policies that use this group first" : "",
+          write: true,
+        }),
+      )
+      actions.lastElementChild.dataset.intentBlocked = String(inUse)
+      actions.lastElementChild.disabled = inUse || !intentWritable()
+      item.append(actions)
+    }
+    fragment.append(item)
+  }
+  elements.intentGroupList.replaceChildren(fragment)
+}
+
+function renderIntentPolicies() {
+  const fragment = document.createDocumentFragment()
+  for (const policy of state.intent.policies) {
+    const policyState = intentPolicyState(policy.id)
+    const row = intentPolicyRow(policy)
+    const rowState = row ? intentRowState(row) : null
+    const conflicted = rowState
+      ? [...rowState.cells.values()].some(
+          (cell) => cell.status === FLEET_INTENT_CELL_STATUS.CONFLICT
+            && cell.policies.some((entry) => entry.id === policy.id),
+        )
+      : false
+    const actionableCount = policyState?.actionableCount || 0
+    const status = !row || policyState?.unresolved
+      ? "unresolved"
+      : conflicted || actionableCount > 0
+        ? "actionable"
+        : "aligned"
+    const statusLabel = status === "unresolved"
+      ? "Unresolved"
+      : status === "actionable"
+        ? conflicted ? "Conflict" : `${actionableCount} actionable`
+        : "Aligned"
+    const group = intentGroupById(policy.groupId)
+    const item = createElement("article", { className: `intent-item ${status}` })
+    const heading = createElement("div", { className: "intent-item-heading" })
+    heading.append(
+      createElement("h4", { text: policy.facet.label }),
+      intentStatusBadge(statusLabel, status),
+    )
+    item.append(
+      heading,
+      createElement("p", {
+        className: "intent-item-summary",
+        text: `${policy.facet.category} | ${group?.name || "Missing group"} | source ${policy.expected.sourceZoneName}`,
+      }),
+    )
+    const value = createElement("div", { className: "intent-item-value" })
+    value.append(structuredValueElement(policy.expected.value))
+    item.append(value)
+    const actions = intentItemActions()
+    actions.append(
+      intentActionButton("Show", () => showIntentPolicyInMatrix(policy)),
+    )
+    if (row) {
+      actions.append(
+        intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), { write: true }),
+        intentActionButton("Add coverage", () => openIntentPolicyEditor(row), {
+          title: "Add another zone group and expected value for this facet",
+          write: true,
+        }),
+      )
+    }
+    actions.append(
+      intentActionButton("Remove", () => requestIntentRemoval({
+        remove: (document) => removeFleetIntentPolicy(document, policy.id),
+        successMessage: `${policy.facet.label} intent removed`,
+        summary: `Remove intent for ${policy.facet.label}? Its acknowledgements will also be removed.`,
+        title: "Remove facet intent",
+      }), { danger: true, write: true }),
+    )
+    item.append(actions)
+    fragment.append(item)
+  }
+  if (fragment.childNodes.length === 0) {
+    fragment.append(createElement("p", {
+      className: "intent-empty",
+      text: "No facet policies yet. Use Set intent on a matrix row to define one.",
+    }))
+  }
+  elements.intentPolicyList.replaceChildren(fragment)
+}
+
+function renderIntentAcknowledgements() {
+  const fragment = document.createDocumentFragment()
+  for (const entry of state.intentEvaluation?.acknowledgementStates || []) {
+    const acknowledgement = entry.acknowledgement
+    const policy = intentPolicyById(acknowledgement.policyId)
+    const status = entry.status === FLEET_INTENT_ACKNOWLEDGEMENT_STATUS.ACTIVE
+      ? "active"
+      : "stale"
+    const item = createElement("article", { className: `intent-item ${status}` })
+    const heading = createElement("div", { className: "intent-item-heading" })
+    heading.append(
+      createElement("h4", {
+        text: `${acknowledgement.zoneName} | ${policy?.facet.label || "Unknown facet"}`,
+      }),
+      intentStatusBadge(status === "active" ? "Active" : "Stale", status),
+    )
+    item.append(
+      heading,
+      createElement("p", {
+        className: "intent-item-summary",
+        text: status === "active"
+          ? acknowledgement.reason
+          : `${entry.reason}. Saved reason: ${acknowledgement.reason}`,
+      }),
+    )
+    const actions = intentItemActions()
+    if (policy) actions.append(intentActionButton("Show", () => showIntentPolicyInMatrix(policy)))
+    actions.append(intentActionButton("Remove", () => requestIntentRemoval({
+      remove: (document) => removeFleetIntentAcknowledgement(document, acknowledgement.id),
+      successMessage: `Acknowledgement removed for ${acknowledgement.zoneName}`,
+      summary: `Remove this acknowledgement for ${acknowledgement.zoneName}? The observed difference will return to actionable drift when its policy still applies.`,
+      title: "Remove acknowledgement",
+    }), { danger: true, write: true }))
+    item.append(actions)
+    fragment.append(item)
+  }
+  if (fragment.childNodes.length === 0) {
+    fragment.append(createElement("p", {
+      className: "intent-empty",
+      text: "No intentional differences have been acknowledged.",
+    }))
+  }
+  elements.intentAcknowledgementList.replaceChildren(fragment)
+}
+
+function renderIntentManager() {
+  const summary = state.intentEvaluation?.summary || {
+    acknowledgedCells: 0,
+    actionableCells: 0,
+    governedRows: 0,
+    staleAcknowledgements: 0,
+  }
+  const modeDetail = readOnly
+    ? "This read-only session can inspect intent but cannot change it."
+    : api.usesBroker
+      ? "Intent is persisted locally and shared by normal dashboard windows."
+      : "This debug session can inspect injected intent but cannot persist changes."
+  elements.intentSummary.textContent = modeDetail
+  elements.intentMetrics.replaceChildren(
+    createElement("span", {
+      className: "intent-metric",
+      text: `${summary.governedRows} governed`,
+    }),
+    createElement("span", {
+      className: `intent-metric${summary.actionableCells > 0 ? " actionable" : ""}`,
+      text: `${summary.actionableCells} actionable`,
+    }),
+    createElement("span", {
+      className: "intent-metric",
+      text: `${summary.acknowledgedCells} acknowledged`,
+    }),
+    createElement("span", {
+      className: `intent-metric${summary.staleAcknowledgements > 0 ? " actionable" : ""}`,
+      text: `${summary.staleAcknowledgements} stale`,
+    }),
+  )
+  elements.intentAddGroup.disabled = !intentWritable()
+  renderIntentGroups()
+  renderIntentPolicies()
+  renderIntentAcknowledgements()
+}
+
+function openIntentManager() {
+  renderIntentManager()
+  showDialog(elements.intentDialog, {
+    initialFocus: elements.intentDialog.querySelector("[data-dialog-close]"),
+  })
+  syncFleetIntent({ silent: true })
+}
+
+function activateIntentCellAction(button) {
+  const action = intentCellActionByButton.get(button)
+  if (!action) return
+  if (action.type === "acknowledge") {
+    openIntentAcknowledgement(action)
+    return
+  }
+  if (action.type === "remove-acknowledgement") {
+    requestIntentRemoval({
+      remove: (document) => removeFleetIntentAcknowledgement(
+        document,
+        action.acknowledgement.id,
+      ),
+      successMessage: `Acknowledgement removed for ${action.zone.meta.name}`,
+      summary: `Remove the acknowledgement for ${action.row.label} on ${action.zone.meta.name}? This exact difference will return to actionable drift.`,
+      title: "Remove acknowledgement",
+    })
+  }
+}
+
+function activateIntentPolicyRow(button) {
+  const action = intentPolicyRowByButton.get(button)
+  if (!action) return
+  if (action.showManager) {
+    openIntentManager()
+    return
+  }
+  openIntentPolicyEditor(action.row, action.policy)
+}
+
 function zoneHeading(zone) {
   const th = createElement("th", { className: "zone-heading" })
   th.scope = "col"
@@ -2385,6 +3311,104 @@ function cellComparisonStatus(row, cell) {
   }
 }
 
+function cellIntentState(row, zone) {
+  return row.intentState?.cells.get(zone.meta.id) || null
+}
+
+function cellIntentStatus(state) {
+  if (!state
+    || state.status === FLEET_INTENT_CELL_STATUS.UNGOVERNED
+    || state.status === FLEET_INTENT_CELL_STATUS.OUT_OF_SCOPE) return null
+  const definitions = {
+    [FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED]: {
+      label: "Acknowledged",
+      title: "This exact observed state is acknowledged intentionally",
+    },
+    [FLEET_INTENT_CELL_STATUS.CONFLICT]: {
+      label: "Intent conflict",
+      title: "Multiple policies target this facet and zone",
+    },
+    [FLEET_INTENT_CELL_STATUS.MATCH]: {
+      label: "Intent match",
+      title: "Matches the expected value for this policy",
+    },
+    [FLEET_INTENT_CELL_STATUS.MISSING]: {
+      label: "Intent drift",
+      title: "This policy expects a value in this missing cell",
+    },
+    [FLEET_INTENT_CELL_STATUS.VARIANT]: {
+      label: "Intent drift",
+      title: "The observed value differs from fleet intent",
+    },
+  }
+  const definition = definitions[state.status]
+  if (!definition) return null
+  const element = createElement("span", {
+    className: `cell-intent-status ${state.status}`,
+    text: definition.label,
+  })
+  element.title = definition.title
+  element.setAttribute("aria-label", definition.title)
+  return element
+}
+
+function applyIntentCellPresentation(td, row, zone) {
+  const intentCell = cellIntentState(row, zone)
+  if (intentCell) td.dataset.intentStatus = intentCell.status
+  const status = cellIntentStatus(intentCell)
+  if (status) td.append(status)
+  const drift = intentCell?.status === FLEET_INTENT_CELL_STATUS.CONFLICT
+    || intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
+    || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT
+  td.classList.toggle("intent-drift", drift)
+  td.classList.toggle(
+    "intent-acknowledged",
+    intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED,
+  )
+  return intentCell
+}
+
+function appendIntentCellAction(actions, row, zone, intentCell) {
+  if (!intentMutationSupported()) return
+  if (intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
+    || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT) {
+    const button = createElement("button", {
+      className: "cell-action acknowledge-intent",
+      text: "Acknowledge",
+    })
+    button.type = "button"
+    button.setAttribute("aria-label", `Acknowledge ${row.label} on ${zone.meta.name}`)
+    button.title = "Accept only this exact observed state as intentional"
+    button.disabled = !intentWritable()
+    intentCellActionByButton.set(button, {
+      intentCell,
+      row,
+      type: "acknowledge",
+      zone,
+    })
+    actions.append(button)
+    return
+  }
+  if (intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED) {
+    const button = createElement("button", {
+      className: "cell-action remove-acknowledgement",
+      text: "Unacknowledge",
+    })
+    button.type = "button"
+    button.setAttribute("aria-label", `Remove acknowledgement for ${row.label} on ${zone.meta.name}`)
+    button.title = "Return this exact difference to actionable drift"
+    button.disabled = !intentWritable()
+    intentCellActionByButton.set(button, {
+      acknowledgement: intentCell.acknowledgement,
+      intentCell,
+      row,
+      type: "remove-acknowledgement",
+      zone,
+    })
+    actions.append(button)
+  }
+}
+
 function matrixCell(row, zone) {
   const cell = row.cells.get(zone.meta.name)
   const td = createElement("td", { className: "matrix-cell" })
@@ -2393,6 +3417,7 @@ function matrixCell(row, zone) {
 
   if (!cell) {
     td.classList.add("missing")
+    const intentCell = applyIntentCellPresentation(td, row, zone)
     td.append(createElement("span", { className: "cell-state", text: "Missing" }))
     const resolution = row.missingResolutions.get(zone.meta.name)
     if (resolution?.available && !readOnly) {
@@ -2401,6 +3426,7 @@ function matrixCell(row, zone) {
         key: row.key,
         label: row.label,
         resolution,
+        intentExpectedCanonical: intentCell?.policy?.expected.resolutionCanonical || null,
       }
       const label = `Fill ${row.label} on ${zone.meta.name}`
       td.classList.add("actionable-cell", "fillable-hole")
@@ -2423,6 +3449,9 @@ function matrixCell(row, zone) {
         `Missing ${row.label} on ${zone.meta.name}. ${resolution.reason}`,
       )
     }
+    const intentActions = createElement("div", { className: "cell-actions intent-cell-actions" })
+    appendIntentCellAction(intentActions, row, zone, intentCell)
+    if (intentActions.children.length > 0) td.append(intentActions)
     return td
   }
 
@@ -2434,6 +3463,7 @@ function matrixCell(row, zone) {
   const comparisonStatus = cellComparisonStatus(row, cell)
   td.dataset.comparison = comparisonStatus.className
   td.append(comparisonStatus.element)
+  const intentCell = applyIntentCellPresentation(td, row, zone)
   const directlyEditable = Boolean(cell.action && !readOnly)
   const structuredValue = cell.inspectionValue !== null
     && typeof cell.inspectionValue === "object"
@@ -2486,7 +3516,11 @@ function matrixCell(row, zone) {
 
   const hasWriteSecondaryAction = Boolean(cell.secondaryAction && !readOnly)
   const hasWorkspaceAction = Boolean(cell.workspaceAction || cell.parentAction)
-  if (directlyEditable || hasWriteSecondaryAction || hasWorkspaceAction) {
+  const hasIntentAction = intentMutationSupported()
+    && (intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
+      || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT
+      || intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED)
+  if (directlyEditable || hasWriteSecondaryAction || hasWorkspaceAction || hasIntentAction) {
     const actions = createElement("div", { className: "cell-actions" })
     if (cell.workspaceAction) {
       const openButton = createElement("button", {
@@ -2540,6 +3574,7 @@ function matrixCell(row, zone) {
       button.disabled = state.busy
       actions.append(button)
     }
+    appendIntentCellAction(actions, row, zone, intentCell)
     td.append(actions)
   }
 
@@ -2578,6 +3613,7 @@ function renderMatrix() {
   const fragment = document.createDocumentFragment()
   for (const row of state.matrix.rows) {
     const tr = document.createElement("tr")
+    tr.dataset.actionable = String(row.actionable)
     tr.dataset.category = row.category
     tr.dataset.different = String(row.different)
     tr.dataset.facetKey = row.key
@@ -2616,6 +3652,37 @@ function renderMatrix() {
     const secondaryActionTypes = new Set(
       [...row.cells.values()].map((cell) => cell.secondaryAction?.type).filter(Boolean),
     )
+    if (!readOnly && api.usesBroker) {
+      const policies = row.intentState?.policies || []
+      const policyGroup = policies.length === 1
+        ? intentGroupById(policies[0].groupId)
+        : null
+      const intentButton = createElement("button", {
+        className: "cell-action intent-set-policy",
+        text: policies.length === 0
+          ? "Set intent"
+          : policies.length === 1
+            ? `Intent: ${policyGroup?.name || "Configured"}`
+            : `Intent (${policies.length})`,
+      })
+      intentButton.type = "button"
+      intentButton.disabled = !intentWritable()
+      intentButton.setAttribute(
+        "aria-label",
+        policies.length > 1
+          ? `Manage ${policies.length} intent policies for ${row.label}`
+          : `${policies.length === 1 ? "Edit" : "Set"} intent for ${row.label}`,
+      )
+      intentButton.title = policies.length > 1
+        ? "Review overlapping policies in Fleet intent"
+        : "Choose expected coverage and one observed fleet value"
+      intentPolicyRowByButton.set(intentButton, {
+        policy: policies.length === 1 ? policies[0] : null,
+        row,
+        showManager: policies.length > 1,
+      })
+      facetActions.append(intentButton)
+    }
     if (actionTypes.has("zone-setting")) {
       facetActions.append(createElement("small", { className: "capability-badge", text: "Edit settings" }))
     }
@@ -2710,6 +3777,7 @@ function filterRows() {
 
   for (const row of rows) {
     const show = matrixRowMatchesFilters({
+      actionable: row.dataset.actionable === "true",
       category: row.dataset.category,
       different: row.dataset.different === "true",
       missingZoneIds: row.dataset.missingZoneIds.split(" ").filter(Boolean),
@@ -2843,6 +3911,12 @@ function updateActionButtons() {
   for (const button of document.querySelectorAll(".rename-rule")) {
     button.disabled = writeLocked
     button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
+  }
+  const intentLocked = !intentWritable()
+  for (const button of document.querySelectorAll(
+    ".intent-set-policy, .acknowledge-intent, .remove-acknowledgement, #intent-add-group, [data-intent-write]",
+  )) {
+    button.disabled = intentLocked || button.dataset.intentBlocked === "true"
   }
   syncMatrixActionTabStop()
 }
@@ -3472,6 +4546,13 @@ function openHoleResolution(cell) {
   }
   if (action.resolution.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY) {
     fillHole(action)
+    return
+  }
+  const intended = action.resolution.candidates.find(
+    (candidate) => candidate.canonical === action.intentExpectedCanonical,
+  )
+  if (intended) {
+    fillHole(action, intended)
     return
   }
   const recommended = action.resolution.candidates.find(
@@ -5092,13 +6173,37 @@ async function reviewEditorChange(event) {
 }
 
 function renderInventory(inventory, source) {
-  const nextMatrix = buildMatrix(inventory)
-  const nextMatrixRenderKey = matrixRenderKey(inventory, nextMatrix)
+  const observedMatrix = buildMatrix(inventory)
+  const evaluation = evaluateFleetIntent(
+    state.intent,
+    inventory,
+    observedMatrix,
+  )
+  const nextMatrix = {
+    ...observedMatrix,
+    rows: observedMatrix.rows.map((row) => {
+      const rowState = evaluation.rowStates.get(
+        fleetIntentFacetId(row.category, row.key),
+      )
+      return {
+        ...row,
+        actionable: rowState.actionable,
+        intentState: rowState,
+      }
+    }),
+    summary: {
+      ...observedMatrix.summary,
+      differences: evaluation.summary.actionableRows,
+      rawDifferences: observedMatrix.summary.differences,
+    },
+  }
+  const nextMatrixRenderKey = `${matrixRenderKey(inventory, observedMatrix)}\u0000${state.intent.revision}`
   const matrixChanged = nextMatrixRenderKey !== state.matrixRenderKey
   state.inventory = inventory
   state.inventorySource = source
   state.matrix = nextMatrix
   state.matrixRenderKey = nextMatrixRenderKey
+  state.intentEvaluation = evaluation
 
   const liveZoneIds = new Set(inventory.zones.map((zone) => zone.meta.id))
   state.selectedZoneIds = new Set([...state.selectedZoneIds].filter((zoneId) => liveZoneIds.has(zoneId)))
@@ -5110,6 +6215,7 @@ function renderInventory(inventory, source) {
     renderMatrixFilters()
     renderMatrix()
   }
+  if (elements.intentDialog.open) renderIntentManager()
   renderCoverage()
   updateSelectionStyles()
   return matrixChanged
@@ -5188,6 +6294,7 @@ async function refreshInventory(options = {}) {
 }
 
 async function initialize() {
+  await syncFleetIntent({ silent: true })
   if (cachedRecord) {
     state.startupCacheLoadedAt = cachedRecord.loadedAt
     renderInventory(cachedRecord.inventory, INVENTORY_SOURCE.CACHE)
@@ -5242,6 +6349,18 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
+  const intentCellButton = event.target.closest(
+    ".acknowledge-intent, .remove-acknowledgement",
+  )
+  if (intentCellButton) {
+    activateIntentCellAction(intentCellButton)
+    return
+  }
+  const intentPolicyButton = event.target.closest(".intent-set-policy")
+  if (intentPolicyButton) {
+    activateIntentPolicyRow(intentPolicyButton)
+    return
+  }
   const rulesetButton = event.target.closest(".open-ruleset")
   if (rulesetButton) {
     const action = workspaceActionByButton.get(rulesetButton)
@@ -5414,7 +6533,58 @@ elements.renameValue.addEventListener("input", () => {
   clearFieldError(elements.renameValue, elements.renameError)
 })
 elements.renameForm.addEventListener("submit", reviewRuleRename)
+elements.manageIntent.addEventListener("click", openIntentManager)
+elements.intentAddGroup.addEventListener("click", () => openIntentGroupEditor())
+elements.intentGroupMembers.addEventListener("change", updateIntentGroupSelectionSummary)
+elements.intentGroupSelectAll.addEventListener("click", () => {
+  for (const checkbox of elements.intentGroupMembers.querySelectorAll("input")) {
+    checkbox.checked = true
+  }
+  updateIntentGroupSelectionSummary()
+})
+elements.intentGroupClear.addEventListener("click", () => {
+  for (const checkbox of elements.intentGroupMembers.querySelectorAll("input")) {
+    checkbox.checked = false
+  }
+  updateIntentGroupSelectionSummary()
+})
+elements.intentGroupName.addEventListener("input", () => {
+  clearFieldError(elements.intentGroupName, elements.intentGroupError)
+})
+elements.intentGroupForm.addEventListener("submit", saveIntentGroup)
+elements.intentGroupDialog.addEventListener("close", () => {
+  state.intentGroupDraft = null
+})
+elements.intentPolicyValue.addEventListener("change", renderIntentPolicyPreview)
+elements.intentPolicyForm.addEventListener("submit", saveIntentPolicy)
+elements.intentPolicyDialog.addEventListener("close", () => {
+  state.intentPolicyDraft = null
+})
+elements.intentAcknowledgementReason.addEventListener("input", () => {
+  clearFieldError(
+    elements.intentAcknowledgementReason,
+    elements.intentAcknowledgementError,
+  )
+})
+elements.intentAcknowledgementForm.addEventListener(
+  "submit",
+  saveIntentAcknowledgement,
+)
+elements.intentAcknowledgementDialog.addEventListener("close", () => {
+  state.intentAcknowledgementDraft = null
+})
+elements.intentDeleteForm.addEventListener("submit", applyIntentRemoval)
+elements.intentDeleteDialog.addEventListener("close", () => {
+  state.intentDeleteDraft = null
+})
 elements.emailPolicyExceptions.addEventListener("click", openPolicyExceptionDialog)
+window.addEventListener("focus", () => syncFleetIntent({ silent: true }))
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") syncFleetIntent({ silent: true })
+})
+setInterval(() => {
+  if (document.visibilityState === "visible") syncFleetIntent({ silent: true })
+}, INTENT_SYNC_INTERVAL_MS)
 document.addEventListener("click", followSkipLink)
 document.addEventListener("keydown", handleGlobalShortcut)
 

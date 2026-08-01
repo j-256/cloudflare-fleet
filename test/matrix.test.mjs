@@ -149,6 +149,38 @@ test("matrix distinguishes direct setting edits from unavailable direct edits", 
   })
 })
 
+test("matrix intent compares setting values independently of edit capability", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      settings: [
+        {
+          editable: true,
+          id: "polish",
+          value: "on",
+        },
+      ],
+    }),
+    makeZone("beta.example", {
+      settings: [
+        {
+          editable: false,
+          id: "polish",
+          value: "on",
+        },
+      ],
+    }),
+  ])
+
+  const row = buildMatrix(inventory).rows.find(
+    (entry) => entry.category === "Zone settings" && entry.label === "polish",
+  )
+  const editableCell = row.cells.get("alpha.example")
+  const unavailableCell = row.cells.get("beta.example")
+
+  assert.notEqual(editableCell.canonical, unavailableCell.canonical)
+  assert.equal(editableCell.intentCanonical, unavailableCell.intentCanonical)
+})
+
 test("matrix leads with rule names and separates direct edits from copying", () => {
   const ruleset = {
     id: "redirect-entrypoint",

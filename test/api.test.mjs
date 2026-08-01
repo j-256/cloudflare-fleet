@@ -5,6 +5,7 @@ import {
   BROKER_SESSION_HEADER,
   CloudflareApi,
   CloudflareApiError,
+  FleetIntentApiConflictError,
   serializeApiError,
 } from "../src/api.mjs"
 
@@ -119,6 +120,80 @@ test("broker monitor reports connection and terminal disconnection", async () =>
   await disconnectedPromise
   stop()
   assert.deepEqual(events, ["connected", "disconnected"])
+})
+
+test("broker transport loads and persists fleet intent", async () => {
+  const calls = []
+  const document = {
+    accountId: "account-id",
+    acknowledgements: [],
+    groups: [],
+    policies: [],
+    revision: "revision-one",
+    schemaVersion: 1,
+    updatedAt: null,
+  }
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async (url, request) => {
+      calls.push({ request, url: new URL(url) })
+      return jsonResponse({
+        result: document,
+        success: true,
+      })
+    },
+  })
+
+  assert.deepEqual(await api.loadFleetIntent(), document)
+  assert.deepEqual(await api.persistFleetIntent(document), document)
+  assert.equal(calls[0].url.pathname, "/session/test/api/intent")
+  assert.equal(calls[0].request.headers[BROKER_SESSION_HEADER], "session-secret")
+  assert.equal(calls[1].request.method, "PUT")
+  assert.deepEqual(JSON.parse(calls[1].request.body), {
+    document,
+    expectedRevision: "revision-one",
+  })
+})
+
+test("fleet intent persistence exposes revision conflicts", async () => {
+  const latest = { revision: "latest" }
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async () => jsonResponse({
+      errors: [{ message: "Fleet intent changed in another dashboard window" }],
+      result: latest,
+      success: false,
+    }, 409),
+  })
+
+  await assert.rejects(
+    api.persistFleetIntent({ revision: "stale" }),
+    (error) => {
+      assert.ok(error instanceof FleetIntentApiConflictError)
+      assert.deepEqual(error.currentDocument, latest)
+      return true
+    },
+  )
+})
+
+test("direct browser transport keeps fleet intent view-only", async () => {
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "token",
+    fetchImpl: async () => {
+      throw new Error("Unexpected request")
+    },
+  })
+
+  await assert.rejects(api.loadFleetIntent(), /requires the loopback session broker/)
+  await assert.rejects(
+    api.persistFleetIntent({ revision: "" }),
+    /requires the loopback session broker/,
+  )
 })
 
 test("broker monitor reports an initial connection failure", async () => {

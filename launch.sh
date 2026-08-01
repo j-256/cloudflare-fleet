@@ -34,6 +34,7 @@ WATCHER_SERVICE_TARGET=""
 DEVTOOLS_PORT=""
 CACHE_DIR=""
 CACHE_RESULT=""
+INTENT_RESULT=""
 CACHE_HIT="false"
 CACHE_LOADED_AT=""
 CACHE_MODE="use"
@@ -411,6 +412,12 @@ CACHE_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/cache-store.mjs" prepare \
     "$CACHE_DIR" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/cache.js" "$CACHE_MODE")"
 CACHE_HIT="$(printf '%s' "$CACHE_RESULT" | jq -r '.cacheHit')"
 CACHE_LOADED_AT="$(printf '%s' "$CACHE_RESULT" | jq -r '.loadedAt // empty')"
+INTENT_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/intent-store.mjs" prepare \
+    "$CACHE_DIR" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/intent.js")"
+
+if [ "$(printf '%s' "$INTENT_RESULT" | jq -r '.policies')" -gt 0 ]; then
+    echo "[INF][$SCRIPT_NAME] Fleet intent loaded from local policy storage"
+fi
 
 if [ "$CACHE_HIT" = true ]; then
     echo "[INF][$SCRIPT_NAME] Cached snapshot $CACHE_LOADED_AT will render immediately; full refresh is explicit"
