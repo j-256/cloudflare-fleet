@@ -1,3 +1,8 @@
+import {
+  shortDisplay,
+  stableString,
+} from "./normalize.mjs"
+
 export const FLEET_INTENT_SCHEMA_VERSION = 1
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
@@ -24,6 +29,11 @@ export const FLEET_INTENT_CELL_STATUS = Object.freeze({
 export const FLEET_INTENT_ACKNOWLEDGEMENT_STATUS = Object.freeze({
   ACTIVE: "active",
   STALE: "stale",
+})
+
+export const FLEET_INTENT_EXPECTED_ORIGIN = Object.freeze({
+  AUTHORED: "authored",
+  OBSERVED: "observed",
 })
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
@@ -99,6 +109,13 @@ function isGroup(group) {
 }
 
 function isPolicy(policy) {
+  const expectedOrigin = policy?.expected?.origin
+    ?? FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED
+  const sourceValid = expectedOrigin === FLEET_INTENT_EXPECTED_ORIGIN.AUTHORED
+    ? policy.expected.sourceZoneId === null
+      && policy.expected.sourceZoneName === null
+    : isLabel(policy?.expected?.sourceZoneId)
+      && isLabel(policy?.expected?.sourceZoneName)
   return isObject(policy)
     && isIdentifier(policy.id)
     && isIdentifier(policy.groupId)
@@ -109,13 +126,32 @@ function isPolicy(policy) {
     && (policy.facet.description === undefined
       || typeof policy.facet.description === "string")
     && isObject(policy.expected)
+    && Object.values(FLEET_INTENT_EXPECTED_ORIGIN).includes(expectedOrigin)
     && isLabel(policy.expected.canonical, 100000)
     && typeof policy.expected.display === "string"
     && isJsonValue(policy.expected.value)
-    && isLabel(policy.expected.sourceZoneId)
-    && isLabel(policy.expected.sourceZoneName)
+    && sourceValid
     && (policy.expected.resolutionCanonical === null
       || isLabel(policy.expected.resolutionCanonical, 100000))
+}
+
+export function createAuthoredFleetIntentExpected(value) {
+  if (!isJsonValue(value)) {
+    throw new TypeError("Fleet intent requires a JSON-compatible expected value")
+  }
+  return {
+    canonical: stableString(value),
+    display: shortDisplay(value),
+    origin: FLEET_INTENT_EXPECTED_ORIGIN.AUTHORED,
+    resolutionCanonical: null,
+    sourceZoneId: null,
+    sourceZoneName: null,
+    value: structuredClone(value),
+  }
+}
+
+export function fleetIntentExpectedIsAuthored(expected) {
+  return expected?.origin === FLEET_INTENT_EXPECTED_ORIGIN.AUTHORED
 }
 
 function isAcknowledgement(acknowledgement) {

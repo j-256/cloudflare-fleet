@@ -26,17 +26,20 @@ import {
   emailPolicyExceptionsForZone,
 } from "./fleet-policy.mjs"
 import {
+  createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   evaluateFleetIntent,
   FLEET_INTENT_ACKNOWLEDGEMENT_STATUS,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
   FLEET_INTENT_CELL_STATUS,
   FLEET_INTENT_DOCUMENT_GLOBAL,
+  FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
   FLEET_INTENT_LABEL_MAX_LENGTH,
   FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_REASON_MAX_LENGTH,
   fleetIntentFacetId,
+  fleetIntentExpectedIsAuthored,
   fleetIntentGroupZoneIds,
   isFleetIntentDocument,
   removeFleetIntentAcknowledgement,
@@ -194,6 +197,14 @@ const RULESET_RULE_PREVIEW_LIMIT = 220
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
 const INTENT_SYNC_INTERVAL_MS = 5000
 const INTENT_POLICY_VALUE_SEPARATOR = "\u0000"
+const INTENT_POLICY_VALUE_MODE = Object.freeze({
+  CUSTOM: "custom",
+  OBSERVED: "observed",
+})
+const INTENT_REMEDIATION_KIND = Object.freeze({
+  COMPARE_ONLY: "compare-only",
+  REMEDIABLE: "remediable",
+})
 const REDIRECT_FROM_VALUE_PATH = Object.freeze([
   "action_parameters",
   "from_value",
@@ -331,13 +342,22 @@ const elements = {
   intentMetrics: document.querySelector("#intent-metrics"),
   intentPolicyDetail: document.querySelector("#intent-policy-detail"),
   intentPolicyDialog: document.querySelector("#intent-policy-dialog"),
+  intentPolicyCustomEditor: document.querySelector("#intent-policy-custom-editor"),
+  intentPolicyCustomFields: document.querySelector("#intent-policy-custom-fields"),
+  intentPolicyCustomJson: document.querySelector("#intent-policy-custom-json"),
+  intentPolicyCustomKind: document.querySelector("#intent-policy-custom-kind"),
+  intentPolicyCustomRaw: document.querySelector("#intent-policy-custom-raw"),
   intentPolicyDrift: document.querySelector("#intent-policy-drift"),
   intentPolicyError: document.querySelector("#intent-policy-error"),
   intentPolicyForm: document.querySelector("#intent-policy-form"),
   intentPolicyGroup: document.querySelector("#intent-policy-group"),
   intentPolicyList: document.querySelector("#intent-policy-list"),
+  intentPolicyModeCustom: document.querySelector("#intent-policy-mode-custom"),
+  intentPolicyModeObserved: document.querySelector("#intent-policy-mode-observed"),
+  intentPolicyObservedFields: document.querySelector("#intent-policy-observed-fields"),
   intentPolicyPreview: document.querySelector("#intent-policy-preview"),
   intentPolicyRaw: document.querySelector("#intent-policy-raw"),
+  intentPolicyRemediation: document.querySelector("#intent-policy-remediation"),
   intentPolicyReview: document.querySelector("#intent-policy-review"),
   intentPolicyTarget: document.querySelector("#intent-policy-target"),
   intentPolicyTitle: document.querySelector("#intent-policy-title"),
@@ -416,6 +436,11 @@ const elements = {
 
 elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentAcknowledgementReason.maxLength = FLEET_INTENT_REASON_MAX_LENGTH
+elements.intentPolicyCustomKind.replaceChildren(...Object.values(JSON_VALUE_KIND).map((kind) => {
+  const option = createElement("option", { text: humanizeValueField(kind) })
+  option.value = kind
+  return option
+}))
 elements.sessionMode.textContent = readOnly ? "Read-only session" : "Read/write session"
 elements.writePanel.hidden = readOnly
 elements.alignEmail.hidden = readOnly
@@ -2560,6 +2585,7 @@ function rowIntentVariants(row, policy = null) {
         canonical,
         count: 0,
         display: cell.display,
+        origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
         resolutionCanonical: cell.resolutionCanonical || null,
         sourceZoneId: zone.meta.id,
         sourceZoneName: zone.meta.name,
@@ -2576,11 +2602,14 @@ function rowIntentVariants(row, policy = null) {
       variant.value = structuredClone(cell.inspectionValue)
     }
   }
-  if (policy && !variants.has(policy.expected.canonical)) {
+  if (policy
+    && !fleetIntentExpectedIsAuthored(policy.expected)
+    && !variants.has(policy.expected.canonical)) {
     variants.set(policy.expected.canonical, {
       canonical: policy.expected.canonical,
       count: 0,
       display: policy.expected.display,
+      origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
       resolutionCanonical: policy.expected.resolutionCanonical,
       sourceZoneId: policy.expected.sourceZoneId,
       sourceZoneName: policy.expected.sourceZoneName,
@@ -2602,6 +2631,102 @@ function selectedIntentPolicyVariant() {
   ) || null
 }
 
+function selectedIntentPolicyValueMode() {
+  return elements.intentPolicyModeCustom.checked
+    ? INTENT_POLICY_VALUE_MODE.CUSTOM
+    : INTENT_POLICY_VALUE_MODE.OBSERVED
+}
+
+function observedIntentExpected(variant) {
+  if (!variant) return null
+  return {
+    canonical: variant.canonical,
+    display: variant.display,
+    origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
+    resolutionCanonical: variant.resolutionCanonical,
+    sourceZoneId: variant.sourceZoneId,
+    sourceZoneName: variant.sourceZoneName,
+    value: structuredClone(variant.value),
+  }
+}
+
+function intentExpectedSourceLabel(expected) {
+  return fleetIntentExpectedIsAuthored(expected)
+    ? "custom value"
+    : `source ${expected.sourceZoneName}`
+}
+
+function selectedIntentPolicyExpected() {
+  if (selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM) {
+    const draft = state.intentPolicyDraft?.customDraft
+    if (draft === undefined) return null
+    const expected = createAuthoredFleetIntentExpected(draft)
+    const observedMatch = state.intentPolicyDraft.variants.find(
+      (variant) => variant.canonical === expected.canonical,
+    )
+    if (observedMatch) {
+      expected.resolutionCanonical = observedMatch.resolutionCanonical
+    }
+    return expected
+  }
+  return observedIntentExpected(selectedIntentPolicyVariant())
+}
+
+function intentPolicyRemediation(row, expected) {
+  if (!row || !expected) {
+    return {
+      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+      text: "Choose an expected value to see its remediation support.",
+    }
+  }
+  const directEdit = [...row.cells.values()].some((cell) => Boolean(cell.action))
+  const matchingSource = expected.resolutionCanonical !== null
+    && [...row.cells.values()].some((cell) => (
+      cell.resolutionCanonical === expected.resolutionCanonical
+        && Boolean(cell.resolutionSource)
+    ))
+  const matchingHole = expected.resolutionCanonical !== null
+    && [...row.missingResolutions.values()].some((resolution) => (
+      resolution?.available && resolution.candidates?.some(
+        (candidate) => candidate.canonical === expected.resolutionCanonical,
+      )
+    ))
+  const productCreate = row.resolutionKind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
+    && !fleetIntentExpectedIsAuthored(expected)
+  const matchingFill = matchingSource || matchingHole || productCreate
+  if (directEdit && matchingFill) {
+    return {
+      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+      text: "Remediable: edit present values directly or fill missing values from a matching fleet source.",
+    }
+  }
+  if (directEdit) {
+    return {
+      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+      text: "Partly remediable: present values can be edited directly. Missing values need a matching observed source or a product-specific create flow.",
+    }
+  }
+  if (matchingFill) {
+    return {
+      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+      text: "Remediable: missing values can be filled from a matching fleet source.",
+    }
+  }
+  return {
+    className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+    text: "Compare only: this facet has no direct editor or matching fill source. Intent will still detect and filter drift.",
+  }
+}
+
+function renderIntentPolicyRemediation() {
+  const support = intentPolicyRemediation(
+    state.intentPolicyDraft?.row,
+    selectedIntentPolicyExpected(),
+  )
+  elements.intentPolicyRemediation.className = `intent-remediation-status ${support.className}`
+  elements.intentPolicyRemediation.textContent = support.text
+}
+
 function renderIntentPolicyPreview() {
   const variant = selectedIntentPolicyVariant()
   elements.intentPolicyPreview.replaceChildren(
@@ -2612,6 +2737,106 @@ function renderIntentPolicyPreview() {
   elements.intentPolicyRaw.textContent = variant
     ? formattedJson(variant.value)
     : ""
+  renderIntentPolicyRemediation()
+}
+
+function syncIntentPolicyCustomJson() {
+  const draft = state.intentPolicyDraft
+  if (!draft) return
+  elements.intentPolicyCustomRaw.value = formattedJson(draft.customDraft)
+  elements.intentPolicyCustomRaw.removeAttribute("aria-invalid")
+  draft.customJsonInvalid = false
+  clearFieldError(elements.intentPolicyCustomRaw, elements.intentPolicyError)
+}
+
+function renderIntentPolicyCustomEditor() {
+  const draft = state.intentPolicyDraft
+  if (!draft) return
+  elements.intentPolicyCustomKind.value = jsonValueKind(draft.customDraft)
+  elements.intentPolicyCustomFields.replaceChildren(
+    createGenericValueEditorFragment(draft.customDraft, {
+      suggestions: draft.suggestions,
+    }),
+  )
+}
+
+function replaceIntentPolicyCustomDraft(value, options = {}) {
+  const draft = state.intentPolicyDraft
+  if (!draft) return
+  draft.customDraft = value
+  if (options.markDirty !== false) draft.customDirty = true
+  syncIntentPolicyCustomJson()
+  if (options.render !== false) renderIntentPolicyCustomEditor()
+  renderIntentPolicyRemediation()
+}
+
+function seedIntentPolicyCustomDraft() {
+  const draft = state.intentPolicyDraft
+  const variant = selectedIntentPolicyVariant()
+  if (!draft || draft.customDirty || !variant) return
+  replaceIntentPolicyCustomDraft(cloneJsonValue(variant.value), {
+    markDirty: false,
+  })
+}
+
+function renderIntentPolicyValueMode() {
+  const custom = selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
+  elements.intentPolicyObservedFields.hidden = custom
+  elements.intentPolicyCustomEditor.hidden = !custom
+  elements.intentPolicyValue.disabled = custom
+  elements.intentPolicyValue.required = !custom
+  for (const control of elements.intentPolicyCustomEditor.querySelectorAll(
+    "button, input, select, textarea",
+  )) {
+    control.disabled = !custom
+  }
+  if (custom) {
+    seedIntentPolicyCustomDraft()
+    renderIntentPolicyCustomEditor()
+    syncIntentPolicyCustomJson()
+  }
+  renderIntentPolicyRemediation()
+}
+
+function syncIntentPolicyCustomFromJson() {
+  const draft = state.intentPolicyDraft
+  if (!draft) return
+  try {
+    const value = JSON.parse(elements.intentPolicyCustomRaw.value)
+    jsonValueKind(value)
+    draft.customDraft = value
+    draft.customDirty = true
+    draft.customJsonInvalid = false
+    elements.intentPolicyCustomRaw.removeAttribute("aria-invalid")
+    clearFieldError(elements.intentPolicyCustomRaw, elements.intentPolicyError)
+    renderIntentPolicyCustomEditor()
+    renderIntentPolicyRemediation()
+  } catch {
+    draft.customJsonInvalid = true
+    elements.intentPolicyCustomRaw.setAttribute("aria-invalid", "true")
+  }
+}
+
+function changeIntentPolicyCustomKind() {
+  const draft = state.intentPolicyDraft
+  if (!draft) return
+  const kind = elements.intentPolicyCustomKind.value
+  if (kind === jsonValueKind(draft.customDraft)) return
+  replaceIntentPolicyCustomDraft(defaultValueForKind(kind))
+  requestAnimationFrame(() => {
+    elements.intentPolicyCustomFields.querySelector(".value-control")?.focus()
+  })
+}
+
+function changeIntentPolicyValueMode() {
+  renderIntentPolicyValueMode()
+  renderIntentPolicyPreview()
+}
+
+function changeObservedIntentPolicyValue() {
+  seedIntentPolicyCustomDraft()
+  renderIntentPolicyValueMode()
+  renderIntentPolicyPreview()
 }
 
 function openIntentPolicyEditor(row, policy = null) {
@@ -2620,14 +2845,21 @@ function openIntentPolicyEditor(row, policy = null) {
     return
   }
   const variants = rowIntentVariants(row, policy)
-  if (variants.length === 0) {
-    toast("This facet has no observed value to establish as intent", "error")
-    return
-  }
+  const policyIsAuthored = fleetIntentExpectedIsAuthored(policy?.expected)
+  const selected = policy && !policyIsAuthored
+    ? variants.find((variant) => variant.canonical === policy.expected.canonical)
+    : variants[0]
+  const customSeed = policyIsAuthored
+    ? policy.expected.value
+    : selected?.value ?? ""
   state.intentPolicyDraft = {
     baseRevision: state.intent.revision,
+    customDirty: policyIsAuthored,
+    customDraft: cloneJsonValue(customSeed),
+    customJsonInvalid: false,
     policy,
     row,
+    suggestions: collectValueSuggestions(variants.map((variant) => variant.value)),
     variants,
   }
   elements.intentPolicyTitle.textContent = policy ? "Edit facet intent" : "Set facet intent"
@@ -2649,12 +2881,23 @@ function openIntentPolicyEditor(row, policy = null) {
     option.value = variant.optionValue
     return option
   }))
-  const selected = policy
-    ? variants.find((variant) => variant.canonical === policy.expected.canonical)
-    : variants[0]
-  elements.intentPolicyValue.value = selected?.optionValue || variants[0].optionValue
+  if (variants.length === 0) {
+    const option = createElement("option", {
+      text: "No observed value is available",
+    })
+    option.value = ""
+    elements.intentPolicyValue.append(option)
+  }
+  elements.intentPolicyValue.value = selected?.optionValue || ""
+  elements.intentPolicyModeObserved.disabled = variants.length === 0
+  elements.intentPolicyModeObserved.checked = !policyIsAuthored && variants.length > 0
+  elements.intentPolicyModeCustom.checked = policyIsAuthored || variants.length === 0
+  elements.intentPolicyCustomJson.open = false
   elements.intentPolicyError.hidden = true
   elements.intentPolicyError.textContent = ""
+  renderIntentPolicyCustomEditor()
+  syncIntentPolicyCustomJson()
+  renderIntentPolicyValueMode()
   renderIntentPolicyPreview()
   showDialog(elements.intentPolicyDialog, {
     initialFocus: elements.intentPolicyGroup,
@@ -2665,27 +2908,31 @@ async function saveIntentPolicy(event) {
   if (event.submitter?.value === "cancel") return
   event.preventDefault()
   const draft = state.intentPolicyDraft
-  const variant = selectedIntentPolicyVariant()
+  const expected = selectedIntentPolicyExpected()
   const group = intentGroupById(elements.intentPolicyGroup.value)
   if (draft && draft.baseRevision !== state.intent.revision) {
     elements.intentPolicyError.textContent = "Fleet intent changed while this editor was open. Close and reopen it to review the latest policy."
     elements.intentPolicyError.hidden = false
     return
   }
-  if (!draft || !variant || !group) {
+  if (!draft || !expected || !group) {
     elements.intentPolicyError.textContent = "Choose an expected group and value"
     elements.intentPolicyError.hidden = false
     return
   }
+  if (selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
+    && draft.customJsonInvalid) {
+    showFieldError(
+      elements.intentPolicyCustomRaw,
+      elements.intentPolicyError,
+      "Enter valid JSON for the custom expected value",
+    )
+    elements.intentPolicyCustomJson.open = true
+    elements.intentPolicyCustomRaw.focus()
+    return
+  }
   const policy = {
-    expected: {
-      canonical: variant.canonical,
-      display: variant.display,
-      resolutionCanonical: variant.resolutionCanonical,
-      sourceZoneId: variant.sourceZoneId,
-      sourceZoneName: variant.sourceZoneName,
-      value: structuredClone(variant.value),
-    },
+    expected,
     facet: {
       category: draft.row.category,
       description: draft.row.description || "",
@@ -3068,17 +3315,34 @@ function renderIntentPolicies() {
         ? conflicted ? "Conflict" : `${actionableCount} actionable`
         : "Aligned"
     const group = intentGroupById(policy.groupId)
+    const remediation = intentPolicyRemediation(row, policy.expected)
     const item = createElement("article", { className: `intent-item ${status}` })
     const heading = createElement("div", { className: "intent-item-heading" })
+    const badges = createElement("div", { className: "intent-item-badges" })
+    const remediationBadge = intentStatusBadge(
+      remediation.className === INTENT_REMEDIATION_KIND.REMEDIABLE
+        ? "Remediable"
+        : "Compare only",
+      remediation.className,
+    )
+    remediationBadge.title = remediation.text
+    badges.append(
+      intentStatusBadge(statusLabel, status),
+      remediationBadge,
+    )
     heading.append(
       createElement("h4", { text: policy.facet.label }),
-      intentStatusBadge(statusLabel, status),
+      badges,
     )
     item.append(
       heading,
       createElement("p", {
         className: "intent-item-summary",
-        text: `${policy.facet.category} | ${group?.name || "Missing group"} | source ${policy.expected.sourceZoneName}`,
+        text: [
+          policy.facet.category,
+          group?.name || "Missing group",
+          intentExpectedSourceLabel(policy.expected),
+        ].join(" | "),
       }),
     )
     const value = createElement("div", { className: "intent-item-value" })
@@ -3420,13 +3684,27 @@ function matrixCell(row, zone) {
     const intentCell = applyIntentCellPresentation(td, row, zone)
     td.append(createElement("span", { className: "cell-state", text: "Missing" }))
     const resolution = row.missingResolutions.get(zone.meta.name)
-    if (resolution?.available && !readOnly) {
+    const intentExpected = intentCell?.policy?.expected || null
+    const matchingIntentSource = intentExpected?.resolutionCanonical
+      ? resolution?.candidates?.some(
+          (candidate) => candidate.canonical === intentExpected.resolutionCanonical,
+        )
+      : false
+    const intentResolutionAvailable = !intentExpected
+      || (resolution?.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
+        ? !fleetIntentExpectedIsAuthored(intentExpected)
+        : matchingIntentSource)
+    if (resolution?.available && intentResolutionAvailable && !readOnly) {
       const action = {
         category: row.category,
         key: row.key,
         label: row.label,
         resolution,
-        intentExpectedCanonical: intentCell?.policy?.expected.resolutionCanonical || null,
+        intentGoverned: Boolean(intentCell?.policy),
+        intentExpectedAuthored: fleetIntentExpectedIsAuthored(
+          intentExpected,
+        ),
+        intentExpectedCanonical: intentExpected?.resolutionCanonical || null,
       }
       const label = `Fill ${row.label} on ${zone.meta.name}`
       td.classList.add("actionable-cell", "fillable-hole")
@@ -3442,6 +3720,12 @@ function matrixCell(row, zone) {
       fillButton.title = "Build a live plan from the fleet value"
       fillButton.disabled = state.busy
       td.append(fillButton)
+    } else if (intentExpected && resolution?.available && !intentResolutionAvailable) {
+      td.title = "Intent detects this missing value, but no matching fleet source or product-specific create flow is available"
+      td.setAttribute(
+        "aria-label",
+        `Missing ${row.label} on ${zone.meta.name}. ${td.title}`,
+      )
     } else if (resolution?.reason) {
       td.title = resolution.reason
       td.setAttribute(
@@ -3675,7 +3959,7 @@ function renderMatrix() {
       )
       intentButton.title = policies.length > 1
         ? "Review overlapping policies in Fleet intent"
-        : "Choose expected coverage and one observed fleet value"
+        : "Choose expected coverage and an observed or custom normalized value"
       intentPolicyRowByButton.set(intentButton, {
         policy: policies.length === 1 ? policies[0] : null,
         row,
@@ -4545,6 +4829,10 @@ function openHoleResolution(cell) {
     return
   }
   if (action.resolution.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY) {
+    if (action.intentExpectedAuthored) {
+      toast("This custom intent has no product-specific create plan. It can detect this missing value but will not apply a different Email policy.", "error")
+      return
+    }
     fillHole(action)
     return
   }
@@ -4553,6 +4841,10 @@ function openHoleResolution(cell) {
   )
   if (intended) {
     fillHole(action, intended)
+    return
+  }
+  if (action.intentGoverned) {
+    toast("No fleet source matches this intent value. Edit an existing value or use a product-specific create flow instead.", "error")
     return
   }
   const recommended = action.resolution.candidates.find(
@@ -4859,6 +5151,35 @@ function createValueField(value, path, label, options = {}) {
   return createScalarValueField(value, path, label, suggestions)
 }
 
+function createGenericValueEditorFragment(draft, editor = {}) {
+  const fragment = document.createDocumentFragment()
+  if (jsonValueKind(draft) !== JSON_VALUE_KIND.OBJECT) {
+    fragment.append(createValueField(draft, [], "Value", editor))
+    return fragment
+  }
+  const entries = orderedValueEntries(draft)
+  if (entries.length === 0) {
+    fragment.append(
+      createElement("p", {
+        className: "empty-value",
+        text: "No fields. Use Show raw JSON to add an uncommon field.",
+      }),
+    )
+    return fragment
+  }
+  for (const [key, value] of entries) {
+    fragment.append(
+      createValueField(
+        value,
+        [key],
+        humanizeValueField(key),
+        editor,
+      ),
+    )
+  }
+  return fragment
+}
+
 function makeRedirectFieldFriendly(field, options = {}) {
   field.classList.add("redirect-editor-field")
   field.querySelector(":scope > .value-type")?.remove()
@@ -5087,38 +5408,16 @@ function renderValueEditor() {
   const editor = state.editor
   if (!editor) return
   const draft = editor.draft
-  const kind = jsonValueKind(draft)
-  const fragment = document.createDocumentFragment()
-  if (kind === JSON_VALUE_KIND.OBJECT) {
+  if (jsonValueKind(draft) === JSON_VALUE_KIND.OBJECT) {
     const redirectFields = createRedirectEditorFields(editor)
     if (redirectFields) {
-      fragment.append(...redirectFields)
-      elements.valueEditorFields.replaceChildren(fragment)
+      elements.valueEditorFields.replaceChildren(...redirectFields)
       return
     }
-    const entries = orderedValueEntries(draft)
-    if (entries.length === 0) {
-      fragment.append(
-        createElement("p", {
-          className: "empty-value",
-          text: "No cached fields. Use Show raw JSON to add an uncommon field.",
-        }),
-      )
-    }
-    for (const [key, value] of entries) {
-      fragment.append(
-        createValueField(
-          value,
-          [key],
-          humanizeValueField(key),
-          editor,
-        ),
-      )
-    }
-  } else {
-    fragment.append(createValueField(draft, [], "Value", editor))
   }
-  elements.valueEditorFields.replaceChildren(fragment)
+  elements.valueEditorFields.replaceChildren(
+    createGenericValueEditorFragment(draft, editor),
+  )
 }
 
 function syncEditorJson() {
@@ -5246,16 +5545,38 @@ function syncEditorFromJson() {
   }
 }
 
-function focusValueEditorPath(path) {
+function focusDraftEditorPath(container, path) {
   const encoded = encodeValuePath(path)
-  const control = [...elements.valueEditorFields.querySelectorAll(".value-control")]
+  const control = [...container.querySelectorAll(".value-control")]
     .find((candidate) => candidate.dataset.valuePath === encoded)
   control?.focus()
 }
 
-function updateGeneratedEditorControl(event) {
+function focusValueEditorPath(path) {
+  focusDraftEditorPath(elements.valueEditorFields, path)
+}
+
+function mainValueDraftContext() {
+  if (!state.editor) return null
+  return {
+    container: elements.valueEditorFields,
+    draft: state.editor.draft,
+    replaceDraft: replaceEditorDraft,
+  }
+}
+
+function intentPolicyValueDraftContext() {
+  if (!state.intentPolicyDraft) return null
+  return {
+    container: elements.intentPolicyCustomFields,
+    draft: state.intentPolicyDraft.customDraft,
+    replaceDraft: replaceIntentPolicyCustomDraft,
+  }
+}
+
+function updateDraftEditorControl(event, context) {
   const control = event.target.closest("[data-value-path]")
-  if (!control || !state.editor) return
+  if (!control || !context) return
   const path = decodeValuePath(control.dataset.valuePath)
   try {
     const value = parseScalarControl(
@@ -5264,13 +5585,21 @@ function updateGeneratedEditorControl(event) {
       control.checked,
     )
     control.setCustomValidity("")
-    replaceEditorDraft(
-      replaceValueAtPath(state.editor.draft, path, value),
+    context.replaceDraft(
+      replaceValueAtPath(context.draft, path, value),
       { render: false },
     )
   } catch (error) {
     control.setCustomValidity(error instanceof Error ? error.message : String(error))
   }
+}
+
+function updateGeneratedEditorControl(event) {
+  updateDraftEditorControl(event, mainValueDraftContext())
+}
+
+function updateIntentPolicyCustomControl(event) {
+  updateDraftEditorControl(event, intentPolicyValueDraftContext())
 }
 
 function remapEditorObjectKeyPaths(mapEntry, path, currentKey, desiredKey) {
@@ -5294,9 +5623,9 @@ function remapEditorObjectKeyPaths(mapEntry, path, currentKey, desiredKey) {
   }
 }
 
-function renameGeneratedEditorObjectKey(event) {
+function renameDraftEditorObjectKey(event, context) {
   const control = event.target.closest("[data-object-key-path]")
-  if (!control || !state.editor) return
+  if (!control || !context) return
   const path = decodeValuePath(control.dataset.objectKeyPath)
   const currentKey = control.dataset.objectKeyOriginal
   const desiredKey = control.value.trim()
@@ -5304,7 +5633,7 @@ function renameGeneratedEditorObjectKey(event) {
     if (!HTTP_HEADER_NAME_PATTERN.test(desiredKey)) {
       throw new TypeError("Enter a valid HTTP header name")
     }
-    const object = valueAtPath(state.editor.draft, path)
+    const object = valueAtPath(context.draft, path)
     const collision = Object.keys(object).find(
       (key) => key !== currentKey
         && key.toLowerCase() === desiredKey.toLowerCase(),
@@ -5313,12 +5642,12 @@ function renameGeneratedEditorObjectKey(event) {
     control.setCustomValidity("")
     const mapEntry = control.closest(".value-map-entry")
     const nextDraft = renameObjectKeyAtPath(
-      state.editor.draft,
+      context.draft,
       path,
       currentKey,
       desiredKey,
     )
-    replaceEditorDraft(
+    context.replaceDraft(
       nextDraft,
       { render: false },
     )
@@ -5335,42 +5664,69 @@ function renameGeneratedEditorObjectKey(event) {
   }
 }
 
-function changeNullEditorType(event) {
-  const control = event.target.closest("[data-null-path]")
-  if (!control || !state.editor) return
-  const path = decodeValuePath(control.dataset.nullPath)
-  const replacement = defaultValueForKind(control.value)
-  replaceEditorDraft(
-    replaceValueAtPath(state.editor.draft, path, replacement),
-  )
-  requestAnimationFrame(() => focusValueEditorPath(path))
+function renameGeneratedEditorObjectKey(event) {
+  renameDraftEditorObjectKey(event, mainValueDraftContext())
 }
 
-function handleValueEditorAction(event) {
+function renameIntentPolicyCustomObjectKey(event) {
+  renameDraftEditorObjectKey(event, intentPolicyValueDraftContext())
+}
+
+function changeDraftNullType(event, context) {
+  const control = event.target.closest("[data-null-path]")
+  if (!control || !context) return
+  const path = decodeValuePath(control.dataset.nullPath)
+  const replacement = defaultValueForKind(control.value)
+  context.replaceDraft(
+    replaceValueAtPath(context.draft, path, replacement),
+  )
+  requestAnimationFrame(() => focusDraftEditorPath(context.container, path))
+}
+
+function changeNullEditorType(event) {
+  changeDraftNullType(event, mainValueDraftContext())
+}
+
+function changeIntentPolicyCustomNullType(event) {
+  changeDraftNullType(event, intentPolicyValueDraftContext())
+}
+
+function handleDraftEditorAction(event, context) {
   const add = event.target.closest(".value-array-add")
-  if (add && state.editor) {
+  if (add && context) {
     const path = decodeValuePath(add.dataset.arrayPath)
-    const nextIndex = valueAtPath(state.editor.draft, path).length
-    replaceEditorDraft(appendArrayItemAtPath(state.editor.draft, path))
-    requestAnimationFrame(() => focusValueEditorPath([...path, nextIndex]))
+    const nextIndex = valueAtPath(context.draft, path).length
+    context.replaceDraft(appendArrayItemAtPath(context.draft, path))
+    requestAnimationFrame(() => focusDraftEditorPath(
+      context.container,
+      [...path, nextIndex],
+    ))
     return
   }
   const remove = event.target.closest(".value-array-remove")
-  if (!remove || !state.editor) return
+  if (!remove || !context) return
   const path = decodeValuePath(remove.dataset.arrayPath)
-  replaceEditorDraft(
+  context.replaceDraft(
     removeArrayItemAtPath(
-      state.editor.draft,
+      context.draft,
       path,
       Number(remove.dataset.arrayIndex),
     ),
   )
   requestAnimationFrame(() => {
     const encoded = encodeValuePath(path)
-    const addButton = [...elements.valueEditorFields.querySelectorAll(".value-array-add")]
+    const addButton = [...context.container.querySelectorAll(".value-array-add")]
       .find((candidate) => candidate.dataset.arrayPath === encoded)
     addButton?.focus()
   })
+}
+
+function handleValueEditorAction(event) {
+  handleDraftEditorAction(event, mainValueDraftContext())
+}
+
+function handleIntentPolicyCustomAction(event) {
+  handleDraftEditorAction(event, intentPolicyValueDraftContext())
 }
 
 function collectValueSuggestions(values) {
@@ -6555,7 +6911,15 @@ elements.intentGroupForm.addEventListener("submit", saveIntentGroup)
 elements.intentGroupDialog.addEventListener("close", () => {
   state.intentGroupDraft = null
 })
-elements.intentPolicyValue.addEventListener("change", renderIntentPolicyPreview)
+elements.intentPolicyModeObserved.addEventListener("change", changeIntentPolicyValueMode)
+elements.intentPolicyModeCustom.addEventListener("change", changeIntentPolicyValueMode)
+elements.intentPolicyValue.addEventListener("change", changeObservedIntentPolicyValue)
+elements.intentPolicyCustomKind.addEventListener("change", changeIntentPolicyCustomKind)
+elements.intentPolicyCustomRaw.addEventListener("input", syncIntentPolicyCustomFromJson)
+elements.intentPolicyCustomFields.addEventListener("input", updateIntentPolicyCustomControl)
+elements.intentPolicyCustomFields.addEventListener("change", changeIntentPolicyCustomNullType)
+elements.intentPolicyCustomFields.addEventListener("change", renameIntentPolicyCustomObjectKey)
+elements.intentPolicyCustomFields.addEventListener("click", handleIntentPolicyCustomAction)
 elements.intentPolicyForm.addEventListener("submit", saveIntentPolicy)
 elements.intentPolicyDialog.addEventListener("close", () => {
   state.intentPolicyDraft = null

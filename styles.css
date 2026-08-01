@@ -1732,9 +1732,15 @@ dialog form {
 }
 
 .intent-status-badge.active,
-.intent-status-badge.aligned {
+.intent-status-badge.aligned,
+.intent-status-badge.remediable {
   border-color: rgba(119, 208, 143, 0.44);
   color: var(--green);
+}
+
+.intent-status-badge.compare-only {
+  border-color: rgba(255, 180, 84, 0.42);
+  color: var(--accent-2);
 }
 
 .intent-section {
@@ -1750,6 +1756,14 @@ dialog form {
   gap: 10px;
   align-items: flex-start;
   justify-content: space-between;
+}
+
+.intent-item-badges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
 }
 
 .intent-list {
@@ -1833,6 +1847,97 @@ dialog form {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #0d161f;
+}
+
+.intent-value-source {
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.intent-value-source > legend {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.intent-value-source-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+dialog .intent-value-source-option {
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: #0b131c;
+  cursor: pointer;
+}
+
+.intent-value-source-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(89, 215, 196, 0.08);
+}
+
+.intent-value-source-option input {
+  flex: 0 0 auto;
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+}
+
+.intent-value-source-option span,
+.intent-value-source-option small {
+  display: block;
+  min-width: 0;
+}
+
+.intent-value-source-option small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.intent-custom-editor {
+  margin-top: 12px;
+}
+
+.intent-custom-fields {
+  margin-top: 12px;
+}
+
+.intent-custom-editor .editor-json {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.intent-remediation-status {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(11, 19, 28, 0.5);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.intent-remediation-status.remediable {
+  border-color: rgba(119, 208, 143, 0.44);
+  color: var(--green);
+}
+
+.intent-remediation-status.compare-only {
+  border-color: rgba(255, 193, 92, 0.42);
+  color: var(--accent-2);
 }
 
 #intent-acknowledgement-reason {
@@ -2867,6 +2972,10 @@ dialog details > summary {
 
   .value-editor-fields,
   .value-group-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .intent-value-source-options {
     grid-template-columns: 1fr;
   }
 

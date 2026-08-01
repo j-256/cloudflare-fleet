@@ -2,14 +2,17 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   evaluateFleetIntent,
   FLEET_INTENT_ACKNOWLEDGEMENT_STATUS,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
   FLEET_INTENT_CELL_STATUS,
+  FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
   FLEET_INTENT_MISSING_CANONICAL,
   fleetIntentFacetId,
+  fleetIntentExpectedIsAuthored,
   isFleetIntentDocument,
   removeFleetIntentGroup,
   removeFleetIntentPolicy,
@@ -48,7 +51,7 @@ function fixture() {
 
 function policy(row, options = {}) {
   return {
-    expected: {
+    expected: options.expected || {
       canonical: options.canonical || '"on"',
       display: options.display || "on",
       resolutionCanonical: options.resolutionCanonical || '"on"',
@@ -77,6 +80,67 @@ test("empty fleet intent is valid and includes a dynamic all-zones group", () =>
     mode: FLEET_INTENT_GROUP_MODE.ALL,
     name: "All zones",
   }])
+})
+
+test("authored expected values are stable, source-free, and schema-compatible", () => {
+  const { row } = fixture()
+  const value = {
+    ttl: 300,
+    enabled: true,
+    targets: ["{zone}", "mail.example"],
+  }
+  const expected = createAuthoredFleetIntentExpected(value)
+  value.targets.push("changed-after-copy")
+
+  assert.deepEqual(expected, {
+    canonical: "{\"enabled\":true,\"targets\":[\"{zone}\",\"mail.example\"],\"ttl\":300}",
+    display: "3 fields",
+    origin: FLEET_INTENT_EXPECTED_ORIGIN.AUTHORED,
+    resolutionCanonical: null,
+    sourceZoneId: null,
+    sourceZoneName: null,
+    value: {
+      ttl: 300,
+      enabled: true,
+      targets: ["{zone}", "mail.example"],
+    },
+  })
+  assert.equal(fleetIntentExpectedIsAuthored(expected), true)
+
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, { expected }))
+  assert.equal(isFleetIntentDocument(document, "account-id"), true)
+})
+
+test("legacy observed values remain valid while authored values reject fake sources", () => {
+  const { row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row))
+  assert.equal(isFleetIntentDocument(document, "account-id"), true)
+
+  const expected = {
+    ...createAuthoredFleetIntentExpected("on"),
+    sourceZoneId: "zone-a",
+    sourceZoneName: "a.example",
+  }
+  assert.throws(
+    () => replaceFleetIntentPolicy(document, policy(row, { expected })),
+    /invalid/,
+  )
+})
+
+test("authored expected values participate in exact intent evaluation", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: createAuthoredFleetIntentExpected("off"),
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
 })
 
 test("group and policy mutations preserve references and remove dependent acknowledgements", () => {
