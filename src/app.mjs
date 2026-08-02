@@ -135,6 +135,11 @@ import {
   rulesetSummary,
 } from "./ruleset-workspace.mjs"
 import {
+  compareDetailedRulesetRow,
+  rulesetParentRowIsReviewable,
+  rulesetRowPhase,
+} from "./ruleset-comparison.mjs"
+import {
   appendArrayItemAtPath,
   defaultValueForKind,
   humanizeValueField,
@@ -269,6 +274,7 @@ const state = {
   filterPanelExpanded: false,
   matrixFocusScrollY: 0,
   ruleRename: null,
+  rulesetComparisonRowKey: null,
   rulesetWorkspace: null,
   selectedColumnsOnly: false,
   selectedZoneIds: new Set(),
@@ -284,6 +290,7 @@ const fleetActionByButton = new WeakMap()
 const workspaceActionByButton = new WeakMap()
 const intentCellActionByButton = new WeakMap()
 const intentPolicyRowByButton = new WeakMap()
+const rulesetComparisonRowByButton = new WeakMap()
 
 const elements = {
   alignEmail: document.querySelector("#align-email"),
@@ -408,6 +415,15 @@ const elements = {
   rulesetAddRule: document.querySelector("#ruleset-add-rule"),
   rulesetBadges: document.querySelector("#ruleset-badges"),
   rulesetConfigureDeployment: document.querySelector("#ruleset-configure-deployment"),
+  rulesetComparisonAllowDifferences: document.querySelector("#ruleset-comparison-allow-differences"),
+  rulesetComparisonDialog: document.querySelector("#ruleset-comparison-dialog"),
+  rulesetComparisonGroups: document.querySelector("#ruleset-comparison-groups"),
+  rulesetComparisonIntent: document.querySelector("#ruleset-comparison-intent"),
+  rulesetComparisonMetrics: document.querySelector("#ruleset-comparison-metrics"),
+  rulesetComparisonShowRules: document.querySelector("#ruleset-comparison-show-rules"),
+  rulesetComparisonSummary: document.querySelector("#ruleset-comparison-summary"),
+  rulesetComparisonTitle: document.querySelector("#ruleset-comparison-title"),
+  rulesetComparisonUseBaseline: document.querySelector("#ruleset-comparison-use-baseline"),
   rulesetDelete: document.querySelector("#ruleset-delete"),
   rulesetDeployment: document.querySelector("#ruleset-deployment"),
   rulesetDeploymentSummary: document.querySelector("#ruleset-deployment-summary"),
@@ -2000,6 +2016,304 @@ function focusRulesetMatrixOpener(action) {
   if (button && !button.disabled) focusMatrixAction(button)
 }
 
+function currentRulesetComparisonRow() {
+  return state.matrix?.rows.find((row) => (
+    row.key === state.rulesetComparisonRowKey
+      && rulesetParentRowIsReviewable(row)
+  )) || null
+}
+
+function rulesetComparisonRuleList(rules) {
+  const list = createElement("ol", { className: "ruleset-comparison-rule-list" })
+  for (const [index, rule] of rules.entries()) {
+    const item = document.createElement("li")
+    const copy = document.createElement("span")
+    copy.append(
+      createElement("strong", { text: rulesetRuleLabel(rule, index) }),
+      createElement("small", {
+        text: `${ruleActionLabel(rule.action)} | ${rule.enabled === false ? "Disabled" : "Enabled"}`,
+      }),
+    )
+    item.append(copy)
+    list.append(item)
+  }
+  if (rules.length === 0) {
+    list.append(createElement("li", {
+      className: "ruleset-comparison-empty",
+      text: "No rules",
+    }))
+  }
+  return list
+}
+
+function rulesetComparisonZoneList(zones, options = {}) {
+  const list = createElement("ul", { className: "ruleset-comparison-zone-list" })
+  for (const zone of zones) {
+    const item = document.createElement("li")
+    const actions = createElement("span", {
+      className: "ruleset-comparison-zone-actions",
+    })
+    item.append(createElement("strong", { text: zone.name }))
+    if (zone.workspaceAction) {
+      const button = createElement("button", {
+        className: "button button-quiet open-ruleset",
+        text: "Open ruleset",
+      })
+      button.type = "button"
+      button.setAttribute("aria-label", `Open ${zone.name} ruleset`)
+      workspaceActionByButton.set(button, zone.workspaceAction)
+      actions.append(button)
+    } else {
+      actions.append(createElement("small", {
+        className: "capability-badge unavailable",
+        text: options.missing ? "Missing" : "Unavailable",
+      }))
+    }
+    if (options.intentActions && options.row && intentMutationSupported()) {
+      const inventoryZone = state.inventory?.zones.find(
+        (candidate) => candidate.meta.id === zone.id,
+      )
+      if (inventoryZone) {
+        appendIntentCellAction(
+          actions,
+          options.row,
+          inventoryZone,
+          cellIntentState(options.row, inventoryZone),
+        )
+      }
+    }
+    item.append(actions)
+    list.append(item)
+  }
+  return list
+}
+
+function rulesetComparisonConfiguration(configuration, index, total, options = {}) {
+  const article = createElement("article", { className: "ruleset-comparison-configuration" })
+  const heading = createElement("div", { className: "ruleset-comparison-configuration-heading" })
+  heading.append(
+    createElement("h4", {
+      text: total === 1 ? "Ordered rules" : `Definition ${index + 1}`,
+    }),
+    rulesetBadge(
+      `${configuration.zoneCount} zone${configuration.zoneCount === 1 ? "" : "s"}`,
+    ),
+  )
+  article.append(
+    heading,
+    rulesetComparisonRuleList(configuration.rules),
+    rulesetComparisonZoneList(configuration.zones, options),
+  )
+  return article
+}
+
+function rulesetComparisonGroup(group, row) {
+  const section = createElement("section", {
+    className: `ruleset-comparison-group${group.baseline ? " baseline" : " outlier"}${group.ruleCount === null ? " missing" : ""}`,
+  })
+  const heading = createElement("div", { className: "ruleset-comparison-group-heading" })
+  const badges = createElement("div", { className: "ruleset-comparison-group-badges" })
+  if (group.baseline) badges.append(rulesetBadge("Most common", "baseline"))
+  else badges.append(rulesetBadge("Different", "outlier"))
+  badges.append(rulesetBadge(`${group.zoneCount} zone${group.zoneCount === 1 ? "" : "s"}`))
+  heading.append(createElement("h3", { text: group.label }), badges)
+  section.append(heading)
+  if (group.ruleCount === null) {
+    section.append(rulesetComparisonZoneList(group.zones, {
+      intentActions: !group.baseline,
+      missing: true,
+      row,
+    }))
+    return section
+  }
+  if (group.configurations.length > 1) {
+    section.append(createElement("p", {
+      className: "ruleset-comparison-definition-note",
+      text: `${group.configurations.length} different ordered rule definitions share this count.`,
+    }))
+  }
+  const configurations = createElement("div", { className: "ruleset-comparison-configurations" })
+  for (const [index, configuration] of group.configurations.entries()) {
+    configurations.append(
+      rulesetComparisonConfiguration(configuration, index, group.configurations.length, {
+        intentActions: !group.baseline,
+        row,
+      }),
+    )
+  }
+  section.append(configurations)
+  return section
+}
+
+function rulesetComparisonIntentText(row, comparison) {
+  if (!intentMutationSupported()) {
+    return "This read-only review can inspect counts and ordered rules. Open a read/write session to define count intent or acknowledge an intentional count exception."
+  }
+  const policies = row.intentState?.policies || []
+  if (policies.length === 0) {
+    return comparison.baseline
+      ? `No count intent is set. Use ${comparison.baseline.label} as exact intent, then acknowledge only the zones that should stay different. Allow any rule count if an entire coverage group may vary.`
+      : "No count intent is set. The counts are tied, so choose an exact count or allow any rule count for the appropriate coverage group."
+  }
+  if (policies.length > 1) {
+    return `${policies.length} intent policies overlap this parent summary. Review them in Fleet intent before changing the relationship.`
+  }
+  const constraint = fleetIntentPolicyValueConstraint(policies[0])
+  if (constraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
+    return "Intent allows any present rule count in its coverage group. To keep only selected outliers, use the common count as exact intent and acknowledge those zones with a reason."
+  }
+  if (constraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+    return "Intent requires every covered zone to have a different parent summary. Use child-rule intent when uniqueness belongs to specific rules instead."
+  }
+  return "Exact intent treats other rule counts as drift. Use Acknowledge beside a different zone below to accept only its current summarized count with a reason. Individual rule definitions still need child-rule intent."
+}
+
+function renderRulesetComparison() {
+  const row = currentRulesetComparisonRow()
+  const comparison = row
+    ? compareDetailedRulesetRow(row, state.inventory?.zones || [])
+    : null
+  if (!row || !comparison) {
+    if (elements.rulesetComparisonDialog.open) elements.rulesetComparisonDialog.close()
+    return
+  }
+  const baselineSummary = comparison.baseline
+    ? `The most common count is ${comparison.baseline.label}, present on ${comparison.baseline.zoneCount} of ${comparison.totalZones} zones.`
+    : `No single rule count dominates the ${comparison.totalZones} zones.`
+  const definitionSummary = comparison.hasDefinitionDifferences
+    ? " At least one count contains multiple ordered rule definitions."
+    : ""
+  elements.rulesetComparisonTitle.textContent = row.label
+  elements.rulesetComparisonSummary.textContent = `${baselineSummary}${definitionSummary}`
+  elements.rulesetComparisonMetrics.replaceChildren(
+    rulesetBadge(`${comparison.totalZones} zones`),
+    comparison.baseline
+      ? rulesetBadge(
+          `${comparison.outlierCount} count outlier${comparison.outlierCount === 1 ? "" : "s"}`,
+          comparison.outlierCount > 0 ? "outlier" : "baseline",
+        )
+      : rulesetBadge("No dominant count", "outlier"),
+    rulesetBadge(
+      `${comparison.configurationCount} ordered definition${comparison.configurationCount === 1 ? "" : "s"}`,
+    ),
+  )
+  elements.rulesetComparisonGroups.replaceChildren(
+    ...comparison.groups.map((group) => rulesetComparisonGroup(group, row)),
+  )
+  elements.rulesetComparisonIntent.textContent = rulesetComparisonIntentText(
+    row,
+    comparison,
+  )
+  const policies = row.intentState?.policies || []
+  const constraint = fleetIntentPolicyValueConstraint(policies[0])
+  elements.rulesetComparisonUseBaseline.hidden = !intentMutationSupported()
+    || policies.length > 1
+  elements.rulesetComparisonUseBaseline.disabled = !intentWritable()
+  elements.rulesetComparisonUseBaseline.textContent = policies.length === 1
+    && constraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    ? "Edit exact count intent"
+    : comparison.baseline
+      ? `Use ${comparison.baseline.label} as intent`
+      : "Choose exact count intent"
+  elements.rulesetComparisonAllowDifferences.hidden = !intentMutationSupported()
+  elements.rulesetComparisonAllowDifferences.disabled = !intentWritable()
+  elements.rulesetComparisonAllowDifferences.textContent = policies.length > 1
+    ? "Review intent policies"
+    : constraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+      ? "Edit allowed counts"
+      : "Allow any rule count"
+}
+
+function showRulesetComparison(row) {
+  state.rulesetComparisonRowKey = row.key
+  renderRulesetComparison()
+  const initialFocus = elements.rulesetComparisonGroups.querySelector(
+    ".ruleset-comparison-group.outlier .open-ruleset",
+  ) || elements.rulesetComparisonShowRules
+  showDialog(elements.rulesetComparisonDialog, { initialFocus })
+}
+
+function showRulesetChildRows() {
+  const row = currentRulesetComparisonRow()
+  if (!row) return
+  const phase = rulesetRowPhase(row)
+  const category = phase === "http_request_dynamic_redirect"
+    ? MATRIX_CATEGORY.REDIRECTS
+    : MATRIX_CATEGORY.RULESET_RULES
+  elements.rulesetComparisonDialog.close()
+  elements.search.value = row.label
+  elements.category.value = category
+  elements.scope.value = MATRIX_SCOPE.ALL
+  elements.dnsType.value = ""
+  elements.redirectType.value = ""
+  elements.differenceToggle.setAttribute("aria-pressed", "false")
+  elements.targetHoles.setAttribute("aria-pressed", "false")
+  elements.targetHoles.textContent = "Target holes"
+  syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
+  filterRows()
+  const visibleRows = [...elements.matrixBody.querySelectorAll("tr")]
+    .filter((candidate) => !candidate.classList.contains("hidden-row"))
+  if (visibleRows.length === 0) {
+    toast("No child rule rows are available in this matrix snapshot", "error")
+    return
+  }
+  const visibleRow = visibleRows[0]
+  visibleRow.classList.add("matrix-navigation-target")
+  visibleRow.scrollIntoView({
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    block: "center",
+    inline: "start",
+  })
+  const facet = visibleRow.querySelector(".facet-cell")
+  if (facet) {
+    facet.tabIndex = -1
+    facet.focus({ preventScroll: true })
+  }
+  toast(
+    `Showing ${visibleRows.length} child rule row${visibleRows.length === 1 ? "" : "s"} from ${row.label} in the matrix`,
+  )
+}
+
+function editRulesetExactCountIntent() {
+  const row = currentRulesetComparisonRow()
+  if (!row || !intentWritable()) return
+  const policies = row.intentState?.policies || []
+  if (policies.length > 1) {
+    openIntentManager()
+    return
+  }
+  const comparison = compareDetailedRulesetRow(
+    row,
+    state.inventory?.zones || [],
+  )
+  const baselineZone = comparison?.baseline?.zones.find(
+    (zone) => row.cells.has(zone.name),
+  )
+  const baselineCell = baselineZone ? row.cells.get(baselineZone.name) : null
+  const options = {
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  }
+  if (baselineCell) {
+    options.expectedCanonical = baselineCell.intentCanonical
+      ?? baselineCell.canonical
+  }
+  openIntentPolicyEditor(row, policies[0] || null, options)
+}
+
+function allowRulesetCountDifferences() {
+  const row = currentRulesetComparisonRow()
+  if (!row || !intentWritable()) return
+  const policies = row.intentState?.policies || []
+  if (policies.length > 1) {
+    openIntentManager()
+    return
+  }
+  openIntentPolicyEditor(row, policies[0] || null, {
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  })
+}
+
 function policyExceptionComponentLabel(component) {
   return POLICY_EXCEPTION_COMPONENT_LABELS[component]
     || humanizeValueField(component)
@@ -3032,18 +3346,21 @@ function changeObservedIntentPolicyValue() {
   renderIntentPolicyPreview()
 }
 
-function openIntentPolicyEditor(row, policy = null) {
+function openIntentPolicyEditor(row, policy = null, options = {}) {
   if (!intentWritable()) {
     toast("Fleet intent editing is unavailable in this session", "error")
     return
   }
   const variants = rowIntentVariants(row, policy)
-  const valueConstraint = fleetIntentPolicyValueConstraint(policy)
+  const valueConstraint = options.valueConstraint
+    || fleetIntentPolicyValueConstraint(policy)
   const exact = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
   const policyIsAuthored = exact && fleetIntentExpectedIsAuthored(policy?.expected)
-  const selected = policy?.expected && !policyIsAuthored
-    ? variants.find((variant) => variant.canonical === policy.expected.canonical)
-    : variants[0]
+  const selected = options.expectedCanonical
+    ? variants.find((variant) => variant.canonical === options.expectedCanonical)
+    : policy?.expected && !policyIsAuthored
+      ? variants.find((variant) => variant.canonical === policy.expected.canonical)
+      : variants[0]
   const customSeed = policyIsAuthored
     ? policy.expected.value
     : selected?.value ?? ""
@@ -4132,10 +4449,16 @@ function renderMatrix() {
 
   const fragment = document.createDocumentFragment()
   for (const row of state.matrix.rows) {
+    const rulesetComparison = compareDetailedRulesetRow(
+      row,
+      state.inventory.zones,
+    )
     const tr = document.createElement("tr")
     tr.dataset.actionable = String(row.actionable)
     tr.dataset.category = row.category
-    tr.dataset.different = String(row.different)
+    tr.dataset.different = String(
+      row.different || Boolean(rulesetComparison?.hasDefinitionDifferences),
+    )
     tr.dataset.facetKey = row.key
     tr.dataset.missingZoneIds = row.missingZoneIds.join(" ")
     tr.dataset.presentCount = String(row.presentCount)
@@ -4151,16 +4474,18 @@ function renderMatrix() {
       className: "facet-category",
       text: row.category,
     }))
-    const hasConsensus = row.consensusCanonical !== null
+    const hasConsensus = rulesetComparison
+      ? Boolean(rulesetComparison.baseline)
+      : row.consensusCanonical !== null
     const consensusBadge = createElement("small", {
-      className: `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}`,
-      text: hasConsensus
+      className: `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}${rulesetComparison ? " ruleset-count" : ""}`,
+      text: rulesetComparison?.badgeText || (hasConsensus
         ? `Consensus ${row.consensusCount}/${state.inventory.zones.length}`
-        : "No consensus",
+        : "No consensus"),
     })
-    consensusBadge.title = hasConsensus
+    consensusBadge.title = rulesetComparison?.title || (hasConsensus
       ? `${row.consensusCount} of ${state.inventory.zones.length} zones match the unique row consensus`
-      : `${row.variantCount} present variants; the most common values are tied`
+      : `${row.variantCount} present variants; the most common values are tied`)
     consensusBadge.setAttribute("aria-label", consensusBadge.title)
     const facetTitle = createElement("div", { className: "facet-title" })
     facetTitle.append(
@@ -4169,6 +4494,12 @@ function renderMatrix() {
     )
     facetCell.append(facetTitle)
     if (row.description) facetCell.append(createElement("small", { text: row.description }))
+    if (rulesetComparison?.hasDifferences) {
+      facetCell.append(createElement("small", {
+        className: "ruleset-count-distribution",
+        text: rulesetComparison.distributionText,
+      }))
+    }
     const facetActions = createElement("div", { className: "facet-actions" })
     const actionTypes = new Set(
       [...row.cells.values()].map((cell) => cell.action?.type).filter(Boolean),
@@ -4176,6 +4507,24 @@ function renderMatrix() {
     const secondaryActionTypes = new Set(
       [...row.cells.values()].map((cell) => cell.secondaryAction?.type).filter(Boolean),
     )
+    if (rulesetComparison?.hasDifferences) {
+      const reviewButton = createElement("button", {
+        className: "cell-action review-ruleset-comparison",
+        text: rulesetComparison.baseline && rulesetComparison.outlierCount > 0
+          ? `Review ${rulesetComparison.outlierCount} count outlier${rulesetComparison.outlierCount === 1 ? "" : "s"}`
+          : rulesetComparison.baseline
+            ? "Review rule differences"
+            : "Review count distribution",
+      })
+      reviewButton.type = "button"
+      reviewButton.setAttribute(
+        "aria-label",
+        `Review rule-count and ordered-rule differences for ${row.label}`,
+      )
+      reviewButton.title = "See what differs, open exact rulesets, or define allowed variation"
+      rulesetComparisonRowByButton.set(reviewButton, row)
+      facetActions.append(reviewButton)
+    }
     if (!readOnly && api.usesBroker) {
       const policies = row.intentState?.policies || []
       const policyGroup = policies.length === 1
@@ -4309,6 +4658,7 @@ function filterRows() {
   let visible = 0
 
   for (const row of rows) {
+    row.classList.remove("matrix-navigation-target")
     const show = matrixRowMatchesFilters({
       actionable: row.dataset.actionable === "true",
       category: row.dataset.category,
@@ -6885,6 +7235,7 @@ function renderInventory(inventory, source) {
     renderMatrix()
   }
   if (elements.intentDialog.open) renderIntentManager()
+  if (elements.rulesetComparisonDialog.open) renderRulesetComparison()
   renderCoverage()
   updateSelectionStyles()
   return matrixChanged
@@ -7030,6 +7381,18 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
+  const rulesetComparisonButton = event.target.closest(
+    ".review-ruleset-comparison",
+  )
+  if (rulesetComparisonButton) {
+    const row = rulesetComparisonRowByButton.get(rulesetComparisonButton)
+    if (!row) {
+      toast("The selected ruleset comparison is no longer available", "error")
+      return
+    }
+    showRulesetComparison(row)
+    return
+  }
   const intentCellButton = event.target.closest(
     ".acknowledge-intent, .remove-acknowledgement",
   )
@@ -7203,6 +7566,35 @@ elements.rulesetDialog.addEventListener("close", () => {
       focusRulesetMatrixOpener(action)
     }
   })
+})
+elements.rulesetComparisonGroups.addEventListener("click", (event) => {
+  const intentButton = event.target.closest(
+    ".acknowledge-intent, .remove-acknowledgement",
+  )
+  if (intentButton) {
+    activateIntentCellAction(intentButton)
+    return
+  }
+  const button = event.target.closest(".open-ruleset")
+  if (!button) return
+  const action = workspaceActionByButton.get(button)
+  if (!action || action.type !== RULESET_ACTION_KIND.OPEN) {
+    toast("The selected ruleset is no longer available", "error")
+    return
+  }
+  openRulesetWorkspace(action)
+})
+elements.rulesetComparisonShowRules.addEventListener("click", showRulesetChildRows)
+elements.rulesetComparisonUseBaseline.addEventListener(
+  "click",
+  editRulesetExactCountIntent,
+)
+elements.rulesetComparisonAllowDifferences.addEventListener(
+  "click",
+  allowRulesetCountDifferences,
+)
+elements.rulesetComparisonDialog.addEventListener("close", () => {
+  state.rulesetComparisonRowKey = null
 })
 elements.rulesetDescriptionDialog.addEventListener("close", () => {
   clearFieldError(

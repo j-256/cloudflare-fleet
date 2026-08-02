@@ -235,6 +235,29 @@
     </div>
   </dialog>
 
+  <dialog class="ruleset-comparison-dialog" id="ruleset-comparison-dialog" aria-labelledby="ruleset-comparison-title" aria-describedby="ruleset-comparison-summary ruleset-comparison-boundary">
+    <div class="ruleset-comparison-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close ruleset comparison">&times;</button>
+      <header class="ruleset-comparison-heading">
+        <div>
+          <p class="dialog-kicker">Ruleset comparison</p>
+          <h2 id="ruleset-comparison-title">Ruleset differences</h2>
+          <p id="ruleset-comparison-summary"></p>
+        </div>
+        <div class="ruleset-comparison-metrics" id="ruleset-comparison-metrics" aria-label="Ruleset comparison summary"></div>
+      </header>
+      <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares entrypoint presence and rule count. The ordered rule definitions below show what actually differs.</p>
+      <div class="ruleset-comparison-groups" id="ruleset-comparison-groups"></div>
+      <p class="ruleset-comparison-intent" id="ruleset-comparison-intent"></p>
+      <div class="ruleset-comparison-actions">
+        <button class="button button-accent" id="ruleset-comparison-show-rules" type="button">Show child rules in matrix</button>
+        <button class="button button-quiet" id="ruleset-comparison-use-baseline" type="button" data-intent-write>Use common count as intent</button>
+        <button class="button button-quiet" id="ruleset-comparison-allow-differences" type="button" data-intent-write>Allow any rule count</button>
+        <button class="button button-primary" type="button" data-dialog-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="ruleset-description-dialog" aria-labelledby="ruleset-description-title" aria-describedby="ruleset-description-help">
     <form method="dialog" id="ruleset-description-form" novalidate>
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close description editor">&times;</button>

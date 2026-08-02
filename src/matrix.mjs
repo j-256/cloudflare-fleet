@@ -721,8 +721,12 @@ function addRulesetRows(rows, inventory) {
                   type: HOLE_RESOLUTION_KIND.RULESET_RULE,
                 }
               : null,
-            search: redirect
-              ? [
+            search: [
+              rulesetLabel,
+              rulePhaseLabel(phase),
+              phase,
+              ...(redirect
+                ? [
                   redirect.targetKindLabel,
                   redirect.responseLabel,
                   redirect.queryLabel,
@@ -730,8 +734,9 @@ function addRulesetRows(rows, inventory) {
                   redirect.match,
                   `Order ${redirect.position}`,
                   redirect.target,
-                ].join(" ")
-              : "",
+                  ]
+                : []),
+            ].join(" "),
           },
         )
       }

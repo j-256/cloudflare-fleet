@@ -283,6 +283,7 @@ test("matrix leads with rule names and separates direct edits from copying", () 
     parentRow.cells.get("alpha.example").workspaceAction,
     cell.parentAction,
   )
+  assert.match(row.search, /dynamic redirects entrypoint/)
 })
 
 test("matrix aligns redirects by normalized match behavior despite name differences", () => {
@@ -492,6 +493,7 @@ test("matrix exposes dependency-backed rules for editing but not copying", () =>
   assert.equal(cell.action.type, "ruleset-rule")
   assert.equal(cell.secondaryAction, null)
   assert.equal(cell.capability.kind, "not-copyable")
+  assert.match(row.search, /request sanitization entrypoint/)
 })
 
 test("matrix replaces an auto-generated rule reference with a readable fallback", () => {
