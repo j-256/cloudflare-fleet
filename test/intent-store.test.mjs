@@ -12,6 +12,7 @@ import {
 } from "../src/fleet-intent.mjs"
 import {
   FleetIntentRevisionConflictError,
+  importLegacyFleetIntentDocument,
   persistFleetIntentDocument,
   prepareFleetIntentScript,
   readFleetIntentDocument,
@@ -64,6 +65,7 @@ test("intent store atomically persists a restrictive revisioned document", async
   assert.match(saved.revision, /^[a-f0-9]{64}$/)
   assert.equal(typeof saved.updatedAt, "string")
   assert.equal((await fs.stat(persistedPath)).mode & 0o777, 0o600)
+  assert.match(await fs.readFile(persistedPath, "utf8"), /^\{\n  "/)
   assert.equal(entries.some((entry) => entry.endsWith(".tmp")), false)
   assert.equal(entries.some((entry) => entry.endsWith(".lock")), false)
 })
@@ -248,13 +250,158 @@ test("intent preparation injects the latest valid document", async (context) => 
 
   const prepared = await prepareFleetIntentScript({
     accountId: "account-one",
-    cacheDir: directory,
     outputPath,
+    stateDir: directory,
   })
   const script = await fs.readFile(outputPath, "utf8")
 
-  assert.deepEqual(prepared, saved)
+  assert.deepEqual(prepared.document, saved)
+  assert.equal(prepared.imported, false)
   assert.match(script, new RegExp(FLEET_INTENT_DOCUMENT_GLOBAL))
   assert.match(script, new RegExp(saved.revision))
   assert.equal((await fs.stat(outputPath)).mode & 0o777, 0o600)
+})
+
+test("intent preparation imports a legacy cache document without removing it", async (context) => {
+  const root = await temporaryDirectory(context)
+  const legacyDir = path.join(root, "cache")
+  const stateDir = path.join(root, "state")
+  const outputPath = path.join(root, "intent.js")
+  const original = createEmptyFleetIntentDocument("account-one")
+  original.groups.push({
+    id: "legacy-zones",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: "members",
+    name: "Legacy zones",
+  })
+  const saved = await persistFleetIntentDocument(
+    legacyDir,
+    "account-one",
+    original.revision,
+    original,
+  )
+
+  const prepared = await prepareFleetIntentScript({
+    accountId: "account-one",
+    legacyDir,
+    outputPath,
+    stateDir,
+  })
+
+  assert.equal(prepared.imported, true)
+  assert.deepEqual(prepared.document, saved)
+  assert.deepEqual(
+    await readFleetIntentDocument(stateDir, "account-one"),
+    saved,
+  )
+  assert.deepEqual(
+    await readFleetIntentDocument(legacyDir, "account-one"),
+    saved,
+  )
+  assert.equal(
+    (await fs.readdir(stateDir)).some((entry) => entry.endsWith(".lock")),
+    false,
+  )
+})
+
+test("existing project intent remains authoritative over a legacy cache document", async (context) => {
+  const root = await temporaryDirectory(context)
+  const legacyDir = path.join(root, "cache")
+  const stateDir = path.join(root, "state")
+  const legacy = createEmptyFleetIntentDocument("account-one")
+  legacy.groups.push({
+    id: "legacy-zones",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: "members",
+    name: "Legacy zones",
+  })
+  await persistFleetIntentDocument(
+    legacyDir,
+    "account-one",
+    legacy.revision,
+    legacy,
+  )
+  const project = createEmptyFleetIntentDocument("account-one")
+  project.groups.push({
+    id: "project-zones",
+    members: [{ zoneId: "zone-b", zoneName: "b.example" }],
+    mode: "members",
+    name: "Project zones",
+  })
+  const saved = await persistFleetIntentDocument(
+    stateDir,
+    "account-one",
+    project.revision,
+    project,
+  )
+
+  const imported = await importLegacyFleetIntentDocument(
+    stateDir,
+    legacyDir,
+    "account-one",
+  )
+
+  assert.equal(imported.imported, false)
+  assert.deepEqual(imported.document, saved)
+})
+
+test("concurrent legacy imports converge on one project document", async (context) => {
+  const root = await temporaryDirectory(context)
+  const legacyDir = path.join(root, "cache")
+  const stateDir = path.join(root, "state")
+  const original = createEmptyFleetIntentDocument("account-one")
+  original.groups.push({
+    id: "shared-zones",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: "members",
+    name: "Shared zones",
+  })
+  const saved = await persistFleetIntentDocument(
+    legacyDir,
+    "account-one",
+    original.revision,
+    original,
+  )
+
+  const results = await Promise.all([
+    importLegacyFleetIntentDocument(stateDir, legacyDir, "account-one"),
+    importLegacyFleetIntentDocument(stateDir, legacyDir, "account-one"),
+  ])
+
+  assert.equal(results.filter((result) => result.imported).length, 1)
+  assert.deepEqual(results[0].document, saved)
+  assert.deepEqual(results[1].document, saved)
+  assert.deepEqual(
+    await readFleetIntentDocument(stateDir, "account-one"),
+    saved,
+  )
+})
+
+test("invalid legacy intent is rejected instead of replaced", async (context) => {
+  const root = await temporaryDirectory(context)
+  const legacyDir = path.join(root, "cache")
+  const stateDir = path.join(root, "state")
+  const original = createEmptyFleetIntentDocument("account-one")
+  await persistFleetIntentDocument(
+    legacyDir,
+    "account-one",
+    original.revision,
+    original,
+  )
+  const intentName = (await fs.readdir(legacyDir)).find(
+    (entry) => entry.startsWith("intent-") && entry.endsWith(".json"),
+  )
+  await fs.writeFile(
+    path.join(legacyDir, intentName),
+    "not-json\n",
+  )
+
+  await assert.rejects(
+    importLegacyFleetIntentDocument(stateDir, legacyDir, "account-one"),
+    /not valid JSON/,
+  )
+  assert.equal(
+    (await fs.readdir(stateDir)).some((entry) => entry.endsWith(".json")),
+    false,
+  )
 })

@@ -33,6 +33,8 @@ async function brokerFixture(options = {}) {
   )
   const runtimeDir = path.join(root, "cloudflare-fleet.runtime")
   const cacheDir = path.join(root, "cache")
+  const stateDir = path.join(root, "state")
+  await fs.mkdir(cacheDir)
   await fs.mkdir(path.join(runtimeDir, "src"), {
     recursive: true,
   })
@@ -67,6 +69,7 @@ async function brokerFixture(options = {}) {
     runtimeDir,
     sessionId: "test-session",
     sessionSecret: "session-secret",
+    stateDir,
     ...options,
   })
   return {
@@ -74,6 +77,7 @@ async function brokerFixture(options = {}) {
     cacheDir,
     calls,
     root,
+    stateDir,
   }
 }
 
@@ -291,8 +295,12 @@ test("session broker reads and writes authorized fleet intent", async () => {
 
     assert.equal(savedResponse.status, 200)
     assert.deepEqual(
-      await readFleetIntentDocument(fixture.cacheDir, "account-id"),
+      await readFleetIntentDocument(fixture.stateDir, "account-id"),
       saved,
+    )
+    assert.equal(
+      (await fs.readdir(fixture.cacheDir)).some((entry) => entry.startsWith("intent-")),
+      false,
     )
   } finally {
     await closeFixture(fixture)

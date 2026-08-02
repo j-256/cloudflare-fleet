@@ -1,3 +1,5 @@
 .DS_Store
 auth.js
 chrome-profile/
+state/*.lock*
+state/*.tmp

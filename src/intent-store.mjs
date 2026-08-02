@@ -32,12 +32,12 @@ function intentFilename(accountId) {
   return `${INTENT_FILE_PREFIX}${accountDigest(accountId)}${INTENT_FILE_SUFFIX}`
 }
 
-async function ensureIntentDirectory(cacheDir) {
-  await fs.mkdir(cacheDir, {
+async function ensureIntentDirectory(stateDir) {
+  await fs.mkdir(stateDir, {
     mode: 0o700,
     recursive: true,
   })
-  await fs.chmod(cacheDir, 0o700)
+  await fs.chmod(stateDir, 0o700)
 }
 
 function wait(milliseconds) {
@@ -89,12 +89,12 @@ async function atomicWrite(filePath, content) {
   await fs.chmod(filePath, 0o600)
 }
 
-async function readIntentFile(filePath, accountId) {
+async function readExistingIntentFile(filePath, accountId) {
   let raw
   try {
     raw = await fs.readFile(filePath, "utf8")
   } catch (error) {
-    if (error?.code === "ENOENT") return createEmptyFleetIntentDocument(accountId)
+    if (error?.code === "ENOENT") return null
     throw error
   }
   let document
@@ -111,9 +111,57 @@ async function readIntentFile(filePath, accountId) {
   return document
 }
 
-export async function readFleetIntentDocument(cacheDir, accountId) {
-  await ensureIntentDirectory(cacheDir)
-  return readIntentFile(path.join(cacheDir, intentFilename(accountId)), accountId)
+async function readIntentFile(filePath, accountId) {
+  const existing = await readExistingIntentFile(filePath, accountId)
+  return existing ?? createEmptyFleetIntentDocument(accountId)
+}
+
+export async function readFleetIntentDocument(stateDir, accountId) {
+  await ensureIntentDirectory(stateDir)
+  return readIntentFile(path.join(stateDir, intentFilename(accountId)), accountId)
+}
+
+export async function importLegacyFleetIntentDocument(
+  stateDir,
+  legacyDir,
+  accountId,
+) {
+  await ensureIntentDirectory(stateDir)
+  const filePath = path.join(stateDir, intentFilename(accountId))
+  const lockPath = `${filePath}.lock`
+  const release = await acquireIntentLock(lockPath)
+  try {
+    const current = await readExistingIntentFile(filePath, accountId)
+    if (current) {
+      return {
+        document: current,
+        imported: false,
+      }
+    }
+    if (!legacyDir || path.resolve(legacyDir) === path.resolve(stateDir)) {
+      return {
+        document: createEmptyFleetIntentDocument(accountId),
+        imported: false,
+      }
+    }
+    const legacy = await readExistingIntentFile(
+      path.join(legacyDir, intentFilename(accountId)),
+      accountId,
+    )
+    if (!legacy) {
+      return {
+        document: createEmptyFleetIntentDocument(accountId),
+        imported: false,
+      }
+    }
+    await atomicWrite(filePath, `${JSON.stringify(legacy, null, 2)}\n`)
+    return {
+      document: legacy,
+      imported: true,
+    }
+  } finally {
+    await release()
+  }
 }
 
 function nextPersistedDocument(document) {
@@ -133,7 +181,7 @@ function nextPersistedDocument(document) {
 }
 
 export async function persistFleetIntentDocument(
-  cacheDir,
+  stateDir,
   accountId,
   expectedRevision,
   document,
@@ -144,8 +192,8 @@ export async function persistFleetIntentDocument(
   if (document.revision !== expectedRevision) {
     throw new TypeError("Fleet intent revision does not match the expected revision")
   }
-  await ensureIntentDirectory(cacheDir)
-  const filePath = path.join(cacheDir, intentFilename(accountId))
+  await ensureIntentDirectory(stateDir)
+  const filePath = path.join(stateDir, intentFilename(accountId))
   const lockPath = `${filePath}.lock`
   const release = await acquireIntentLock(lockPath)
   try {
@@ -157,7 +205,7 @@ export async function persistFleetIntentDocument(
     if (!isFleetIntentDocument(next, accountId)) {
       throw new TypeError("Fleet intent could not be serialized")
     }
-    await atomicWrite(filePath, `${JSON.stringify(next)}\n`)
+    await atomicWrite(filePath, `${JSON.stringify(next, null, 2)}\n`)
     return next
   } finally {
     await release()
@@ -165,10 +213,20 @@ export async function persistFleetIntentDocument(
 }
 
 export async function prepareFleetIntentScript(options) {
-  const document = await readFleetIntentDocument(
-    options.cacheDir,
-    options.accountId,
-  )
+  const prepared = options.legacyDir
+    ? await importLegacyFleetIntentDocument(
+      options.stateDir,
+      options.legacyDir,
+      options.accountId,
+    )
+    : {
+      document: await readFleetIntentDocument(
+        options.stateDir,
+        options.accountId,
+      ),
+      imported: false,
+    }
+  const { document } = prepared
   const payload = JSON.stringify(document)
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029")
@@ -176,22 +234,24 @@ export async function prepareFleetIntentScript(options) {
     options.outputPath,
     `window[${JSON.stringify(FLEET_INTENT_DOCUMENT_GLOBAL)}] = ${payload}\n`,
   )
-  return document
+  return prepared
 }
 
 async function main(args) {
-  const [command, cacheDir, accountId, outputPath] = args
-  if (command !== "prepare" || !cacheDir || !accountId || !outputPath) {
-    throw new Error("Usage: intent-store.mjs prepare CACHE_DIR ACCOUNT_ID OUTPUT_PATH")
+  const [command, stateDir, accountId, outputPath, legacyDir] = args
+  if (command !== "prepare" || !stateDir || !accountId || !outputPath) {
+    throw new Error("Usage: intent-store.mjs prepare STATE_DIR ACCOUNT_ID OUTPUT_PATH [LEGACY_DIR]")
   }
-  const document = await prepareFleetIntentScript({
+  const prepared = await prepareFleetIntentScript({
     accountId,
-    cacheDir,
+    legacyDir,
     outputPath,
+    stateDir,
   })
   process.stdout.write(`${JSON.stringify({
-    policies: document.policies.length,
-    revision: document.revision,
+    imported: prepared.imported,
+    policies: prepared.document.policies.length,
+    revision: prepared.document.revision,
   })}\n`)
 }
 

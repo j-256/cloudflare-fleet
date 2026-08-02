@@ -35,6 +35,7 @@ DEVTOOLS_PORT=""
 CACHE_DIR=""
 CACHE_RESULT=""
 INTENT_RESULT=""
+STATE_DIR=""
 CACHE_HIT="false"
 CACHE_LOADED_AT=""
 CACHE_MODE="use"
@@ -71,6 +72,7 @@ show_help() {
     echo "  CLOUDFLARE_API_TOKEN   Required account-level Cloudflare API token"
     echo "  CLOUDFLARE_ACCOUNT_ID  Required Cloudflare account identifier"
     echo "  CLOUDFLARE_FLEET_CACHE_DIR Optional snapshot cache directory"
+    echo "  CLOUDFLARE_FLEET_STATE_DIR Optional absolute fleet-intent directory"
     echo "  CLOUDFLARE_FLEET_CHROME_APP Optional Chromium application bundle"
     echo "  CLOUDFLARE_FLEET_CHROME Optional path to a Chromium-compatible browser"
 }
@@ -129,7 +131,7 @@ write_broker_config() {
     "$NODE_BINARY" -e '
 const crypto = require("node:crypto")
 const fs = require("node:fs")
-const [outputPath, accountId, cacheDir, readOnly, runtimeBase, runtimeDir, serviceTarget, sessionId] = process.argv.slice(1)
+const [outputPath, accountId, cacheDir, stateDir, readOnly, runtimeBase, runtimeDir, serviceTarget, sessionId] = process.argv.slice(1)
 const config = {
   accountId,
   apiToken: process.env.CLOUDFLARE_API_TOKEN,
@@ -140,10 +142,11 @@ const config = {
   serviceTarget,
   sessionId,
   sessionSecret: crypto.randomBytes(32).toString("hex"),
+  stateDir,
 }
 fs.writeFileSync(outputPath, `${JSON.stringify(config)}\n`, { mode: 0o600 })
 ' \
-        "$BROKER_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$CACHE_DIR" "$READ_ONLY" \
+        "$BROKER_CONFIG" "$CLOUDFLARE_ACCOUNT_ID" "$CACHE_DIR" "$STATE_DIR" "$READ_ONLY" \
         "$RUNTIME_BASE" "$RUNTIME_DIR" "$BROKER_SERVICE_TARGET" "$SESSION_ID"
     chmod 600 "$BROKER_CONFIG"
 }
@@ -377,6 +380,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_BASE="${TMPDIR:-/tmp}"
 RUNTIME_BASE="${RUNTIME_BASE%/}"
 
+if [ -n "${CLOUDFLARE_FLEET_STATE_DIR:-}" ]; then
+    case "$CLOUDFLARE_FLEET_STATE_DIR" in
+        /*)
+            STATE_DIR="${CLOUDFLARE_FLEET_STATE_DIR%/}"
+            ;;
+        *)
+            error "CLOUDFLARE_FLEET_STATE_DIR must be an absolute path"
+            exit 3
+            ;;
+    esac
+    if [ -z "$STATE_DIR" ]; then
+        error "CLOUDFLARE_FLEET_STATE_DIR cannot be the filesystem root"
+        exit 3
+    fi
+else
+    STATE_DIR="$SCRIPT_DIR/state"
+fi
+
 if [ -n "${CLOUDFLARE_FLEET_CACHE_DIR:-}" ]; then
     CACHE_DIR="${CLOUDFLARE_FLEET_CACHE_DIR%/}"
 else
@@ -413,10 +434,14 @@ CACHE_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/cache-store.mjs" prepare \
 CACHE_HIT="$(printf '%s' "$CACHE_RESULT" | jq -r '.cacheHit')"
 CACHE_LOADED_AT="$(printf '%s' "$CACHE_RESULT" | jq -r '.loadedAt // empty')"
 INTENT_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/intent-store.mjs" prepare \
-    "$CACHE_DIR" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/intent.js")"
+    "$STATE_DIR" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/intent.js" "$CACHE_DIR")"
+
+if [ "$(printf '%s' "$INTENT_RESULT" | jq -r '.imported')" = true ]; then
+    echo "[INF][$SCRIPT_NAME] Fleet intent imported into $STATE_DIR"
+fi
 
 if [ "$(printf '%s' "$INTENT_RESULT" | jq -r '.policies')" -gt 0 ]; then
-    echo "[INF][$SCRIPT_NAME] Fleet intent loaded from local policy storage"
+    echo "[INF][$SCRIPT_NAME] Fleet intent loaded from project state"
 fi
 
 if [ "$CACHE_HIT" = true ]; then
