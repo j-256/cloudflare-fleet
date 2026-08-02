@@ -7,6 +7,16 @@ export const MATRIX_SCOPE = Object.freeze({
 
 export const DEFAULT_MATRIX_SCOPE = MATRIX_SCOPE.FLEET_PATTERNS
 
+export const DEFAULT_MATRIX_FILTERS = Object.freeze({
+  category: "",
+  differencesOnly: true,
+  query: "",
+  recordType: "",
+  redirectType: "",
+  scope: DEFAULT_MATRIX_SCOPE,
+  targetHolesOnly: false,
+})
+
 export const DNS_MATRIX_CATEGORIES = Object.freeze([
   "DNS records",
   "Email DNS specification",
@@ -18,6 +28,26 @@ export function facetMatchesScope(presentCount, zoneCount, scope) {
   if (scope === MATRIX_SCOPE.FLEET_WIDE) return zoneCount > 0 && presentCount === zoneCount
   if (scope === MATRIX_SCOPE.ZONE_SPECIFIC) return presentCount === 1
   return false
+}
+
+export function matrixFilterChangeCount(filters) {
+  return [
+    String(filters.query || "").trim() !== DEFAULT_MATRIX_FILTERS.query,
+    String(filters.category || "") !== DEFAULT_MATRIX_FILTERS.category,
+    String(filters.scope || "") !== DEFAULT_MATRIX_FILTERS.scope,
+    String(filters.recordType || "") !== DEFAULT_MATRIX_FILTERS.recordType,
+    String(filters.redirectType || "") !== DEFAULT_MATRIX_FILTERS.redirectType,
+    Boolean(filters.differencesOnly) !== DEFAULT_MATRIX_FILTERS.differencesOnly,
+    Boolean(filters.targetHolesOnly) !== DEFAULT_MATRIX_FILTERS.targetHolesOnly,
+  ].filter(Boolean).length
+}
+
+export function matrixColumnIsVisible(zoneId, selectedZoneIds, selectedOnly) {
+  if (!selectedOnly) return true
+  const selected = selectedZoneIds instanceof Set
+    ? selectedZoneIds
+    : new Set(selectedZoneIds || [])
+  return selected.has(zoneId)
 }
 
 export function matrixRowMatchesFilters(row, filters) {

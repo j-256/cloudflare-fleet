@@ -2,8 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  DEFAULT_MATRIX_FILTERS,
   facetMatchesScope,
   MATRIX_SCOPE,
+  matrixColumnIsVisible,
+  matrixFilterChangeCount,
   matrixRowMatchesFilters,
 } from "../src/matrix-filter.mjs"
 
@@ -15,6 +18,31 @@ test("fleet pattern scope separates shared and zone-specific facets", () => {
   assert.equal(facetMatchesScope(13, 14, MATRIX_SCOPE.FLEET_WIDE), false)
   assert.equal(facetMatchesScope(1, 14, MATRIX_SCOPE.ZONE_SPECIFIC), true)
   assert.equal(facetMatchesScope(1, 14, MATRIX_SCOPE.ALL), true)
+})
+
+test("matrix filter changes count only deviations from the initial view", () => {
+  assert.equal(matrixFilterChangeCount(DEFAULT_MATRIX_FILTERS), 0)
+  assert.equal(matrixFilterChangeCount({
+    ...DEFAULT_MATRIX_FILTERS,
+    query: "  cname  ",
+    scope: MATRIX_SCOPE.ALL,
+    targetHolesOnly: true,
+  }), 3)
+  assert.equal(matrixFilterChangeCount({
+    ...DEFAULT_MATRIX_FILTERS,
+    differencesOnly: false,
+    recordType: "TXT",
+    redirectType: "dynamic",
+  }), 3)
+})
+
+test("selected-only presentation hides unselected columns without changing selection", () => {
+  const selected = new Set(["zone-a", "zone-c"])
+
+  assert.equal(matrixColumnIsVisible("zone-b", selected, false), true)
+  assert.equal(matrixColumnIsVisible("zone-a", selected, true), true)
+  assert.equal(matrixColumnIsVisible("zone-b", selected, true), false)
+  assert.deepEqual([...selected], ["zone-a", "zone-c"])
 })
 
 test("matrix filters combine coverage, type, category, drift, and search terms", () => {

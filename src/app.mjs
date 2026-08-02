@@ -69,10 +69,13 @@ import {
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
 import {
+  DEFAULT_MATRIX_FILTERS,
   DEFAULT_MATRIX_SCOPE,
   DNS_MATRIX_CATEGORIES,
   facetMatchesScope,
   MATRIX_SCOPE,
+  matrixColumnIsVisible,
+  matrixFilterChangeCount,
   matrixRowMatchesFilters,
 } from "./matrix-filter.mjs"
 import {
@@ -189,6 +192,9 @@ const MATRIX_COMPARISON_STATE = Object.freeze({
   VARIANT: "variant",
 })
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
+const COMPACT_TOOLBAR_MEDIA_QUERY = "(max-width: 620px)"
+const MATRIX_FOCUS_CLASS = "matrix-focus"
+const MATRIX_COLUMN_HIDDEN_CLASS = "matrix-column-hidden"
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
 const EDITABLE_OBJECT_KEY_FIELDS = new Set([
@@ -226,6 +232,7 @@ const REDIRECT_PRIMARY_RULE_FIELDS = new Set([
 ])
 const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]))
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
+const compactToolbarMedia = window.matchMedia(COMPACT_TOOLBAR_MEDIA_QUERY)
 const POLICY_EXCEPTION_COMPONENT_LABELS = Object.freeze({
   [EMAIL_POLICY_COMPONENT.SPF]: "SPF",
 })
@@ -240,6 +247,7 @@ const state = {
   abortController: null,
   busy: false,
   busyFocus: null,
+  coverageExpanded: false,
   editor: null,
   emailDestination: null,
   emailDnsPolicy: null,
@@ -258,8 +266,11 @@ const state = {
   intentPolicyDraft: null,
   intentSaving: false,
   intentSyncing: false,
+  filterPanelExpanded: false,
+  matrixFocusScrollY: 0,
   ruleRename: null,
   rulesetWorkspace: null,
+  selectedColumnsOnly: false,
   selectedZoneIds: new Set(),
   startupCacheLoadedAt: null,
   toastTimer: null,
@@ -288,6 +299,8 @@ const elements = {
   confirmSummary: document.querySelector("#confirm-summary"),
   confirmTitle: document.querySelector("#confirm-title"),
   coverageList: document.querySelector("#coverage-list"),
+  coverageSummary: document.querySelector("#coverage-summary"),
+  coverageToggle: document.querySelector("#coverage-toggle"),
   differenceToggle: document.querySelector("#difference-toggle"),
   dnsType: document.querySelector("#dns-type"),
   driftCount: document.querySelector("#drift-count"),
@@ -307,6 +320,8 @@ const elements = {
   editorValue: document.querySelector("#editor-value"),
   editorValueLabel: document.querySelector("#editor-value-label"),
   facetCount: document.querySelector("#facet-count"),
+  filterPanelToggle: document.querySelector("#filter-panel-toggle"),
+  filterReset: document.querySelector("#filter-reset"),
   holeCount: document.querySelector("#hole-count"),
   holeDialog: document.querySelector("#hole-dialog"),
   holeForm: document.querySelector("#hole-form"),
@@ -372,6 +387,9 @@ const elements = {
   loadProgress: document.querySelector("#load-progress"),
   manageIntent: document.querySelector("#manage-intent"),
   matrixBody: document.querySelector("#matrix-body"),
+  matrixChooseTargets: document.querySelector("#matrix-choose-targets"),
+  matrixFocus: document.querySelector("#matrix-focus"),
+  mobileMatrixFocus: document.querySelector("#mobile-matrix-focus"),
   matrixHead: document.querySelector("#matrix-head"),
   policyExceptionDialog: document.querySelector("#policy-exception-dialog"),
   policyExceptionList: document.querySelector("#policy-exception-list"),
@@ -411,6 +429,7 @@ const elements = {
   rulesetTitle: document.querySelector("#ruleset-title"),
   search: document.querySelector("#search"),
   selectDrifted: document.querySelector("#select-drifted"),
+  selectedColumnsOnly: document.querySelector("#selected-columns-only"),
   selectionCount: document.querySelector("#selection-count"),
   sessionMode: document.querySelector("#session-mode"),
   showEditableSettings: document.querySelector("#show-editable-settings"),
@@ -428,6 +447,7 @@ const elements = {
   toast: document.querySelector("#toast"),
   toastDismiss: document.querySelector("#toast-dismiss"),
   toastMessage: document.querySelector("#toast-message"),
+  toolbarSecondary: document.querySelector("#toolbar-secondary"),
   valueEditor: document.querySelector("#value-editor"),
   valueEditorContext: document.querySelector("#value-editor-context"),
   valueEditorFields: document.querySelector("#value-editor-fields"),
@@ -2092,6 +2112,28 @@ function isTextEntry(element) {
     || element.isContentEditable
 }
 
+function setMatrixFocus(focused) {
+  const active = document.body.classList.contains(MATRIX_FOCUS_CLASS)
+  if (active === focused) return
+  if (focused) state.matrixFocusScrollY = window.scrollY
+  document.body.classList.toggle(MATRIX_FOCUS_CLASS, focused)
+  for (const button of [elements.matrixFocus, elements.mobileMatrixFocus]) {
+    button.setAttribute("aria-pressed", String(focused))
+    button.textContent = focused ? "Exit focus" : "Focus matrix"
+    button.title = focused
+      ? "Return to the fleet overview"
+      : "Use the full viewport for the matrix"
+  }
+  if (!focused) {
+    requestAnimationFrame(() => {
+      window.scrollTo({
+        behavior: "auto",
+        top: state.matrixFocusScrollY,
+      })
+    })
+  }
+}
+
 function handleGlobalShortcut(event) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
   if (event.key === "Escape" && state.inlineEditor?.form.contains(event.target)) {
@@ -2111,6 +2153,17 @@ function handleGlobalShortcut(event) {
     event.preventDefault()
     elements.search.value = ""
     filterRows()
+    return
+  }
+  if (event.key === "Escape"
+    && document.body.classList.contains(MATRIX_FOCUS_CLASS)
+    && !document.querySelector("dialog[open]")) {
+    event.preventDefault()
+    setMatrixFocus(false)
+    const focusControl = compactToolbarMedia.matches
+      ? elements.mobileMatrixFocus
+      : elements.matrixFocus
+    focusControl.focus()
   }
 }
 
@@ -2266,6 +2319,67 @@ function syncRedirectTypeAvailability() {
   if (!available) elements.redirectType.value = ""
 }
 
+function currentMatrixFilters() {
+  return {
+    category: elements.category.value,
+    differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
+    query: elements.search.value,
+    recordType: elements.dnsType.value,
+    redirectType: elements.redirectType.value,
+    scope: elements.scope.value,
+    targetHolesOnly: elements.targetHoles.getAttribute("aria-pressed") === "true",
+    targetZoneIds: state.selectedZoneIds,
+    zoneCount: state.inventory?.zones.length || 0,
+  }
+}
+
+function syncResponsiveFilterPanel() {
+  const compact = compactToolbarMedia.matches
+  elements.filterPanelToggle.hidden = !compact
+  elements.toolbarSecondary.hidden = compact && !state.filterPanelExpanded
+  elements.filterPanelToggle.setAttribute(
+    "aria-expanded",
+    String(!compact || state.filterPanelExpanded),
+  )
+}
+
+function syncMatrixFilterControls(filters = currentMatrixFilters()) {
+  const changeCount = matrixFilterChangeCount(filters)
+  const label = changeCount === 0 ? "Filters" : `Filters (${changeCount})`
+  elements.filterReset.hidden = changeCount === 0
+  elements.filterReset.disabled = changeCount === 0
+  elements.filterPanelToggle.textContent = state.filterPanelExpanded
+    ? "Hide filters"
+    : label
+  elements.filterPanelToggle.setAttribute(
+    "aria-label",
+    `${state.filterPanelExpanded ? "Hide" : "Show"} secondary filters. ${changeCount} non-default filter${changeCount === 1 ? "" : "s"}.`,
+  )
+  elements.filterPanelToggle.classList.toggle("active", changeCount > 0)
+  syncResponsiveFilterPanel()
+}
+
+function resetMatrixFilters() {
+  elements.search.value = DEFAULT_MATRIX_FILTERS.query
+  elements.category.value = DEFAULT_MATRIX_FILTERS.category
+  elements.scope.value = DEFAULT_MATRIX_FILTERS.scope
+  elements.dnsType.value = DEFAULT_MATRIX_FILTERS.recordType
+  elements.redirectType.value = DEFAULT_MATRIX_FILTERS.redirectType
+  elements.differenceToggle.setAttribute(
+    "aria-pressed",
+    String(DEFAULT_MATRIX_FILTERS.differencesOnly),
+  )
+  elements.targetHoles.setAttribute(
+    "aria-pressed",
+    String(DEFAULT_MATRIX_FILTERS.targetHolesOnly),
+  )
+  elements.targetHoles.textContent = "Target holes"
+  state.filterPanelExpanded = false
+  syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
+  filterRows()
+}
+
 function renderMatrixFilters() {
   renderCategories()
   renderScopes()
@@ -2273,6 +2387,7 @@ function renderMatrixFilters() {
   renderRedirectTypes()
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
+  syncMatrixFilterControls()
 }
 
 function renderPolicyCards() {
@@ -4034,6 +4149,10 @@ function renderMatrix() {
     categoryCell.scope = "row"
     const facetCell = createElement("th", { className: "facet-cell" })
     facetCell.scope = "row"
+    facetCell.append(createElement("small", {
+      className: "facet-category",
+      text: row.category,
+    }))
     const hasConsensus = row.consensusCanonical !== null
     const consensusBadge = createElement("small", {
       className: `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}`,
@@ -4148,10 +4267,26 @@ function renderMatrix() {
   filterRows()
 }
 
+function syncCoverageVisibility() {
+  const healthyItems = [...elements.coverageList.querySelectorAll(".healthy")]
+  const issueCount = elements.coverageList.querySelectorAll(".failed, .blocked").length
+  for (const item of healthyItems) item.hidden = !state.coverageExpanded
+  elements.coverageList.hidden = issueCount === 0 && !state.coverageExpanded
+  elements.coverageToggle.hidden = healthyItems.length === 0
+  elements.coverageSummary.textContent = issueCount === 0
+    ? `All ${healthyItems.length} readable surfaces succeeded`
+    : `${issueCount} issue${issueCount === 1 ? "" : "s"} shown | ${healthyItems.length} healthy surface${healthyItems.length === 1 ? "" : "s"} ${state.coverageExpanded ? "shown" : "hidden"}`
+  elements.coverageToggle.textContent = state.coverageExpanded
+    ? "Show issues only"
+    : "Show all coverage"
+  elements.coverageToggle.setAttribute("aria-expanded", String(state.coverageExpanded))
+}
+
 function renderCoverage() {
   const fragment = document.createDocumentFragment()
-  for (const coverage of coverageFor(state.inventory)) {
-    const item = createElement("li", { className: coverage.ok ? "" : "failed" })
+  const inventoryCoverage = coverageFor(state.inventory)
+  for (const coverage of inventoryCoverage) {
+    const item = createElement("li", { className: coverage.ok ? "healthy" : "failed" })
     item.append(
       createElement("span", { text: coverage.label }),
       createElement("small", { text: coverage.detail }),
@@ -4167,21 +4302,12 @@ function renderCoverage() {
     fragment.append(item)
   }
   elements.coverageList.replaceChildren(fragment)
+  syncCoverageVisibility()
 }
 
 function filterRows() {
   const rows = [...elements.matrixBody.querySelectorAll("tr")]
-  const filters = {
-    category: elements.category.value,
-    differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
-    query: elements.search.value,
-    recordType: elements.dnsType.value,
-    redirectType: elements.redirectType.value,
-    scope: elements.scope.value,
-    targetHolesOnly: elements.targetHoles.getAttribute("aria-pressed") === "true",
-    targetZoneIds: state.selectedZoneIds,
-    zoneCount: state.inventory?.zones.length || 0,
-  }
+  const filters = currentMatrixFilters()
   let visible = 0
 
   for (const row of rows) {
@@ -4200,6 +4326,7 @@ function filterRows() {
   }
 
   elements.visibleCount.textContent = `${visible} / ${rows.length} facets`
+  syncMatrixFilterControls(filters)
   syncMatrixActionTabStop()
 }
 
@@ -4208,6 +4335,9 @@ function updateSelectionStyles() {
   const targetHolesWasActive = elements.targetHoles.getAttribute("aria-pressed") === "true"
   const driftCount = policyDriftZoneIds().length
   const zoneCount = state.inventory?.zones.length || 0
+  const selectionCanNarrow = count > 0 && count < zoneCount
+  if (!selectionCanNarrow) state.selectedColumnsOnly = false
+  const selectedColumnsOnly = selectionCanNarrow && state.selectedColumnsOnly
   elements.selectionCount.textContent = String(count)
   elements.writeSelectionSummary.textContent = count === 0
     ? "No target zones selected"
@@ -4216,9 +4346,28 @@ function updateSelectionStyles() {
     const selected = state.selectedZoneIds.has(element.dataset.zoneId)
     if (element.classList.contains("zone-heading")) element.classList.toggle("selected", selected)
     if (element.classList.contains("matrix-cell")) element.classList.toggle("selected-column", selected)
+    if (element.classList.contains("zone-heading")
+      || element.classList.contains("matrix-cell")) {
+      element.classList.toggle(
+        MATRIX_COLUMN_HIDDEN_CLASS,
+        !matrixColumnIsVisible(
+          element.dataset.zoneId,
+          state.selectedZoneIds,
+          selectedColumnsOnly,
+        ),
+      )
+    }
   }
   elements.clearSelection.disabled = count === 0
   elements.selectDrifted.disabled = driftCount === 0
+  elements.selectedColumnsOnly.disabled = !selectionCanNarrow
+  elements.selectedColumnsOnly.setAttribute("aria-pressed", String(selectedColumnsOnly))
+  elements.selectedColumnsOnly.textContent = selectedColumnsOnly
+    ? "Show all zones"
+    : "Selected zones only"
+  elements.selectedColumnsOnly.title = selectedColumnsOnly
+    ? "Show every zone column"
+    : "Hide unselected zone columns without changing fleet comparisons"
   elements.targetClear.disabled = count === 0
   elements.targetHoles.disabled = count === 0
   elements.targetSelectAll.disabled = zoneCount > 0 && count === zoneCount
@@ -4230,6 +4379,7 @@ function updateSelectionStyles() {
   if (elements.targetDialog.open) updateTargetSelectionSummary()
   updateActionButtons()
   if (targetHolesWasActive) filterRows()
+  syncMatrixActionTabStop()
 }
 
 function syncSelectionControls() {
@@ -4386,7 +4536,7 @@ function renderTargetOptions() {
     const copy = createElement("span")
     copy.append(createElement("strong", { text: zone.meta.name }))
     copy.append(createElement("small", {
-      text: drifted.has(zone.meta.id) ? "Policy drift detected" : "Policy aligned",
+      text: drifted.has(zone.meta.id) ? "Policy drift detected" : "No policy drift",
     }))
     label.append(checkbox, copy)
     fragment.append(label)
@@ -6862,6 +7012,18 @@ elements.differenceToggle.addEventListener("click", () => {
   elements.differenceToggle.setAttribute("aria-pressed", String(next))
   filterRows()
 })
+elements.filterPanelToggle.addEventListener("click", () => {
+  state.filterPanelExpanded = !state.filterPanelExpanded
+  syncMatrixFilterControls()
+})
+elements.filterReset.addEventListener("click", resetMatrixFilters)
+elements.matrixFocus.addEventListener("click", () => {
+  setMatrixFocus(!document.body.classList.contains(MATRIX_FOCUS_CLASS))
+})
+elements.mobileMatrixFocus.addEventListener("click", () => {
+  setMatrixFocus(!document.body.classList.contains(MATRIX_FOCUS_CLASS))
+})
+compactToolbarMedia.addEventListener("change", syncResponsiveFilterPanel)
 elements.matrixHead.addEventListener("change", (event) => {
   const checkbox = event.target.closest("input[data-zone-id]")
   if (!checkbox) return
@@ -6935,6 +7097,11 @@ elements.selectDrifted.addEventListener("click", () => {
   selectZoneIds(policyDriftZoneIds())
 })
 elements.chooseTargets.addEventListener("click", showTargetDialog)
+elements.matrixChooseTargets.addEventListener("click", showTargetDialog)
+elements.selectedColumnsOnly.addEventListener("click", () => {
+  state.selectedColumnsOnly = !state.selectedColumnsOnly
+  updateSelectionStyles()
+})
 elements.showEditableSettings.addEventListener("click", showEditableSettings)
 elements.targetOptions.addEventListener("change", (event) => {
   const checkbox = event.target.closest("input[data-zone-id]")
@@ -6951,6 +7118,10 @@ elements.targetSelectDrifted.addEventListener("click", () => {
 })
 elements.targetClear.addEventListener("click", () => {
   selectZoneIds([])
+})
+elements.coverageToggle.addEventListener("click", () => {
+  state.coverageExpanded = !state.coverageExpanded
+  syncCoverageVisibility()
 })
 elements.alignEmail.addEventListener("click", alignEmail)
 elements.alignWaf.addEventListener("click", alignWaf)
@@ -7120,4 +7291,5 @@ setInterval(() => {
 document.addEventListener("click", followSkipLink)
 document.addEventListener("keydown", handleGlobalShortcut)
 
+syncResponsiveFilterPanel()
 initialize()
