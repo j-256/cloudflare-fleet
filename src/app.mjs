@@ -2203,10 +2203,8 @@ function renderIntentPolicyCard() {
   elements.intentPolicyReview.hidden = reviewCount === 0
   elements.intentPolicyReview.textContent = `${reviewCount} need review`
   elements.manageIntent.textContent = readOnly
-    ? "View intent"
-    : summary.policies === 0
-      ? "Set up intent"
-      : "Manage intent"
+    ? "View fleet intent"
+    : "Manage fleet intent"
 }
 
 function renderCategories() {
