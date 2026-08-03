@@ -27,7 +27,6 @@
         <div>
           <p class="eyebrow">Cloudflare control plane / live local session</p>
           <h1>Fleet matrix</h1>
-          <p class="lede">Inspect drift across every readable zone surface, select zones, preview changes, and verify each write against the live API.</p>
         </div>
         <div class="session-state" role="status" aria-live="polite" aria-atomic="true">
           <span class="status-dot" id="status-dot" aria-hidden="true"></span>
@@ -46,7 +45,6 @@
     </header>
 
     <nav class="toolbar" id="fleet-controls" aria-label="Fleet controls" tabindex="-1">
-      <button class="button button-primary" id="refresh" type="button">Refresh full fleet</button>
       <label class="sr-only" for="search">Search facets, values, or zones</label>
       <input id="search" type="search" placeholder="Search facets, values, or zones" aria-describedby="visible-count" aria-keyshortcuts="/">
       <div class="toolbar-secondary" id="toolbar-secondary">
@@ -75,14 +73,13 @@
       <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters</button>
       <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
       <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
+      <button class="button button-quiet toolbar-refresh" id="refresh" type="button">Refresh full fleet</button>
     </nav>
 
     <main id="main-content">
       <section class="write-panel" id="write-panel" hidden>
-        <div>
-          <p class="policy-kicker">Write mode</p>
-          <h2>Select targets or edit a cell</h2>
-          <p>Choose zones for fleet actions; click any outlined cell to edit or fill. Every change is live-validated and reviewed.</p>
+        <div class="write-panel-status">
+          <h2>Write controls</h2>
           <p class="write-readiness" id="write-readiness" role="status" aria-live="polite">Loading live state; writes are locked</p>
         </div>
         <div class="write-panel-actions">
@@ -95,7 +92,6 @@
       <section class="policy-grid" aria-label="Fleet policies">
         <article class="policy-card intent-policy-card">
           <div>
-            <p class="policy-kicker">Desired state</p>
             <h2>Fleet intent</h2>
             <p id="intent-policy-detail">No facets governed yet</p>
           </div>
@@ -109,7 +105,6 @@
         </article>
         <article class="policy-card">
           <div>
-            <p class="policy-kicker">Email policy</p>
             <h2>Email Routing</h2>
             <p id="email-policy-detail">Loading forwarding consensus</p>
           </div>
@@ -123,7 +118,6 @@
         </article>
         <article class="policy-card">
           <div>
-            <p class="policy-kicker">Firewall policy</p>
             <h2>Shared WAF rules</h2>
             <p id="waf-policy-detail">Loading rule consensus</p>
           </div>
@@ -144,18 +138,23 @@
           <button class="button button-quiet" id="clear-selection" type="button">Clear</button>
         </section>
 
-        <aside class="legend" aria-label="Matrix legend">
-          <span class="same" title="Matches the unique most-common present value in this row">Consensus match</span>
-          <span class="variant">Variant</span>
-          <span class="hole">Missing</span>
-          <span class="editable">Editable</span>
-          <span class="copyable">Copyable</span>
-          <span class="renameable">Fleet rename</span>
-          <span class="intent-drift">Intent drift</span>
-          <span class="acknowledged">Acknowledged</span>
-        </aside>
+        <details class="matrix-guide">
+          <summary>Matrix guide</summary>
+          <div class="matrix-guide-content">
+            <aside class="legend" aria-label="Matrix legend">
+              <span class="same" title="Matches the unique most-common present value in this row">Consensus match</span>
+              <span class="variant">Variant</span>
+              <span class="hole">Missing</span>
+              <span class="editable">Editable</span>
+              <span class="copyable">Copyable</span>
+              <span class="renameable">Fleet rename</span>
+              <span class="intent-drift">Intent drift</span>
+              <span class="acknowledged">Acknowledged</span>
+            </aside>
+            <p><kbd>/</kbd> focuses search. Arrow keys move between matrix controls. Outlined cells are editable or copyable; fleet actions use the selected zones.</p>
+          </div>
+        </details>
         <button class="button button-quiet matrix-focus-toggle" id="matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
-        <span class="matrix-shortcuts" aria-hidden="true">/ search | arrows navigate</span>
       </div>
 
       <p class="matrix-instructions sr-only" id="matrix-instructions">Filter before navigating this large table. Tab enters matrix controls once; use the arrow keys to move between controls and Enter to activate. When the scroll frame is focused, arrow keys pan the matrix.</p>

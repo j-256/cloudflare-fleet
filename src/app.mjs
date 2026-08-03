@@ -204,6 +204,7 @@ const MATRIX_COMPARISON_STATE = Object.freeze({
   VARIANT: "variant",
 })
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
+const COMPACT_FILTER_MEDIA_QUERY = "(max-width: 1179px)"
 const COMPACT_TOOLBAR_MEDIA_QUERY = "(max-width: 620px)"
 const MATRIX_FOCUS_CLASS = "matrix-focus"
 const MATRIX_COLUMN_HIDDEN_CLASS = "matrix-column-hidden"
@@ -249,6 +250,7 @@ const REDIRECT_PRIMARY_RULE_FIELDS = new Set([
 ])
 const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]))
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
+const compactFilterMedia = window.matchMedia(COMPACT_FILTER_MEDIA_QUERY)
 const compactToolbarMedia = window.matchMedia(COMPACT_TOOLBAR_MEDIA_QUERY)
 const POLICY_EXCEPTION_COMPONENT_LABELS = Object.freeze({
   [EMAIL_POLICY_COMPONENT.SPF]: "SPF",
@@ -432,6 +434,7 @@ const elements = {
   matrixBody: document.querySelector("#matrix-body"),
   matrixChooseTargets: document.querySelector("#matrix-choose-targets"),
   matrixFocus: document.querySelector("#matrix-focus"),
+  matrixGuide: document.querySelector(".matrix-guide"),
   mobileMatrixFocus: document.querySelector("#mobile-matrix-focus"),
   matrixHead: document.querySelector("#matrix-head"),
   policyExceptionDialog: document.querySelector("#policy-exception-dialog"),
@@ -593,23 +596,18 @@ function restoreInventoryStatus() {
 
   if (state.inventorySource === INVENTORY_SOURCE.CACHE) {
     setStatus("Cached fleet ready", "cached")
-    setRefreshDetail("Writes validate live on use; Refresh full fleet runs a complete audit")
+    setRefreshDetail()
     setWriteReadiness(
-      "Cached fleet ready; every change is live-validated before confirmation",
+      "Writes live-validated before confirmation",
       "cached",
     )
     return
   }
 
   setStatus("Fleet loaded", "ready")
-  setRefreshDetail(
-    state.startupCacheLoadedAt
-      ? "Opened from cache; full live audit completed"
-      : "",
-    "complete",
-  )
+  setRefreshDetail()
   setWriteReadiness(
-    "Full live audit loaded; every change is revalidated before confirmation",
+    "Writes revalidated live before confirmation",
     "ready",
   )
 }
@@ -2485,6 +2483,20 @@ function setMatrixFocus(focused) {
   }
 }
 
+function closeMatrixGuideOnOutsideClick(event) {
+  if (elements.matrixGuide.open && !elements.matrixGuide.contains(event.target)) {
+    elements.matrixGuide.open = false
+  }
+}
+
+function handleMatrixGuideKeydown(event) {
+  if (event.key !== "Escape" || !elements.matrixGuide.open) return
+  event.preventDefault()
+  event.stopPropagation()
+  elements.matrixGuide.open = false
+  elements.matrixGuide.querySelector("summary").focus()
+}
+
 function handleGlobalShortcut(event) {
   if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return
   if (event.key === "Escape" && state.inlineEditor?.form.contains(event.target)) {
@@ -2549,6 +2561,7 @@ function renderIntentPolicyCard() {
   elements.intentPolicyDetail.textContent = summary.policies === 0
     ? `No facets governed yet | ${customGroupCount} custom group${customGroupCount === 1 ? "" : "s"}`
     : `${summary.governedRows} governed facet${summary.governedRows === 1 ? "" : "s"} | ${summary.acknowledgedCells} acknowledged cell${summary.acknowledgedCells === 1 ? "" : "s"}`
+  elements.intentPolicyDetail.title = elements.intentPolicyDetail.textContent
   elements.intentPolicyDrift.textContent = `${summary.actionableCells} actionable`
   const reviewCount = summary.staleAcknowledgements + summary.unresolvedPolicies
   elements.intentPolicyReview.hidden = reviewCount === 0
@@ -2683,7 +2696,7 @@ function currentMatrixFilters() {
 }
 
 function syncResponsiveFilterPanel() {
-  const compact = compactToolbarMedia.matches
+  const compact = compactFilterMedia.matches
   elements.filterPanelToggle.hidden = !compact
   elements.toolbarSecondary.hidden = compact && !state.filterPanelExpanded
   elements.filterPanelToggle.setAttribute(
@@ -2776,6 +2789,7 @@ function renderPolicyCards() {
       state.emailDnsPolicy.available ? "" : state.emailDnsPolicy.reason,
     ].filter(Boolean).join("; ")
   }
+  elements.emailPolicyDetail.title = elements.emailPolicyDetail.textContent
   elements.emailPolicyDrift.textContent = `${emailDrift.length} drifted`
   const exceptionCount = state.emailPolicyExceptionStatuses.length
   const activeExceptionCount = state.emailPolicyExceptionStatuses.filter(
@@ -2810,6 +2824,7 @@ function renderPolicyCards() {
     const reasons = [...state.wafPolicies.values()].filter((policy) => !policy.available).map((policy) => policy.reason)
     elements.wafPolicyDetail.textContent = reasons.join("; ")
   }
+  elements.wafPolicyDetail.title = elements.wafPolicyDetail.textContent
   elements.wafPolicyDrift.textContent = `${wafDrift.length} drifted`
 
   renderIntentPolicyCard()
@@ -7799,7 +7814,8 @@ elements.matrixFocus.addEventListener("click", () => {
 elements.mobileMatrixFocus.addEventListener("click", () => {
   setMatrixFocus(!document.body.classList.contains(MATRIX_FOCUS_CLASS))
 })
-compactToolbarMedia.addEventListener("change", syncResponsiveFilterPanel)
+compactFilterMedia.addEventListener("change", syncResponsiveFilterPanel)
+elements.matrixGuide.addEventListener("keydown", handleMatrixGuideKeydown)
 elements.matrixHead.addEventListener("change", (event) => {
   const checkbox = event.target.closest("input[data-zone-id]")
   if (!checkbox) return
@@ -8119,6 +8135,7 @@ document.addEventListener("visibilitychange", () => {
 setInterval(() => {
   if (document.visibilityState === "visible") syncFleetIntent({ silent: true })
 }, INTENT_SYNC_INTERVAL_MS)
+document.addEventListener("click", closeMatrixGuideOnOutsideClick)
 document.addEventListener("click", followSkipLink)
 document.addEventListener("keydown", handleGlobalShortcut)
 
