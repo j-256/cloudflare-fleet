@@ -14,11 +14,19 @@ import {
   readNewestCacheRecord,
 } from "../src/cache-store.mjs"
 import {
+  readOperationActivityDocument,
+} from "../src/activity-store.mjs"
+import {
   createEmptyFleetIntentDocument,
 } from "../src/fleet-intent.mjs"
 import {
   readFleetIntentDocument,
 } from "../src/intent-store.mjs"
+import {
+  completeOperationActivity,
+  createPendingOperationActivity,
+  OPERATION_ACTIVITY_STATUS,
+} from "../src/operation-history.mjs"
 import {
   startSessionBroker,
 } from "../src/session-broker.mjs"
@@ -302,6 +310,106 @@ test("session broker reads and writes authorized fleet intent", async () => {
       (await fs.readdir(fixture.cacheDir)).some((entry) => entry.startsWith("intent-")),
       false,
     )
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker starts and finalizes durable operation activity", async () => {
+  const fixture = await brokerFixture()
+  try {
+    const url = new URL("api/activity", fixture.broker.sessionUrl)
+    const headers = {
+      "Content-Type": "application/json",
+      [BROKER_SESSION_HEADER]: "session-secret",
+      Origin: fixture.broker.origin,
+    }
+    const initialResponse = await fetch(url, { headers })
+    const initial = (await initialResponse.json()).result
+    assert.deepEqual(initial.entries, [])
+
+    const pending = createPendingOperationActivity(
+      "Update zone setting",
+      {
+        plans: [{
+          id: "plan-one",
+          kind: "setting",
+          operations: [{
+            body: { value: "on" },
+            currentValue: "off",
+            label: "Set always_use_https",
+            method: "PATCH",
+            path: "zones/zone-one/settings/always_use_https",
+          }],
+          summary: "Update always_use_https on alpha.example",
+          zoneId: "zone-one",
+          zoneName: "alpha.example",
+        }],
+        validatedAt: "2026-08-03T03:00:00.000Z",
+      },
+      {
+        id: "activity-one",
+        startedAt: "2026-08-03T03:00:00.000Z",
+      },
+    )
+    const malformed = structuredClone(pending)
+    malformed.plans[0].operations[0].method = "GET"
+    const malformedResponse = await fetch(url, {
+      body: JSON.stringify({ entry: malformed }),
+      headers,
+      method: "POST",
+    })
+    assert.equal(malformedResponse.status, 400)
+    const startResponse = await fetch(url, {
+      body: JSON.stringify({ entry: pending }),
+      headers,
+      method: "POST",
+    })
+    assert.equal(startResponse.status, 200)
+
+    const completed = completeOperationActivity(pending, {
+      completedAt: "2026-08-03T03:01:00.000Z",
+      execution: { completed: 1, total: 1 },
+      inverse: { available: false, plans: [], reason: "Test" },
+      status: OPERATION_ACTIVITY_STATUS.VERIFIED,
+      verification: [],
+    })
+    const finishResponse = await fetch(url, {
+      body: JSON.stringify({ entry: completed }),
+      headers,
+      method: "PATCH",
+    })
+    assert.equal(finishResponse.status, 200)
+    assert.deepEqual(
+      (await readOperationActivityDocument(fixture.stateFile, "account-id"))
+        .entries[0],
+      completed,
+    )
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("read-only session broker rejects operation activity writes", async () => {
+  const fixture = await brokerFixture({
+    readOnly: true,
+  })
+  try {
+    const url = new URL("api/activity", fixture.broker.sessionUrl)
+    const headers = {
+      "Content-Type": "application/json",
+      [BROKER_SESSION_HEADER]: "session-secret",
+      Origin: fixture.broker.origin,
+    }
+    for (const method of ["POST", "PATCH"]) {
+      const response = await fetch(url, {
+        body: JSON.stringify({}),
+        headers,
+        method,
+      })
+
+      assert.equal(response.status, 403)
+    }
   } finally {
     await closeFixture(fixture)
   }

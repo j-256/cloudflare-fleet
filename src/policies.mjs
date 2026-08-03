@@ -657,6 +657,10 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
 
   if (!email?.skip_wizard || !email?.support_subaddress) {
     operations.push({
+      currentValue: {
+        skip_wizard: Boolean(email?.skip_wizard),
+        support_subaddress: Boolean(email?.support_subaddress),
+      },
       label: "Match Email Routing settings",
       method: HTTP_METHOD.PATCH,
       path: `zones/${zoneId}/email/routing`,
@@ -668,7 +672,7 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
   }
 
   if (!catchAll?.enabled || destinations.length !== 1 || destinations[0] !== destination) {
-    operations.push({
+    const operation = {
       label: "Match catch-all forwarding",
       method: HTTP_METHOD.PUT,
       path: `zones/${zoneId}/email/routing/rules/catch_all`,
@@ -688,7 +692,14 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
         name: EMAIL_CATCH_ALL_NAME,
         source: "api",
       },
-    })
+    }
+    if (catchAll) {
+      operation.currentValue = editableEmailRoutingRulePayload(
+        catchAll,
+        { catchAll: true },
+      )
+    }
+    operations.push(operation)
   }
 
   if (email?.enabled && !currentSpf.matches && !spfDifferenceAcknowledged) {
@@ -711,6 +722,7 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
       const recordId = currentSpf.records[0].id
       if (!recordId) throw new Error(`The SPF record identifier is unavailable on ${zoneName}`)
       operations.push({
+        currentValue: editableDnsRecordPayload(currentSpf.records[0]),
         label: "Match the fleet SPF value and TTL",
         method: HTTP_METHOD.PATCH,
         path: `zones/${zoneId}/dns_records/${recordId}`,
@@ -745,6 +757,7 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
       const recordId = currentDmarc.records[0].id
       if (!recordId) throw new Error(`The DMARC record identifier is unavailable on ${zoneName}`)
       operations.push({
+        currentValue: editableDnsRecordPayload(currentDmarc.records[0]),
         label: "Match the fleet DMARC value and TTL",
         method: HTTP_METHOD.PATCH,
         path: `zones/${zoneId}/dns_records/${recordId}`,
@@ -1280,6 +1293,7 @@ function buildRuleCopyPlan(sourceZone, sourceRule, targetZone) {
           matchedBy: "none",
           phase,
           ruleCount,
+          ruleIds: targetRuleset.rules?.map((rule) => rule.id).filter(Boolean) || [],
         },
         label: `Copy ${sourceRule.label} from ${sourceZone.meta.name}`,
         method: HTTP_METHOD.POST,
@@ -1609,6 +1623,9 @@ export function buildRuleCreatePlan(zone, ruleset, desiredDefinition) {
     operations: [
       {
         body: desired,
+        currentValue: {
+          ruleIds: ruleset.rules?.map((rule) => rule.id).filter(Boolean) || [],
+        },
         label: `Create ${label}`,
         method: HTTP_METHOD.POST,
         path: `zones/${zone.meta.id}/rulesets/${ruleset.id}/rules`,
@@ -1897,6 +1914,9 @@ export function buildWafAlignmentPlan(zone, policies) {
       const existing = ruleset.rules?.find((rule) => rule.description === description)
       if (!existing) {
         operations.push({
+          currentValue: {
+            ruleIds: ruleset.rules?.map((rule) => rule.id).filter(Boolean) || [],
+          },
           label: `Add ${description}`,
           method: HTTP_METHOD.POST,
           path: `zones/${zoneId}/rulesets/${ruleset.id}/rules`,
@@ -1908,6 +1928,7 @@ export function buildWafAlignmentPlan(zone, policies) {
       const current = stableString(normalizeValue(writeRule(existing), zoneName, { preserveOrder: true }))
       if (current !== policy.canonical) {
         operations.push({
+          currentValue: writeRule(existing),
           label: `Update ${description}`,
           method: HTTP_METHOD.PATCH,
           path: `zones/${zoneId}/rulesets/${ruleset.id}/rules/${existing.id}`,
@@ -1970,11 +1991,13 @@ export async function executePlans(api, plans, options = {}) {
       plan: entry.plan,
     })
     const response = await api.executeOperation(entry.operation, { signal: options.signal })
-    results.push({
+    const result = {
       operation: entry.operation,
       plan: entry.plan,
       response,
-    })
+    }
+    results.push(result)
+    options.onResult?.(result)
   }
 
   options.onProgress?.({

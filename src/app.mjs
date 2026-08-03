@@ -81,6 +81,16 @@ import {
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
 import {
+  buildInversePlans,
+  compareVerificationGuards,
+  completeOperationActivity,
+  createEmptyOperationActivityDocument,
+  createPendingOperationActivity,
+  createVerificationGuards,
+  isOperationActivityDocument,
+  OPERATION_ACTIVITY_STATUS,
+} from "./operation-history.mjs"
+import {
   DEFAULT_MATRIX_FILTERS,
   DEFAULT_MATRIX_SCOPE,
   DNS_MATRIX_CATEGORIES,
@@ -167,6 +177,7 @@ import {
 } from "./value-editor.mjs"
 import {
   verificationTargetsForPlans,
+  verificationTargetsForResults,
   WRITE_VERIFICATION_KIND,
 } from "./write-verification.mjs"
 
@@ -227,6 +238,18 @@ const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const RULESET_RULE_PREVIEW_LIMIT = 220
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
 const INTENT_SYNC_INTERVAL_MS = 5000
+const ACTIVITY_FILTER = Object.freeze({
+  ALL: "all",
+  FAILED: "failed",
+  PENDING: "pending",
+  UNDOABLE: "undoable",
+})
+const ACTIVITY_STATUS_LABEL = Object.freeze({
+  [OPERATION_ACTIVITY_STATUS.PENDING]: "Incomplete",
+  [OPERATION_ACTIVITY_STATUS.VERIFICATION_FAILED]: "Verification failed",
+  [OPERATION_ACTIVITY_STATUS.VERIFIED]: "Verified",
+  [OPERATION_ACTIVITY_STATUS.WRITE_FAILED]: "Write failed",
+})
 const INTENT_ZONE_SUMMARY_LIMIT = 3
 const INTENT_POLICY_VALUE_SEPARATOR = "\u0000"
 const INTENT_POLICY_VALUE_MODE = Object.freeze({
@@ -303,6 +326,9 @@ const POLICY_EXCEPTION_STATUS_LABELS = Object.freeze({
 document.title = readOnly ? SESSION_TITLE.READ_ONLY : SESSION_TITLE.READ_WRITE
 const state = {
   abortController: null,
+  activity: createEmptyOperationActivityDocument(),
+  activityGuardFailures: new Map(),
+  activityLoading: false,
   busy: false,
   busyFocus: null,
   coverageEvaluation: null,
@@ -351,8 +377,17 @@ const workspaceActionByButton = new WeakMap()
 const intentCellActionByButton = new WeakMap()
 const intentPolicyRowByButton = new WeakMap()
 const rulesetComparisonRowByButton = new WeakMap()
+const activityEntryByButton = new WeakMap()
 
 const elements = {
+  activityCount: document.querySelector("#activity-count"),
+  activityDialog: document.querySelector("#activity-dialog"),
+  activityFilter: document.querySelector("#activity-filter"),
+  activityList: document.querySelector("#activity-list"),
+  activityLoadError: document.querySelector("#activity-load-error"),
+  activityRefresh: document.querySelector("#activity-refresh"),
+  activitySummary: document.querySelector("#activity-summary"),
+  activityVisibleCount: document.querySelector("#activity-visible-count"),
   alignEmail: document.querySelector("#align-email"),
   alignWaf: document.querySelector("#align-waf"),
   category: document.querySelector("#category"),
@@ -546,6 +581,7 @@ const elements = {
   selectionCount: document.querySelector("#selection-count"),
   sessionMode: document.querySelector("#session-mode"),
   showEditableSettings: document.querySelector("#show-editable-settings"),
+  showActivity: document.querySelector("#show-activity"),
   snapshotTime: document.querySelector("#snapshot-time"),
   scope: document.querySelector("#scope"),
   statusDot: document.querySelector("#status-dot"),
@@ -605,6 +641,7 @@ function updateTransportDependentControls() {
   elements.refresh.disabled = state.busy || !state.transportAvailable
   updateActionButtons()
   updateRulesetActionAvailability()
+  if (elements.activityDialog.open) renderOperationActivity()
 }
 
 function setBusy(busy) {
@@ -1931,7 +1968,7 @@ function reportScopedWriteVerification(count) {
 async function verifyChangedWriteTargets(targets) {
   if (targets.length === 0) {
     restoreInventoryStatus()
-    return
+    return []
   }
   setStatus(`Verifying changed resources 0/${targets.length}`)
   let completed = 0
@@ -1965,174 +2002,7 @@ async function verifyChangedWriteTargets(targets) {
   } else {
     reportScopedWriteVerification(targets.length)
   }
-}
-
-function patchVerifiedRuleset(action, ruleset, options = {}) {
-  const inventory = state.inventory
-  if (!inventory) throw new Error("The fleet snapshot is unavailable")
-  const zones = inventory.zones.map((zone) => {
-    if (zone.meta.id !== action.zoneId) return zone
-    const summaries = zone.surfaces.rulesets?.result || []
-    const nextSummaries = options.deleted
-      ? summaries.filter((entry) => entry.id !== action.rulesetId)
-      : [
-          ...summaries.filter((entry) => entry.id !== action.rulesetId),
-          rulesetSurfaceSummary(ruleset),
-        ]
-    const nextDetails = zone.ruleDetails
-      .filter((detail) => !detail.ok || detail.result.id !== action.rulesetId)
-    if (!options.deleted && rulesetIsEditable(ruleset)) {
-      nextDetails.push({
-        ok: true,
-        result: ruleset,
-        status: 200,
-      })
-    }
-    return {
-      ...zone,
-      ruleDetails: nextDetails,
-      surfaces: {
-        ...zone.surfaces,
-        rulesets: {
-          ...zone.surfaces.rulesets,
-          ok: true,
-          result: nextSummaries,
-          status: 200,
-        },
-      },
-    }
-  })
-  const patched = {
-    ...inventory,
-    zones,
-  }
-  renderInventory(patched, state.inventorySource)
-  const workspace = state.rulesetWorkspace
-  if (workspace
-    && workspace.action.zoneId === action.zoneId
-    && workspace.action.rulesetId === action.rulesetId
-    && !options.deleted) {
-    workspace.ruleset = ruleset
-    workspace.error = ""
-    workspace.loading = false
-    renderRulesetWorkspace()
-  }
-  return patched
-}
-
-async function verifyRulesetAction(action, options = {}) {
-  setStatus(`Verifying ${action.phase || "ruleset"} on ${zoneById(action.zoneId)?.meta.name || "zone"}`)
-  let ruleset = null
-  if (options.deleted) {
-    const response = await api.request(
-      `zones/${encodeURIComponent(action.zoneId)}/rulesets`,
-    )
-    if ((response.result || []).some((entry) => entry.id === action.rulesetId)) {
-      throw new Error("Cloudflare still reports the deleted ruleset")
-    }
-  } else {
-    const readAction = {
-      rulesetId: action.rulesetId,
-      type: READ_ACTION.RULESET_INSPECT,
-      zoneId: action.zoneId,
-    }
-    const resourceId = actionResourceId(readAction)
-    const liveData = await executeActionReadPlan(api, [readAction])
-    ruleset = normalizeRulesetDetail(liveData.resources.get(resourceId))
-    if (!ruleset) throw new Error("Ruleset verification returned no live detail")
-  }
-  const patched = patchVerifiedRuleset(action, ruleset, options)
-  const serializedSnapshot = serializeLiveSnapshot(patched)
-  window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
-  let snapshotSaved = true
-  try {
-    await api.persistSnapshot(serializedSnapshot)
-  } catch (error) {
-    snapshotSaved = false
-    setRefreshDetail(
-      `Live ruleset verified, but the snapshot was not saved: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    )
-  }
-  restoreInventoryStatus()
-  if (snapshotSaved) reportScopedWriteVerification(1)
-}
-
-function patchVerifiedEmailRoutingRule(action, rule) {
-  const inventory = state.inventory
-  if (!inventory) throw new Error("The fleet snapshot is unavailable")
-  const zones = inventory.zones.map((zone) => {
-    if (zone.meta.id !== action.zoneId) return zone
-    const surfaces = {
-      ...zone.surfaces,
-    }
-    if (action.catchAll) {
-      surfaces["email-catch-all"] = {
-        ...zone.surfaces["email-catch-all"],
-        ok: true,
-        result: rule,
-        status: 200,
-      }
-    }
-    const rulesSurface = zone.surfaces["email-rules"]
-    if (rulesSurface?.ok && Array.isArray(rulesSurface.result)) {
-      const matches = (candidate) => action.catchAll
-        ? candidate.id === rule.id
-          || candidate.matchers?.some((matcher) => matcher.type === "all")
-        : candidate.id === action.ruleId
-      const found = rulesSurface.result.some(matches)
-      surfaces["email-rules"] = {
-        ...rulesSurface,
-        result: found
-          ? rulesSurface.result.map((candidate) => (
-              matches(candidate) ? rule : candidate
-            ))
-          : [...rulesSurface.result, rule],
-        status: 200,
-      }
-    }
-    return {
-      ...zone,
-      surfaces,
-    }
-  })
-  const patched = {
-    ...inventory,
-    zones,
-  }
-  renderInventory(patched, state.inventorySource)
-  return patched
-}
-
-async function verifyEmailRoutingRuleAction(action) {
-  const zone = zoneById(action.zoneId)
-  setStatus(`Verifying Email Routing on ${zone?.meta.name || "zone"}`)
-  const readAction = {
-    ruleIdentifier: action.ruleIdentifier,
-    type: READ_ACTION.EMAIL_RULE_EDIT,
-    zoneId: action.zoneId,
-  }
-  const resourceId = actionResourceId(readAction)
-  const liveData = await executeActionReadPlan(api, [readAction])
-  const liveRule = liveData.resources.get(resourceId)
-  if (!liveRule) {
-    throw new Error("Email Routing rule verification returned no live definition")
-  }
-  const patched = patchVerifiedEmailRoutingRule(action, liveRule)
-  const serializedSnapshot = serializeLiveSnapshot(patched)
-  window[CACHE_SNAPSHOT_GLOBAL] = serializedSnapshot
-  let snapshotSaved = true
-  try {
-    await api.persistSnapshot(serializedSnapshot)
-  } catch (error) {
-    snapshotSaved = false
-    setRefreshDetail(
-      `Live Email Routing rule verified, but the snapshot was not saved: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    )
-  }
-  restoreInventoryStatus()
-  if (snapshotSaved) reportScopedWriteVerification(1)
+  return entries
 }
 
 function openRulesetWorkspace(action) {
@@ -5917,9 +5787,13 @@ function updateActionButtons() {
     || readOnly
     || !state.inventory
     || !state.transportAvailable
-  const writeLockReason = !state.transportAvailable
-    ? "Session broker offline; relaunch to restore live writes"
-    : "Another fleet operation is in progress"
+  const writeLockReason = readOnly
+    ? "This session is read-only"
+    : !state.transportAvailable
+      ? "Session broker offline; relaunch to restore live writes"
+      : state.busy
+        ? "Another fleet operation is in progress"
+        : "Fleet inventory is unavailable"
   elements.alignEmail.disabled = writeLocked || !hasSelection
   elements.alignWaf.disabled = writeLocked || !hasSelection
   elements.alignEmail.title = !hasSelection && !readOnly
@@ -5939,6 +5813,13 @@ function updateActionButtons() {
   }
   for (const button of document.querySelectorAll(".edit-cell")) {
     button.disabled = writeLocked
+  }
+  for (const button of document.querySelectorAll(".activity-undo")) {
+    const entry = activityEntryByButton.get(button)
+    button.disabled = writeLocked || !entry || !activityUndoable(entry)
+    button.title = writeLocked
+      ? writeLockReason
+      : "Fresh-read the affected resources before reviewing the inverse writes"
   }
   for (const button of document.querySelectorAll(".fill-hole")) {
     button.disabled = writeLocked
@@ -6059,6 +5940,395 @@ function showEditableSettings() {
   firstEdit?.querySelector(".edit-cell")?.focus({ preventScroll: true })
 }
 
+function activityOperations(entry) {
+  return entry.plans.flatMap((plan) => plan.operations.map((operation) => ({
+    operation,
+    plan,
+  })))
+}
+
+function verifiedUndoFor(entry, entries = state.activity.entries) {
+  return entries.find((candidate) => (
+    candidate.undoOf === entry.id
+      && candidate.status === OPERATION_ACTIVITY_STATUS.VERIFIED
+  )) || null
+}
+
+function pendingUndoFor(entry, entries = state.activity.entries) {
+  return entries.find((candidate) => (
+    candidate.undoOf === entry.id
+      && candidate.status === OPERATION_ACTIVITY_STATUS.PENDING
+  )) || null
+}
+
+function activityUndoable(entry, entries = state.activity.entries) {
+  return entry.status === OPERATION_ACTIVITY_STATUS.VERIFIED
+    && entry.inverse?.available === true
+    && !verifiedUndoFor(entry, entries)
+    && !pendingUndoFor(entry, entries)
+}
+
+function activityMatchesFilter(entry, filter) {
+  if (filter === ACTIVITY_FILTER.UNDOABLE) return activityUndoable(entry)
+  if (filter === ACTIVITY_FILTER.FAILED) {
+    return [
+      OPERATION_ACTIVITY_STATUS.VERIFICATION_FAILED,
+      OPERATION_ACTIVITY_STATUS.WRITE_FAILED,
+    ].includes(entry.status)
+  }
+  if (filter === ACTIVITY_FILTER.PENDING) {
+    return entry.status === OPERATION_ACTIVITY_STATUS.PENDING
+  }
+  return true
+}
+
+function formatActivityTime(timestamp) {
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.valueOf())) return "Unknown time"
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date)
+}
+
+function activityZoneNames(entry) {
+  return [...new Set(entry.plans.map((plan) => plan.zoneName).filter(Boolean))]
+}
+
+function updateActivityButton() {
+  const count = state.activity.entries.length
+  elements.activityCount.textContent = String(count)
+  elements.showActivity.setAttribute(
+    "aria-label",
+    `Operation history, ${count === 0 ? "no" : count} entr${count === 1 ? "y" : "ies"}`,
+  )
+}
+
+function activityOperationList(entry) {
+  const section = createElement("section", { className: "activity-detail-section" })
+  section.append(createElement("h4", { text: "Reviewed writes" }))
+  const list = document.createElement("ul")
+  for (const { operation, plan } of activityOperations(entry)) {
+    const item = document.createElement("li")
+    item.append(
+      createElement("code", { text: operation.method }),
+      document.createTextNode(`${plan.zoneName}: ${operation.label}`),
+    )
+    list.append(item)
+  }
+  section.append(list)
+  return section
+}
+
+function activityVerificationList(entry) {
+  const section = createElement("section", { className: "activity-detail-section" })
+  section.append(createElement("h4", { text: "Verified live state" }))
+  const list = document.createElement("ul")
+  if (entry.verification.length === 0) {
+    list.append(createElement("li", {
+      text: entry.status === OPERATION_ACTIVITY_STATUS.PENDING
+        ? "Verification did not complete"
+        : "No verification guard was recorded",
+    }))
+  } else {
+    for (const guard of entry.verification) {
+      const zoneName = entry.plans.find(
+        (plan) => plan.zoneId === guard.target.zoneId,
+      )?.zoneName || guard.target.zoneId
+      list.append(createElement("li", {
+        text: `${zoneName}: ${guard.summary}`,
+      }))
+    }
+  }
+  section.append(list)
+  return section
+}
+
+function activityRawPreview(entry) {
+  return entry.plans.flatMap((plan) => plan.operations.map((operation) => ({
+    body: operation.body,
+    currentValue: operation.currentValue,
+    label: operation.label,
+    method: operation.method,
+    path: operation.path,
+    zone: plan.zoneName,
+  })))
+}
+
+function activityUndoPresentation(entry) {
+  const undone = verifiedUndoFor(entry)
+  const pendingUndo = pendingUndoFor(entry)
+  const guardFailure = state.activityGuardFailures.get(entry.id)
+  if (undone) {
+    return {
+      className: "undone",
+      text: `Undone and verified ${formatActivityTime(undone.completedAt)}`,
+    }
+  }
+  if (pendingUndo) {
+    return {
+      className: "",
+      text: `Guarded undo has been pending since ${formatActivityTime(pendingUndo.startedAt)}; inspect live state before retrying`,
+    }
+  }
+  if (guardFailure) {
+    return {
+      className: "",
+      text: `Undo blocked: ${guardFailure}`,
+    }
+  }
+  if (entry.status === OPERATION_ACTIVITY_STATUS.PENDING) {
+    return {
+      className: "",
+      text: entry.undoOf
+        ? "This guarded undo did not record a final result; inspect live state before retrying"
+        : "This operation did not record a final result; inspect live state before making another change",
+    }
+  }
+  if (entry.undoOf) {
+    return {
+      className: entry.status === OPERATION_ACTIVITY_STATUS.VERIFIED
+        ? "undone"
+        : "",
+      text: entry.status === OPERATION_ACTIVITY_STATUS.VERIFIED
+        ? "This entry is the verified undo of an earlier operation"
+        : "This guarded undo did not complete successfully; inspect live state before retrying",
+    }
+  }
+  if (activityUndoable(entry)) {
+    return {
+      className: "available",
+      text: "Undo is available after the affected Cloudflare resources pass a fresh drift check",
+    }
+  }
+  return {
+    className: "",
+    text: `Automatic undo unavailable: ${entry.inverse?.reason || "the operation did not produce a lossless inverse"}`,
+  }
+}
+
+function renderActivityEntry(entry) {
+  const article = createElement("article", {
+    className: `activity-entry ${entry.status}`,
+  })
+  const heading = createElement("header", { className: "activity-entry-heading" })
+  const title = document.createElement("div")
+  title.append(
+    createElement("h3", { text: entry.title }),
+    createElement("p", {
+      text: `${formatActivityTime(entry.startedAt)} | ${entry.id}`,
+    }),
+  )
+  heading.append(
+    title,
+    createElement("span", {
+      className: `activity-status ${entry.status}`,
+      text: ACTIVITY_STATUS_LABEL[entry.status],
+    }),
+  )
+  article.append(heading)
+
+  const operations = activityOperations(entry)
+  const zones = activityZoneNames(entry)
+  const summary = createElement("div", { className: "activity-entry-summary" })
+  summary.append(
+    createElement("span", {
+      className: "activity-chip",
+      text: `${operations.length} API write${operations.length === 1 ? "" : "s"}`,
+    }),
+    createElement("span", {
+      className: "activity-chip",
+      text: `${zones.length} zone${zones.length === 1 ? "" : "s"}`,
+    }),
+  )
+  for (const zoneName of zones) {
+    summary.append(createElement("span", {
+      className: "activity-chip",
+      text: zoneName,
+    }))
+  }
+  article.append(summary)
+
+  if (entry.error) {
+    article.append(createElement("p", {
+      className: "activity-error",
+      text: entry.error,
+    }))
+  }
+  const undo = activityUndoPresentation(entry)
+  article.append(createElement("p", {
+    className: `activity-undo-state ${undo.className}`.trim(),
+    text: undo.text,
+  }))
+
+  const details = createElement("details")
+  details.append(createElement("summary", { text: "Review operation details" }))
+  const detailGrid = createElement("div", { className: "activity-detail-grid" })
+  detailGrid.append(
+    activityOperationList(entry),
+    activityVerificationList(entry),
+  )
+  const raw = createElement("details")
+  raw.append(
+    createElement("summary", { text: "Show request payloads" }),
+    createElement("pre", {
+      text: JSON.stringify(activityRawPreview(entry), null, 2),
+    }),
+  )
+  details.append(detailGrid, raw)
+  article.append(details)
+
+  if (activityUndoable(entry) && !readOnly) {
+    const actions = createElement("div", { className: "activity-entry-actions" })
+    const button = createElement("button", {
+      className: "button button-danger activity-undo",
+      text: "Review guarded undo",
+    })
+    button.type = "button"
+    button.disabled = state.busy || !state.transportAvailable || !state.inventory
+    button.title = "Fresh-read the affected resources before reviewing the inverse writes"
+    activityEntryByButton.set(button, entry)
+    actions.append(button)
+    article.append(actions)
+  }
+  return article
+}
+
+function renderOperationActivity() {
+  updateActivityButton()
+  const filter = elements.activityFilter.value || ACTIVITY_FILTER.ALL
+  const entries = [...state.activity.entries]
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .filter((entry) => activityMatchesFilter(entry, filter))
+  elements.activityVisibleCount.textContent = `${entries.length} operation${entries.length === 1 ? "" : "s"}`
+  elements.activitySummary.textContent = state.activity.updatedAt
+    ? `${state.activity.entries.length} durable operation record${state.activity.entries.length === 1 ? "" : "s"}; journal updated ${formatActivityTime(state.activity.updatedAt)}.`
+    : "Reviewed Cloudflare writes will be recorded before execution and finalized after scoped live verification."
+  if (entries.length === 0) {
+    elements.activityList.replaceChildren(createElement("p", {
+      className: "activity-empty",
+      text: state.activity.entries.length === 0
+        ? "No Cloudflare writes have been recorded yet"
+        : "No operation records match this filter",
+    }))
+    return
+  }
+  elements.activityList.replaceChildren(...entries.map(renderActivityEntry))
+}
+
+async function loadOperationActivity(options = {}) {
+  if (!api.usesBroker) {
+    elements.activityLoadError.textContent = "Operation history is unavailable in a direct debug session"
+    elements.activityLoadError.hidden = false
+    renderOperationActivity()
+    return false
+  }
+  if (state.activityLoading) return false
+  state.activityLoading = true
+  elements.activityRefresh.disabled = true
+  try {
+    const document = await api.loadOperationActivity()
+    if (!isOperationActivityDocument(document)) {
+      throw new Error("The persisted operation history is invalid")
+    }
+    state.activity = document
+    elements.activityLoadError.hidden = true
+    elements.activityLoadError.textContent = ""
+    renderOperationActivity()
+    return true
+  } catch (error) {
+    elements.activityLoadError.textContent = error instanceof Error
+      ? error.message
+      : String(error)
+    elements.activityLoadError.hidden = false
+    renderOperationActivity()
+    if (!options.silent) toast(elements.activityLoadError.textContent, "error")
+    return false
+  } finally {
+    state.activityLoading = false
+    elements.activityRefresh.disabled = false
+  }
+}
+
+async function openOperationActivity() {
+  renderOperationActivity()
+  showDialog(elements.activityDialog, {
+    initialFocus: elements.activityFilter,
+  })
+  await loadOperationActivity({ silent: true })
+}
+
+async function readActivityVerification(entry, message) {
+  const targets = entry.verification.map((guard) => guard.target)
+  if (targets.length === 0) {
+    throw new Error("This operation has no recorded verification guard")
+  }
+  setStatus(`${message} 0/${targets.length}`)
+  let completed = 0
+  const entries = await Promise.all(targets.map(async (target) => {
+    const result = await readWriteVerificationTarget(target)
+    completed += 1
+    setStatus(`${message} ${completed}/${targets.length}`)
+    return result
+  }))
+  const comparison = compareVerificationGuards(entry.verification, entries)
+  if (!comparison.matches) {
+    const summaries = comparison.differences
+      .slice(0, 3)
+      .map((difference) => difference.expected?.summary || difference.actual?.summary)
+      .filter(Boolean)
+    const suffix = summaries.length > 0 ? `: ${summaries.join(", ")}` : ""
+    throw new Error(`Live state no longer matches the recorded verified result${suffix}`)
+  }
+  return entries
+}
+
+async function undoOperationActivity(entry) {
+  if (!activityUndoable(entry) || state.busy || readOnly) return
+  if (elements.activityDialog.open) elements.activityDialog.close()
+  state.activityGuardFailures.delete(entry.id)
+  setBusy(true)
+  try {
+    await readActivityVerification(entry, "Checking undo guard")
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    state.activityGuardFailures.set(entry.id, message)
+    toast(message, "error")
+    restoreInventoryStatus()
+    setBusy(false)
+    renderOperationActivity()
+    showDialog(elements.activityDialog, {
+      initialFocus: elements.activityFilter,
+    })
+    return
+  }
+  setBusy(false)
+  restoreInventoryStatus()
+  const applied = await applyPlans(
+    `Undo ${entry.title}`,
+    createLivePlanSet(entry.inverse.plans),
+    {
+      beforeExecute: () => readActivityVerification(
+        entry,
+        "Rechecking undo guard",
+      ),
+      confirmationNote: "The affected resources match the recorded post-write state. They will be checked again immediately after confirmation before any inverse request is sent.",
+      recordInverse: false,
+      successMessage: "Undo succeeded and live verification passed",
+      undoOf: entry.id,
+    },
+  )
+  await loadOperationActivity({ silent: true })
+  renderOperationActivity()
+  if (!elements.activityDialog.open) {
+    showDialog(elements.activityDialog, {
+      initialFocus: applied
+        ? elements.activityList.querySelector(".activity-entry summary, .activity-entry button")
+        : elements.activityFilter,
+    })
+  }
+}
+
 function operationPreview(plans) {
   return plans.flatMap((plan) => plan.operations.map((operation) => {
     const preview = {
@@ -6101,7 +6371,7 @@ function createLivePlanSet(plans) {
   })
 }
 
-function confirmPlans(title, planSet) {
+function confirmPlans(title, planSet, options = {}) {
   if (!planSet?.[LIVE_PLAN_SET]) {
     toast("This change has not passed live validation", "error")
     return Promise.resolve(false)
@@ -6116,7 +6386,7 @@ function confirmPlans(title, planSet) {
   elements.confirmTitle.textContent = title
   const operations = operationPreview(actionable)
   const validationTime = new Date(planSet.validatedAt).toLocaleTimeString()
-  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} zone${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.`
+  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} zone${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.${options.confirmationNote ? ` ${options.confirmationNote}` : ""}`
   elements.confirmOperations.replaceChildren()
   for (const operation of operations) {
     const item = createElement("div", { className: "operation" })
@@ -6162,38 +6432,125 @@ async function applyPlans(title, planSet, options = {}) {
     toast("This change has not passed live validation", "error")
     return false
   }
-  let verificationTargets = null
-  if (!options.verify) {
-    try {
-      verificationTargets = verificationTargetsForPlans(planSet.plans)
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), "error")
-      return false
-    }
+  try {
+    verificationTargetsForPlans(planSet.plans)
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error), "error")
+    return false
   }
-  if (!await confirmPlans(title, planSet)) return false
+  if (!await confirmPlans(title, planSet, options)) return false
   const plans = planSet.plans
-  const verify = options.verify || (() => verifyChangedWriteTargets(verificationTargets))
   setBusy(true)
   let writesCompleted = false
+  let writeAttempted = false
+  let activityEntry = null
+  const executionResults = []
+  const operationCount = plans.reduce(
+    (count, plan) => count + plan.operations.length,
+    0,
+  )
   try {
+    if (options.beforeExecute) await options.beforeExecute()
+    if (api.usesBroker) {
+      const pendingActivity = createPendingOperationActivity(title, planSet, {
+        undoOf: options.undoOf || null,
+      })
+      state.activity = await api.appendOperationActivity(pendingActivity)
+      activityEntry = pendingActivity
+      renderOperationActivity()
+    }
+    writeAttempted = true
     await executePlans(api, plans, {
       onProgress: ({ completed, total, operation, plan }) => {
         if (operation) setStatus(`Writing ${completed + 1}/${total}: ${plan.zoneName}`)
       },
+      onResult: (result) => executionResults.push(result),
     })
     writesCompleted = true
     toast("Writes succeeded; re-reading live state for verification")
-    await verify()
+    const verificationTargets = verificationTargetsForResults(executionResults)
+    const verificationEntries = await verifyChangedWriteTargets(verificationTargets)
+    const inverse = options.recordInverse === false
+      ? {
+          available: false,
+          plans: [],
+          reason: "Undo operations are recorded as final to avoid an implicit redo chain",
+        }
+      : buildInversePlans(executionResults)
+    if (activityEntry) {
+      const completed = completeOperationActivity(activityEntry, {
+        execution: {
+          completed: executionResults.length,
+          total: operationCount,
+        },
+        inverse,
+        status: OPERATION_ACTIVITY_STATUS.VERIFIED,
+        verification: createVerificationGuards(verificationEntries),
+      })
+      try {
+        state.activity = await api.finalizeOperationActivity(completed)
+        renderOperationActivity()
+      } catch (error) {
+        setRefreshDetail(
+          `Live verification passed, but operation history was not finalized: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        )
+        toast("Writes and verification succeeded, but the durable history record is incomplete", "error")
+        return true
+      }
+    }
     toast(options.successMessage || "Writes succeeded and live verification passed")
     return true
   } catch (error) {
-    setStatus(writesCompleted ? "Verification failed" : "Write failed", "error")
+    setStatus(
+      writesCompleted
+        ? "Verification failed"
+        : writeAttempted
+          ? "Write failed"
+          : "Validation failed",
+      "error",
+    )
     toast(error instanceof Error ? error.message : String(error), "error")
+    let verification = []
     try {
-      await verify()
+      if (executionResults.length > 0) {
+        const targets = verificationTargetsForResults(executionResults)
+        const entries = await verifyChangedWriteTargets(targets)
+        verification = createVerificationGuards(entries)
+      } else {
+        restoreInventoryStatus()
+      }
     } catch {
       restoreInventoryStatus()
+    }
+    if (activityEntry) {
+      const completed = completeOperationActivity(activityEntry, {
+        error: error instanceof Error ? error.message : String(error),
+        execution: {
+          completed: executionResults.length,
+          total: operationCount,
+        },
+        inverse: {
+          available: false,
+          plans: [],
+          reason: writesCompleted
+            ? "Live verification did not complete, so no safe undo guard exists"
+            : "The write sequence did not complete, so a batch inverse would be unsafe",
+        },
+        status: writesCompleted
+          ? OPERATION_ACTIVITY_STATUS.VERIFICATION_FAILED
+          : OPERATION_ACTIVITY_STATUS.WRITE_FAILED,
+        verification,
+      })
+      try {
+        state.activity = await api.finalizeOperationActivity(completed)
+        renderOperationActivity()
+      } catch (historyError) {
+        setRefreshDetail(
+          `The write result could not be finalized in operation history: ${historyError instanceof Error ? historyError.message : String(historyError)}`,
+          "error",
+        )
+      }
     }
     return false
   } finally {
@@ -7698,7 +8055,6 @@ function openDesiredStateEditor(options) {
     target,
     title,
     valueLabel,
-    verify = null,
     zone,
   } = options
   state.editor = {
@@ -7706,7 +8062,6 @@ function openDesiredStateEditor(options) {
     afterApply,
     entries,
     suggestions,
-    verify,
     zone,
   }
   elements.editorKind.textContent = kind
@@ -7744,7 +8099,6 @@ function openCellEditor(cell) {
   let suggestions = new Map()
   let title
   let valueLabel
-  let verify = null
   if (action.type === READ_ACTION.EMAIL_RULE_EDIT) {
     const rule = cachedEmailRoutingRule(zone, action)
     if (!rule) {
@@ -7767,7 +8121,6 @@ function openCellEditor(cell) {
       : "Email Routing rule"
     title = label
     valueLabel = "Desired route definition"
-    verify = () => verifyEmailRoutingRuleAction(action)
   } else if (action.type === "zone-setting") {
     const setting = zone.surfaces.settings?.result?.find(
       (entry) => entry.id === action.settingId,
@@ -7847,7 +8200,6 @@ function openCellEditor(cell) {
     suggestions,
     title,
     valueLabel,
-    verify,
     zone,
   })
 }
@@ -7896,7 +8248,6 @@ function openWorkspaceRuleEditor(rule, targetRuleset = null) {
     target: workspaceEditorTarget(zone, ruleset),
     title: label,
     valueLabel: "Desired rule definition",
-    verify: () => verifyRulesetAction(action),
     zone,
   })
 }
@@ -7932,7 +8283,6 @@ function openWorkspaceRuleCreateEditor(definition, title = "Add rule") {
     target: workspaceEditorTarget(zone, workspace.ruleset),
     title,
     valueLabel: "New rule definition",
-    verify: () => verifyRulesetAction(action),
     zone,
   })
 }
@@ -8007,15 +8357,7 @@ async function applyWorkspaceMutation(title, readType, label, buildPlan, options
   try {
     const context = await liveRulesetContext(action, readType, label)
     const plan = buildPlan(context)
-    const applied = await applyPlans(
-      title,
-      createLivePlanSet([plan]),
-      {
-        verify: () => verifyRulesetAction(action, {
-          deleted: options.closeWorkspace,
-        }),
-      },
-    )
+    const applied = await applyPlans(title, createLivePlanSet([plan]))
     if (!applied) return false
     if (options.closeWorkspace) {
       if (elements.rulesetDialog.open) elements.rulesetDialog.close()
@@ -8131,9 +8473,6 @@ async function reviewRulesetDescription(event) {
     const applied = await applyPlans(
       "Update ruleset description",
       createLivePlanSet([plan]),
-      {
-        verify: () => verifyRulesetAction(workspace.action),
-      },
     )
     await refreshWorkspaceAfterApply(applied)
   } catch (error) {
@@ -8320,11 +8659,6 @@ async function reviewEditorChange(event) {
   const applied = await applyPlans(
     confirmationTitle,
     createLivePlanSet([plan]),
-    editor.verify
-      ? {
-          verify: editor.verify,
-        }
-      : {},
   )
   await editor.afterApply?.(applied)
 }
@@ -8452,7 +8786,11 @@ async function refreshInventory(options = {}) {
 }
 
 async function initialize() {
-  await syncFleetIntent({ silent: true })
+  renderOperationActivity()
+  await Promise.all([
+    syncFleetIntent({ silent: true }),
+    loadOperationActivity({ silent: true }),
+  ])
   if (cachedRecord) {
     state.startupCacheLoadedAt = cachedRecord.loadedAt
     renderInventory(cachedRecord.inventory, INVENTORY_SOURCE.CACHE)
@@ -8603,6 +8941,19 @@ elements.selectedColumnsOnly.addEventListener("click", () => {
   updateSelectionStyles()
 })
 elements.showEditableSettings.addEventListener("click", showEditableSettings)
+elements.showActivity.addEventListener("click", openOperationActivity)
+elements.activityRefresh.addEventListener("click", () => loadOperationActivity())
+elements.activityFilter.addEventListener("change", renderOperationActivity)
+elements.activityList.addEventListener("click", (event) => {
+  const button = event.target.closest(".activity-undo")
+  if (!button) return
+  const entry = activityEntryByButton.get(button)
+  if (!entry) {
+    toast("The selected operation record is no longer available", "error")
+    return
+  }
+  undoOperationActivity(entry)
+})
 elements.targetOptions.addEventListener("change", (event) => {
   const checkbox = event.target.closest("input[data-zone-id]")
   if (!checkbox) return
@@ -8844,9 +9195,14 @@ elements.intentDeleteDialog.addEventListener("close", () => {
   state.intentDeleteDraft = null
 })
 elements.emailPolicyExceptions.addEventListener("click", openPolicyExceptionDialog)
-window.addEventListener("focus", () => syncFleetIntent({ silent: true }))
+window.addEventListener("focus", () => {
+  syncFleetIntent({ silent: true })
+  if (elements.activityDialog.open) loadOperationActivity({ silent: true })
+})
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") syncFleetIntent({ silent: true })
+  if (document.visibilityState !== "visible") return
+  syncFleetIntent({ silent: true })
+  if (elements.activityDialog.open) loadOperationActivity({ silent: true })
 })
 setInterval(() => {
   if (document.visibilityState === "visible") syncFleetIntent({ silent: true })

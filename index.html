@@ -73,6 +73,7 @@
       <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters</button>
       <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
       <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
+      <button class="button button-quiet activity-button" id="show-activity" type="button" aria-haspopup="dialog" aria-label="Operation history, no entries">Activity <span id="activity-count">0</span></button>
       <button class="button button-quiet toolbar-refresh" id="refresh" type="button">Refresh full fleet</button>
     </nav>
 
@@ -637,6 +638,35 @@
         <button class="button button-danger" id="intent-delete-apply" value="remove">Remove</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog class="activity-dialog" id="activity-dialog" aria-labelledby="activity-title" aria-describedby="activity-summary">
+    <div class="activity-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close operation history">&times;</button>
+      <header class="activity-heading">
+        <div>
+          <p class="dialog-kicker">Durable local journal</p>
+          <h2 id="activity-title">Operation history</h2>
+          <p id="activity-summary">Reviewed Cloudflare writes, verification results, and guarded undo availability.</p>
+        </div>
+        <button class="button button-quiet" id="activity-refresh" type="button">Refresh history</button>
+      </header>
+      <div class="activity-toolbar">
+        <label for="activity-filter">Show</label>
+        <select id="activity-filter">
+          <option value="all">All operations</option>
+          <option value="undoable">Undo available</option>
+          <option value="failed">Needs attention</option>
+          <option value="pending">Incomplete</option>
+        </select>
+        <span id="activity-visible-count" role="status" aria-live="polite">0 operations</span>
+      </div>
+      <p class="activity-load-error" id="activity-load-error" role="alert" hidden></p>
+      <div class="activity-list" id="activity-list"></div>
+      <div class="dialog-actions">
+        <button class="button button-primary" type="button" data-dialog-close>Done</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-summary">

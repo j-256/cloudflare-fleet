@@ -71,6 +71,9 @@ export function verificationTargetsForOperation(operation) {
         zoneId,
       }]
     }
+    if (segments.length === 4 && operation.method === HTTP_METHOD.DELETE) {
+      return [surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.DNS)]
+    }
     if (segments.length === 3) {
       return [surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.DNS)]
     }
@@ -142,27 +145,67 @@ function verificationTargetKey(target) {
   return `${target.zoneId}:${target.kind}:${target.rulesetId}`
 }
 
+function deduplicateVerificationTargets(targets) {
+  const unique = new Map()
+  for (const target of targets) {
+    unique.set(verificationTargetKey(target), target)
+  }
+  for (const target of [...unique.values()]) {
+    if (target.kind !== WRITE_VERIFICATION_KIND.DNS_RECORD) continue
+    const surfaceKey = verificationTargetKey(
+      surfaceTarget(target.zoneId, WRITE_VERIFICATION_SURFACE.DNS),
+    )
+    if (unique.has(surfaceKey)) unique.delete(verificationTargetKey(target))
+  }
+  return [...unique.values()]
+}
+
 export function verificationTargetsForPlans(plans) {
   if (!Array.isArray(plans)) throw new TypeError("Write plans must be an array")
-  const targets = new Map()
+  const targets = []
   for (const plan of plans) {
     if (!Array.isArray(plan?.operations)) {
       throw new TypeError("Every write plan must contain operations")
     }
     for (const operation of plan.operations) {
       for (const target of verificationTargetsForOperation(operation)) {
-        targets.set(verificationTargetKey(target), target)
+        targets.push(target)
       }
     }
   }
 
-  for (const target of [...targets.values()]) {
-    if (target.kind !== WRITE_VERIFICATION_KIND.DNS_RECORD) continue
-    const surfaceKey = verificationTargetKey(
-      surfaceTarget(target.zoneId, WRITE_VERIFICATION_SURFACE.DNS),
-    )
-    if (targets.has(surfaceKey)) targets.delete(verificationTargetKey(target))
-  }
+  return deduplicateVerificationTargets(targets)
+}
 
-  return [...targets.values()]
+export function verificationTargetsForResults(results) {
+  if (!Array.isArray(results)) throw new TypeError("Write results must be an array")
+  const targets = []
+  for (const result of results) {
+    const operation = result?.operation
+    const segments = operationSegments(operation)
+    if (segments[2] === "dns_records"
+      && segments.length === 3
+      && operation.method === HTTP_METHOD.POST
+      && result.response?.result?.id) {
+      targets.push({
+        kind: WRITE_VERIFICATION_KIND.DNS_RECORD,
+        recordId: result.response.result.id,
+        zoneId: segments[1],
+      })
+      continue
+    }
+    if (segments[2] === "rulesets"
+      && segments.length === 3
+      && operation.method === HTTP_METHOD.POST
+      && result.response?.result?.id) {
+      targets.push({
+        kind: WRITE_VERIFICATION_KIND.RULESET,
+        rulesetId: result.response.result.id,
+        zoneId: segments[1],
+      })
+      continue
+    }
+    targets.push(...verificationTargetsForOperation(operation))
+  }
+  return deduplicateVerificationTargets(targets)
 }

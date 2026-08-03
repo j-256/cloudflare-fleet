@@ -1,18 +1,15 @@
 import { createHash } from "node:crypto"
-import { promises as fs } from "node:fs"
-import path from "node:path"
 
 import { isMainModule } from "./entrypoint.mjs"
 import {
-  createEmptyFleetIntentDocument,
   FLEET_INTENT_DOCUMENT_GLOBAL,
   isFleetIntentDocument,
-  migrateFleetIntentDocument,
 } from "./fleet-intent.mjs"
-
-const LOCK_ATTEMPTS = 80
-const LOCK_RETRY_MS = 25
-const STALE_LOCK_MS = 30000
+import {
+  atomicWriteFile,
+  readFleetStateDocument,
+  updateFleetStateDocument,
+} from "./state-store.mjs"
 
 export class FleetIntentRevisionConflictError extends Error {
   constructor(currentDocument) {
@@ -22,98 +19,9 @@ export class FleetIntentRevisionConflictError extends Error {
   }
 }
 
-async function ensureStateParent(stateFile) {
-  await fs.mkdir(path.dirname(stateFile), {
-    mode: 0o700,
-    recursive: true,
-  })
-}
-
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
-}
-
-async function acquireIntentLock(lockPath) {
-  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      await fs.mkdir(lockPath, { mode: 0o700 })
-      return async () => {
-        await fs.rm(lockPath, {
-          force: true,
-          recursive: true,
-        })
-      }
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error
-      try {
-        const status = await fs.stat(lockPath)
-        if (Date.now() - status.mtimeMs > STALE_LOCK_MS) {
-          const abandonedPath = `${lockPath}.${process.pid}.${Date.now()}.stale`
-          try {
-            await fs.rename(lockPath, abandonedPath)
-          } catch (renameError) {
-            if (renameError?.code === "ENOENT") continue
-            throw renameError
-          }
-          await fs.rm(abandonedPath, { recursive: true })
-          continue
-        }
-      } catch (statusError) {
-        if (statusError?.code === "ENOENT") continue
-        throw statusError
-      }
-      await wait(LOCK_RETRY_MS)
-    }
-  }
-  throw new Error("Fleet intent store is busy")
-}
-
-async function atomicWrite(filePath, content) {
-  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
-  await fs.writeFile(temporaryPath, content, {
-    encoding: "utf8",
-    mode: 0o600,
-  })
-  await fs.rename(temporaryPath, filePath)
-  await fs.chmod(filePath, 0o600)
-}
-
-async function readExistingIntentFile(filePath, accountId) {
-  let raw
-  try {
-    raw = await fs.readFile(filePath, "utf8")
-  } catch (error) {
-    if (error?.code === "ENOENT") return null
-    throw error
-  }
-  let document
-  try {
-    document = JSON.parse(raw)
-  } catch {
-    throw new Error("Persisted fleet intent is not valid JSON")
-  }
-  if (typeof document?.accountId === "string"
-    && document.accountId !== accountId) {
-    throw new Error(
-      `Persisted fleet intent belongs to Cloudflare account ${document.accountId}; this session uses ${accountId}`,
-    )
-  }
-  try {
-    document = migrateFleetIntentDocument(document, accountId)
-  } catch {
-    throw new Error("Persisted fleet intent is invalid for this account")
-  }
-  return document
-}
-
-async function readIntentFile(filePath, accountId) {
-  const existing = await readExistingIntentFile(filePath, accountId)
-  return existing ?? createEmptyFleetIntentDocument(accountId)
-}
-
 export async function readFleetIntentDocument(stateFile, accountId) {
-  await ensureStateParent(stateFile)
-  return readIntentFile(stateFile, accountId)
+  const state = await readFleetStateDocument(stateFile, accountId)
+  return state.intent
 }
 
 function nextPersistedDocument(document) {
@@ -144,23 +52,24 @@ export async function persistFleetIntentDocument(
   if (document.revision !== expectedRevision) {
     throw new TypeError("Fleet intent revision does not match the expected revision")
   }
-  await ensureStateParent(stateFile)
-  const lockPath = `${stateFile}.lock`
-  const release = await acquireIntentLock(lockPath)
-  try {
-    const current = await readIntentFile(stateFile, accountId)
-    if (current.revision !== expectedRevision) {
-      throw new FleetIntentRevisionConflictError(current)
-    }
-    const next = nextPersistedDocument(document)
-    if (!isFleetIntentDocument(next, accountId)) {
-      throw new TypeError("Fleet intent could not be serialized")
-    }
-    await atomicWrite(stateFile, `${JSON.stringify(next, null, 2)}\n`)
-    return next
-  } finally {
-    await release()
-  }
+  const state = await updateFleetStateDocument(
+    stateFile,
+    accountId,
+    (current) => {
+      if (current.intent.revision !== expectedRevision) {
+        throw new FleetIntentRevisionConflictError(current.intent)
+      }
+      const intent = nextPersistedDocument(document)
+      if (!isFleetIntentDocument(intent, accountId)) {
+        throw new TypeError("Fleet intent could not be serialized")
+      }
+      return {
+        ...current,
+        intent,
+      }
+    },
+  )
+  return state.intent
 }
 
 export async function prepareFleetIntentScript(options) {
@@ -171,7 +80,7 @@ export async function prepareFleetIntentScript(options) {
   const payload = JSON.stringify(document)
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029")
-  await atomicWrite(
+  await atomicWriteFile(
     options.outputPath,
     `window[${JSON.stringify(FLEET_INTENT_DOCUMENT_GLOBAL)}] = ${payload}\n`,
   )

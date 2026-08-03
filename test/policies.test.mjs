@@ -435,6 +435,12 @@ test("email policy plans an explicit SPF update", () => {
         content: "\"v=spf1 include:_spf.google.com include:_spf.mx.cloudflare.net -all\"",
         ttl: 60,
       },
+      currentValue: {
+        content: "\"v=spf1 include:other.example ~all\"",
+        name: "alpha.example",
+        ttl: 300,
+        type: "TXT",
+      },
       label: "Match the fleet SPF value and TTL",
       method: "PATCH",
       path: "zones/zone-alpha.example/dns_records/spf-id",
@@ -641,6 +647,12 @@ test("email policy updates a divergent DMARC record", () => {
       body: {
         content: "\"v=DMARC1; p=none; rua=mailto:dmarc@alpha.example;\"",
         ttl: 60,
+      },
+      currentValue: {
+        content: "\"v=DMARC1; p=reject;\"",
+        name: "_dmarc.alpha.example",
+        ttl: 300,
+        type: "TXT",
       },
       label: "Match the fleet DMARC value and TTL",
       method: "PATCH",

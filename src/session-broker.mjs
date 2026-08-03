@@ -9,6 +9,11 @@ import {
   HTTP_METHOD,
 } from "./constants.mjs"
 import {
+  appendOperationActivity,
+  finalizeOperationActivity,
+  readOperationActivityDocument,
+} from "./activity-store.mjs"
+import {
   BROKER_SESSION_HEADER,
 } from "./api.mjs"
 import {
@@ -291,6 +296,62 @@ async function handleFleetIntent(request, response, options) {
   }
 }
 
+async function handleOperationActivity(request, response, options) {
+  if (request.method === HTTP_METHOD.GET) {
+    const document = await readOperationActivityDocument(
+      options.stateFile,
+      options.accountId,
+    )
+    jsonResponse(response, 200, {
+      result: document,
+      success: true,
+    })
+    return
+  }
+  if (![HTTP_METHOD.POST, HTTP_METHOD.PATCH].includes(request.method)) {
+    errorResponse(response, 405, "Operation activity method is not allowed")
+    return
+  }
+  if (options.readOnly) {
+    errorResponse(response, 403, "Operation activity writes are disabled for this session")
+    return
+  }
+  let payload
+  try {
+    payload = JSON.parse((await requestBody(request)).toString("utf8"))
+  } catch {
+    errorResponse(response, 400, "Operation activity body is not valid JSON")
+    return
+  }
+  if (!payload?.entry) {
+    errorResponse(response, 400, "Operation activity body is incomplete")
+    return
+  }
+  try {
+    const document = request.method === HTTP_METHOD.POST
+      ? await appendOperationActivity(
+          options.stateFile,
+          options.accountId,
+          payload.entry,
+        )
+      : await finalizeOperationActivity(
+          options.stateFile,
+          options.accountId,
+          payload.entry,
+        )
+    jsonResponse(response, 200, {
+      result: document,
+      success: true,
+    })
+  } catch (error) {
+    if (error instanceof TypeError) {
+      errorResponse(response, 400, error.message)
+      return
+    }
+    throw error
+  }
+}
+
 export async function startSessionBroker(options) {
   if (!options.accountId || !options.apiToken || !options.cacheDir || !options.runtimeDir
     || !options.sessionId || !options.sessionSecret || !options.stateFile) {
@@ -393,6 +454,10 @@ export async function startSessionBroker(options) {
       }
       if (apiPath === "intent") {
         await handleFleetIntent(request, response, options)
+        return
+      }
+      if (apiPath === "activity") {
+        await handleOperationActivity(request, response, options)
         return
       }
       const cloudflarePrefix = "cloudflare/"

@@ -194,6 +194,53 @@ export class CloudflareApi {
     return envelope.result
   }
 
+  async loadOperationActivity(options = {}) {
+    if (!this.usesBroker) {
+      throw new Error("Operation history requires the loopback session broker")
+    }
+    const response = await this.fetchImpl(new URL("activity", this.brokerBaseUrl), {
+      headers: {
+        Accept: "application/json",
+        [BROKER_SESSION_HEADER]: this.brokerSecret,
+      },
+      signal: options.signal,
+    })
+    const envelope = await response.json()
+    if (!response.ok || envelope.success !== true) {
+      throw new Error(envelope.errors?.[0]?.message || `Operation history returned HTTP ${response.status}`)
+    }
+    return envelope.result
+  }
+
+  async appendOperationActivity(entry, options = {}) {
+    return this.persistOperationActivity(entry, HTTP_METHOD.POST, options)
+  }
+
+  async finalizeOperationActivity(entry, options = {}) {
+    return this.persistOperationActivity(entry, HTTP_METHOD.PATCH, options)
+  }
+
+  async persistOperationActivity(entry, method, options = {}) {
+    if (!this.usesBroker) {
+      throw new Error("Operation history requires the loopback session broker")
+    }
+    const response = await this.fetchImpl(new URL("activity", this.brokerBaseUrl), {
+      body: JSON.stringify({ entry }),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        [BROKER_SESSION_HEADER]: this.brokerSecret,
+      },
+      method,
+      signal: options.signal,
+    })
+    const envelope = await response.json()
+    if (!response.ok || envelope.success !== true) {
+      throw new Error(envelope.errors?.[0]?.message || `Operation history persistence returned HTTP ${response.status}`)
+    }
+    return envelope.result
+  }
+
   startSessionMonitor(handlers = {}) {
     if (!this.usesBroker) return () => {}
     const controller = new AbortController()

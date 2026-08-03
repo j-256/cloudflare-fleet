@@ -5,6 +5,7 @@ import { HTTP_METHOD } from "../src/constants.mjs"
 import {
   verificationTargetsForOperation,
   verificationTargetsForPlans,
+  verificationTargetsForResults,
   WRITE_VERIFICATION_KIND,
 } from "../src/write-verification.mjs"
 
@@ -62,6 +63,54 @@ test("a DNS collection read subsumes exact records in the same zone", () => {
         zoneId: "zone-alpha",
       },
     ],
+  )
+})
+
+test("completed creates narrow verification to returned resource identifiers", () => {
+  assert.deepEqual(
+    verificationTargetsForResults([
+      {
+        operation: {
+          method: HTTP_METHOD.POST,
+          path: "zones/zone-alpha/dns_records",
+        },
+        response: { result: { id: "record-alpha" } },
+      },
+      {
+        operation: {
+          body: { kind: "zone", phase: "http_request_dynamic_redirect" },
+          method: HTTP_METHOD.POST,
+          path: "zones/zone-beta/rulesets",
+        },
+        response: { result: { id: "ruleset-beta" } },
+      },
+    ]),
+    [
+      {
+        kind: WRITE_VERIFICATION_KIND.DNS_RECORD,
+        recordId: "record-alpha",
+        zoneId: "zone-alpha",
+      },
+      {
+        kind: WRITE_VERIFICATION_KIND.RULESET,
+        rulesetId: "ruleset-beta",
+        zoneId: "zone-beta",
+      },
+    ],
+  )
+})
+
+test("DNS deletion verifies the affected zone collection", () => {
+  assert.deepEqual(
+    verificationTargetsForOperation({
+      method: HTTP_METHOD.DELETE,
+      path: "zones/zone-alpha/dns_records/record-alpha",
+    }),
+    [{
+      kind: WRITE_VERIFICATION_KIND.SURFACE,
+      surfaceId: "dns",
+      zoneId: "zone-alpha",
+    }],
   )
 })
 

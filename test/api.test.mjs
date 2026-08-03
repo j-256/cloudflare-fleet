@@ -180,6 +180,36 @@ test("fleet intent persistence exposes revision conflicts", async () => {
   )
 })
 
+test("broker transport loads, starts, and finalizes operation activity", async () => {
+  const calls = []
+  const document = {
+    entries: [],
+    revision: "",
+    updatedAt: null,
+  }
+  const entry = { id: "activity-one" }
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async (url, request) => {
+      calls.push({ request, url: new URL(url) })
+      return jsonResponse({
+        result: document,
+        success: true,
+      })
+    },
+  })
+
+  assert.deepEqual(await api.loadOperationActivity(), document)
+  assert.deepEqual(await api.appendOperationActivity(entry), document)
+  assert.deepEqual(await api.finalizeOperationActivity(entry), document)
+  assert.deepEqual(calls.map((call) => call.request.method), [undefined, "POST", "PATCH"])
+  assert.equal(calls[0].url.pathname, "/session/test/api/activity")
+  assert.deepEqual(JSON.parse(calls[1].request.body), { entry })
+  assert.equal(calls[2].request.headers[BROKER_SESSION_HEADER], "session-secret")
+})
+
 test("direct browser transport keeps fleet intent view-only", async () => {
   const api = new CloudflareApi({
     accountId: "account-id",
@@ -192,6 +222,14 @@ test("direct browser transport keeps fleet intent view-only", async () => {
   await assert.rejects(api.loadFleetIntent(), /requires the loopback session broker/)
   await assert.rejects(
     api.persistFleetIntent({ revision: "" }),
+    /requires the loopback session broker/,
+  )
+  await assert.rejects(
+    api.loadOperationActivity(),
+    /requires the loopback session broker/,
+  )
+  await assert.rejects(
+    api.appendOperationActivity({}),
     /requires the loopback session broker/,
   )
 })

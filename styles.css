@@ -334,6 +334,26 @@ h1 {
   white-space: nowrap;
 }
 
+.activity-button {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.activity-button span {
+  display: inline-grid;
+  min-width: 19px;
+  min-height: 19px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  place-items: center;
+  color: var(--ink);
+  background: var(--panel-raised);
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .matrix-focus-toggle[aria-pressed="true"] {
   border-color: var(--accent);
   color: #07130f;
@@ -2000,6 +2020,272 @@ dialog form {
 
 .intent-dialog {
   width: min(1040px, calc(100vw - 24px));
+}
+
+.activity-dialog {
+  width: min(920px, calc(100vw - 24px));
+}
+
+.activity-workspace {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+}
+
+.activity-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  padding-right: 42px;
+}
+
+.activity-heading h2,
+.activity-entry h3,
+.activity-entry h4 {
+  margin: 0;
+}
+
+.activity-heading p:last-child {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.activity-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 260px) 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(11, 19, 28, 0.62);
+}
+
+.activity-toolbar label,
+.activity-visible-count {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.activity-toolbar select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: #0b131c;
+}
+
+.activity-visible-count {
+  justify-self: end;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.activity-load-error {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 107, 120, 0.46);
+  border-radius: 9px;
+  color: var(--danger);
+  background: rgba(255, 107, 120, 0.08);
+}
+
+.activity-list {
+  display: grid;
+  gap: 9px;
+  max-height: min(62dvh, 650px);
+  overflow: auto;
+}
+
+.activity-empty {
+  margin: 0;
+  padding: 28px 18px;
+  border: 1px dashed var(--line);
+  border-radius: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.activity-entry {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #0d161f;
+}
+
+.activity-entry.verified {
+  border-color: rgba(119, 208, 143, 0.32);
+}
+
+.activity-entry.write-failed,
+.activity-entry.verification-failed {
+  border-color: rgba(255, 107, 120, 0.42);
+}
+
+.activity-entry.pending {
+  border-color: rgba(255, 193, 92, 0.42);
+}
+
+.activity-entry-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.activity-entry-heading h3 {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.activity-entry-heading p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.activity-status {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.activity-status.verified {
+  border-color: rgba(119, 208, 143, 0.48);
+  color: var(--green);
+}
+
+.activity-status.write-failed,
+.activity-status.verification-failed {
+  border-color: rgba(255, 107, 120, 0.52);
+  color: var(--danger);
+}
+
+.activity-status.pending {
+  border-color: rgba(255, 193, 92, 0.48);
+  color: var(--accent-2);
+}
+
+.activity-entry-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.activity-chip {
+  padding: 2px 6px;
+  border: 1px solid rgba(43, 60, 75, 0.82);
+  border-radius: 99px;
+  color: var(--muted);
+  background: rgba(20, 31, 42, 0.72);
+  font-size: 9px;
+}
+
+.activity-undo-state,
+.activity-error {
+  margin: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(8, 15, 22, 0.55);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.activity-undo-state.available {
+  border-color: rgba(90, 169, 255, 0.42);
+  color: var(--blue);
+}
+
+.activity-undo-state.undone {
+  border-color: rgba(119, 208, 143, 0.42);
+  color: var(--green);
+}
+
+.activity-error {
+  border-color: rgba(255, 107, 120, 0.42);
+  color: var(--danger);
+}
+
+.activity-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.activity-detail-section {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(43, 60, 75, 0.72);
+  border-radius: 8px;
+  background: rgba(8, 15, 22, 0.48);
+}
+
+.activity-detail-section h4 {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.activity-detail-section ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-detail-section li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.activity-detail-section code {
+  margin-right: 5px;
+  color: var(--accent-2);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.activity-entry details {
+  min-width: 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+
+.activity-entry details pre {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  max-height: 240px;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.activity-entry-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .intent-workspace {
@@ -3848,6 +4134,10 @@ dialog details > summary {
     grid-column: 1 / -1;
     justify-content: flex-end;
   }
+
+  .activity-heading {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -3939,8 +4229,15 @@ dialog details > summary {
   }
 
   #refresh {
-    grid-column: 1 / 3;
+    grid-column: 1;
     grid-row: 3;
+  }
+
+  #show-activity {
+    grid-column: 2;
+    grid-row: 3;
+    justify-content: center;
+    min-height: 34px;
   }
 
   #mobile-matrix-focus {
@@ -3989,6 +4286,23 @@ dialog details > summary {
     gap: 6px;
     padding-top: 7px;
     border-top: 1px solid var(--line);
+  }
+
+  .activity-workspace {
+    padding: 16px;
+  }
+
+  .activity-toolbar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .activity-visible-count {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .activity-detail-grid {
+    grid-template-columns: 1fr;
   }
 
   #category,
