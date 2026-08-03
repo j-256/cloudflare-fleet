@@ -75,6 +75,7 @@ import {
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
   previewIntentAdoption,
+  selectIntentAdoptionGroup,
 } from "./intent-adoption.mjs"
 import {
   matrixNavigationTarget,
@@ -266,6 +267,7 @@ const INTENT_ADOPTION_FILTER = Object.freeze({
   REVIEW: "review",
   ZONE_SPECIFIC: "zone-specific",
 })
+const INTENT_ADOPTION_CREATE_GROUP_VALUE = ""
 const INTENT_ADOPTION_CLASSIFICATION_PRESENTATION = Object.freeze({
   [INTENT_ADOPTION_CLASSIFICATION.MISSING_COVERAGE]: Object.freeze({
     label: "Sparse coverage",
@@ -3739,6 +3741,7 @@ function openIntentGroupEditor(group = null, options = {}) {
     return
   }
   state.intentGroupDraft = {
+    adoptionCandidateId: options.adoptionCandidateId || null,
     baseRevision: state.intent.revision,
     group,
     returnToAdoption: Boolean(options.returnToAdoption),
@@ -3760,9 +3763,10 @@ function openIntentGroupEditor(group = null, options = {}) {
 async function saveIntentGroup(event) {
   if (event.submitter?.value === "cancel") return
   event.preventDefault()
+  const groupDraft = state.intentGroupDraft
   const name = elements.intentGroupName.value.trim()
   const selectedZones = [...elements.intentGroupMembers.querySelectorAll("input:checked")]
-  if (state.intentGroupDraft?.baseRevision !== state.intent.revision) {
+  if (groupDraft?.baseRevision !== state.intent.revision) {
     showFieldError(
       elements.intentGroupName,
       elements.intentGroupError,
@@ -3784,7 +3788,7 @@ async function saveIntentGroup(event) {
     return
   }
   const group = {
-    id: state.intentGroupDraft?.group?.id || intentId("group"),
+    id: groupDraft?.group?.id || intentId("group"),
     members: selectedZones.map((checkbox) => {
       const zone = zoneById(checkbox.dataset.zoneId)
       return {
@@ -3804,15 +3808,26 @@ async function saveIntentGroup(event) {
   }
   const saved = await persistIntentDocument(document, `${group.name} group saved`)
   if (saved) {
-    if (state.intentGroupDraft?.returnToPolicy && state.intentPolicyDraft) {
+    if (groupDraft?.returnToPolicy && state.intentPolicyDraft) {
       state.intentPolicyDraft.baseRevision = state.intent.revision
       renderIntentPolicyGroupOptions(group.id)
     }
-    if (state.intentGroupDraft?.returnToAdoption && state.intentAdoptionDraft) {
+    let adoptionGroupSelect = null
+    if (groupDraft?.returnToAdoption && state.intentAdoptionDraft) {
       state.intentAdoptionDraft.baseRevision = state.intent.revision
+      const selection = state.intentAdoptionDraft.selections.get(
+        groupDraft.adoptionCandidateId,
+      )
+      if (selection) selectIntentAdoptionGroup(selection, group.id)
       renderIntentAdoptionCandidates()
+      adoptionGroupSelect = state.intentAdoptionDraft.controls.get(
+        groupDraft.adoptionCandidateId,
+      )?.groupSelect || null
     }
-    elements.intentGroupDialog.close()
+    if (elements.intentGroupDialog.open) elements.intentGroupDialog.close()
+    if (adoptionGroupSelect) {
+      requestAnimationFrame(() => adoptionGroupSelect.focus({ preventScroll: true }))
+    }
   }
 }
 
@@ -4424,6 +4439,14 @@ function intentAdoptionGroupOption(group) {
   return option
 }
 
+function intentAdoptionCreateGroupOption() {
+  const option = createElement("option", {
+    text: "+ Create new zone group...",
+  })
+  option.value = INTENT_ADOPTION_CREATE_GROUP_VALUE
+  return option
+}
+
 function renderIntentAdoptionGroupDetails(container, summary, groupId) {
   const group = intentGroupById(groupId)
   const scope = intentGroupScope(group)
@@ -4510,7 +4533,9 @@ function intentAdoptionVariantList(candidate) {
 function renderIntentAdoptionCandidate(candidate, index) {
   const draft = state.intentAdoptionDraft
   const selection = draft.selections.get(candidate.id)
-  const card = createElement("article", { className: "intent-adoption-candidate" })
+  const card = createElement("article", {
+    className: `intent-adoption-candidate${selection.selected ? " selected" : ""}`,
+  })
   const overview = createElement("div", { className: "intent-adoption-overview" })
   const selectionLabel = createElement("label", {
     className: "intent-adoption-select",
@@ -4563,7 +4588,14 @@ function renderIntentAdoptionCandidate(candidate, index) {
   const groupField = createElement("label", { className: "intent-adoption-field" })
   groupField.append(createElement("span", { text: "Applies to zones" }))
   const groupSelect = document.createElement("select")
-  groupSelect.replaceChildren(...state.intent.groups.map(intentAdoptionGroupOption))
+  groupSelect.setAttribute(
+    "aria-label",
+    `Applies to zones for ${candidate.label}`,
+  )
+  groupSelect.replaceChildren(
+    ...state.intent.groups.map(intentAdoptionGroupOption),
+    intentAdoptionCreateGroupOption(),
+  )
   groupSelect.value = selection.groupId
   groupField.append(groupSelect)
 
@@ -4620,9 +4652,18 @@ function renderIntentAdoptionCandidate(candidate, index) {
     renderIntentAdoptionImpact()
   })
   groupSelect.addEventListener("change", () => {
-    selection.groupId = groupSelect.value
+    if (groupSelect.value === INTENT_ADOPTION_CREATE_GROUP_VALUE) {
+      groupSelect.value = selection.groupId
+      openIntentGroupEditor(null, {
+        adoptionCandidateId: candidate.id,
+        returnToAdoption: true,
+      })
+      return
+    }
+    selectIntentAdoptionGroup(selection, groupSelect.value)
     renderIntentAdoptionGroupDetails(groupScope, groupSummary, selection.groupId)
-    selectCandidate()
+    checkbox.checked = true
+    card.classList.add("selected")
     renderIntentAdoptionImpact()
   })
   constraintSelect.addEventListener("change", () => {
@@ -4646,6 +4687,7 @@ function renderIntentAdoptionCandidate(candidate, index) {
   draft.controls.set(candidate.id, {
     card,
     checkbox,
+    groupSelect,
   })
   return card
 }

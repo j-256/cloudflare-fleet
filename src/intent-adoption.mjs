@@ -23,6 +23,18 @@ export const INTENT_ADOPTION_CONFIDENCE = Object.freeze({
   REVIEW: "review",
 })
 
+export function selectIntentAdoptionGroup(selection, groupId) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+    throw new TypeError("Intent adoption selection is invalid")
+  }
+  if (typeof groupId !== "string" || groupId.length === 0) {
+    throw new TypeError("Intent adoption requires a zone group")
+  }
+  selection.groupId = groupId
+  selection.selected = true
+  return selection
+}
+
 function jsonClone(value) {
   const serialized = JSON.stringify(value)
   return serialized === undefined ? null : JSON.parse(serialized)

@@ -7,6 +7,7 @@ import {
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
   previewIntentAdoption,
+  selectIntentAdoptionGroup,
 } from "../src/intent-adoption.mjs"
 import {
   createEmptyFleetIntentDocument,
@@ -73,6 +74,35 @@ function fixture() {
     matrix: { rows },
   }
 }
+
+test("choosing an adoption group selects the suggestion without losing its draft", () => {
+  const selection = {
+    expectedCanonical: '"on"',
+    groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+    policyId: "draft-policy",
+    selected: false,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  }
+
+  const result = selectIntentAdoptionGroup(selection, "mail-zones")
+
+  assert.equal(result, selection)
+  assert.equal(selection.groupId, "mail-zones")
+  assert.equal(selection.selected, true)
+  assert.equal(selection.expectedCanonical, '"on"')
+  assert.equal(selection.policyId, "draft-policy")
+})
+
+test("choosing an adoption group rejects missing selections and group identifiers", () => {
+  assert.throws(
+    () => selectIntentAdoptionGroup(null, "mail-zones"),
+    /selection is invalid/,
+  )
+  assert.throws(
+    () => selectIntentAdoptionGroup({ selected: false }, ""),
+    /requires a zone group/,
+  )
+})
 
 test("guided adoption classifies every ungoverned drift pattern", () => {
   const { document, inventory, matrix } = fixture()
