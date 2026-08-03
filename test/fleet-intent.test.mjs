@@ -5,9 +5,11 @@ import {
   createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   evaluateFleetIntent,
+  evaluateFleetIntentCoverage,
   FLEET_INTENT_ACKNOWLEDGEMENT_STATUS,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
   FLEET_INTENT_CELL_STATUS,
+  FLEET_INTENT_COVERAGE_EXPECTATION_STATUS,
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
   FLEET_INTENT_MISSING_CANONICAL,
@@ -20,7 +22,9 @@ import {
   migrateFleetIntentDocument,
   removeFleetIntentGroup,
   removeFleetIntentPolicy,
+  removeFleetIntentCoverageExpectation,
   replaceFleetIntentAcknowledgement,
+  replaceFleetIntentCoverageExpectation,
   replaceFleetIntentGroup,
   replaceFleetIntentPolicy,
 } from "../src/fleet-intent.mjs"
@@ -94,6 +98,7 @@ test("empty fleet intent is valid and includes a dynamic all-zones group", () =>
     mode: FLEET_INTENT_GROUP_MODE.ALL,
     name: "All zones",
   }])
+  assert.deepEqual(document.coverageExpectations, [])
 })
 
 test("authored expected values are stable, source-free, and schema-compatible", () => {
@@ -173,6 +178,105 @@ test("legacy documents migrate exact policies without changing their revision", 
       }],
     }, "account-id"),
     /cannot be migrated/,
+  )
+})
+
+test("version two documents gain empty coverage intent without changing revision", () => {
+  const legacy = createEmptyFleetIntentDocument("account-id")
+  delete legacy.coverageExpectations
+  legacy.schemaVersion = 2
+  legacy.revision = "b".repeat(64)
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+
+  assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.equal(migrated.revision, legacy.revision)
+  assert.deepEqual(migrated.coverageExpectations, [])
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+})
+
+test("coverage expectations are unique per inventory target", () => {
+  const timestamp = new Date().toISOString()
+  const expectation = {
+    createdAt: timestamp,
+    id: "coverage-one",
+    kind: "surface",
+    observedCanonical: "{\"status\":403}",
+    reason: "The product is not enabled",
+    subjectId: "bot-management",
+    subjectLabel: "Bot management",
+    updatedAt: timestamp,
+    zoneId: "zone-a",
+    zoneName: "a.example",
+  }
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentCoverageExpectation(document, expectation)
+
+  assert.equal(isFleetIntentDocument(document, "account-id"), true)
+  assert.throws(
+    () => replaceFleetIntentCoverageExpectation(document, {
+      ...expectation,
+      id: "coverage-two",
+    }),
+    /already has an expectation/,
+  )
+  assert.throws(
+    () => replaceFleetIntentCoverageExpectation(document, {
+      ...expectation,
+      id: "coverage-limitation",
+      kind: "limitation",
+    }),
+    /invalid/,
+  )
+  document = removeFleetIntentCoverageExpectation(document, expectation.id)
+  assert.deepEqual(document.coverageExpectations, [])
+})
+
+test("coverage intent separates expected, changed, and inactive failures", () => {
+  const timestamp = new Date().toISOString()
+  const issue = {
+    detail: "Plan does not include Bot Management",
+    kind: "surface",
+    observedCanonical: "{\"status\":403}",
+    subjectId: "bot-management",
+    subjectLabel: "Bot management",
+    zoneId: "zone-a",
+    zoneName: "a.example",
+  }
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentCoverageExpectation(document, {
+    ...issue,
+    createdAt: timestamp,
+    id: "coverage-one",
+    reason: "The zone uses the free plan",
+    updatedAt: timestamp,
+  })
+
+  let evaluation = evaluateFleetIntentCoverage(document, [issue])
+  assert.equal(evaluation.expectedIssues.length, 1)
+  assert.equal(evaluation.unexpectedIssues.length, 0)
+  assert.equal(
+    evaluation.expectationStates[0].status,
+    FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.ACTIVE,
+  )
+
+  const changedIssue = {
+    ...issue,
+    detail: "Authentication failed",
+    observedCanonical: "{\"status\":401}",
+  }
+  evaluation = evaluateFleetIntentCoverage(document, [changedIssue])
+  assert.equal(evaluation.expectedIssues.length, 0)
+  assert.equal(evaluation.unexpectedIssues.length, 1)
+  assert.equal(
+    evaluation.expectationStates[0].status,
+    FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.CHANGED,
+  )
+
+  evaluation = evaluateFleetIntentCoverage(document, [])
+  assert.equal(
+    evaluation.expectationStates[0].status,
+    FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.INACTIVE,
   )
 })
 

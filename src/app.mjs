@@ -13,6 +13,7 @@ import {
   EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
+  INVENTORY_COVERAGE_KIND,
   MATRIX_CATEGORY,
   POLICY_EXCEPTION_STATUS,
   RULESET_ACTION_KIND,
@@ -29,9 +30,11 @@ import {
   createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   evaluateFleetIntent,
+  evaluateFleetIntentCoverage,
   FLEET_INTENT_ACKNOWLEDGEMENT_STATUS,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
   FLEET_INTENT_CELL_STATUS,
+  FLEET_INTENT_COVERAGE_EXPECTATION_STATUS,
   FLEET_INTENT_DOCUMENT_GLOBAL,
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
@@ -40,14 +43,17 @@ import {
   FLEET_INTENT_REASON_MAX_LENGTH,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
+  fleetIntentCoverageTargetKey,
   fleetIntentExpectedIsAuthored,
   fleetIntentGroupZoneIds,
   fleetIntentPolicyValueConstraint,
   isFleetIntentDocument,
   removeFleetIntentAcknowledgement,
+  removeFleetIntentCoverageExpectation,
   removeFleetIntentGroup,
   removeFleetIntentPolicy,
   replaceFleetIntentAcknowledgement,
+  replaceFleetIntentCoverageExpectation,
   replaceFleetIntentGroup,
   replaceFleetIntentPolicy,
 } from "./fleet-intent.mjs"
@@ -58,6 +64,7 @@ import {
 import {
   coverageFor,
   loadInventory,
+  staticCoverageIssues,
 } from "./inventory.mjs"
 import {
   buildMatrix,
@@ -200,6 +207,11 @@ const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 const COMPACT_TOOLBAR_MEDIA_QUERY = "(max-width: 620px)"
 const MATRIX_FOCUS_CLASS = "matrix-focus"
 const MATRIX_COLUMN_HIDDEN_CLASS = "matrix-column-hidden"
+const COVERAGE_SECTION = Object.freeze({
+  EXPECTED: "expected",
+  HEALTHY: "healthy",
+  UNEXPECTED: "unexpected",
+})
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
 const EDITABLE_OBJECT_KEY_FIELDS = new Set([
@@ -252,7 +264,13 @@ const state = {
   abortController: null,
   busy: false,
   busyFocus: null,
-  coverageExpanded: false,
+  coverageEvaluation: null,
+  coverageExpanded: {
+    [COVERAGE_SECTION.EXPECTED]: false,
+    [COVERAGE_SECTION.HEALTHY]: false,
+    [COVERAGE_SECTION.UNEXPECTED]: true,
+  },
+  coverageIntentDraft: null,
   editor: null,
   emailDestination: null,
   emailDnsPolicy: null,
@@ -305,9 +323,26 @@ const elements = {
   confirmPreview: document.querySelector("#confirm-preview"),
   confirmSummary: document.querySelector("#confirm-summary"),
   confirmTitle: document.querySelector("#confirm-title"),
-  coverageList: document.querySelector("#coverage-list"),
+  coverageExpectedCount: document.querySelector("#coverage-expected-count"),
+  coverageExpectedList: document.querySelector("#coverage-expected-list"),
+  coverageExpectedToggle: document.querySelector("#coverage-expected-toggle"),
+  coverageGroups: document.querySelector("#coverage-groups"),
+  coverageHealthyCount: document.querySelector("#coverage-healthy-count"),
+  coverageHealthyList: document.querySelector("#coverage-healthy-list"),
+  coverageHealthyToggle: document.querySelector("#coverage-healthy-toggle"),
+  coverageIntentDialog: document.querySelector("#coverage-intent-dialog"),
+  coverageIntentError: document.querySelector("#coverage-intent-error"),
+  coverageIntentForm: document.querySelector("#coverage-intent-form"),
+  coverageIntentPreview: document.querySelector("#coverage-intent-preview"),
+  coverageIntentReason: document.querySelector("#coverage-intent-reason"),
+  coverageIntentRemove: document.querySelector("#coverage-intent-remove"),
+  coverageIntentSave: document.querySelector("#coverage-intent-save"),
+  coverageIntentTarget: document.querySelector("#coverage-intent-target"),
+  coverageIntentTitle: document.querySelector("#coverage-intent-title"),
   coverageSummary: document.querySelector("#coverage-summary"),
-  coverageToggle: document.querySelector("#coverage-toggle"),
+  coverageUnexpectedCount: document.querySelector("#coverage-unexpected-count"),
+  coverageUnexpectedList: document.querySelector("#coverage-unexpected-list"),
+  coverageUnexpectedToggle: document.querySelector("#coverage-unexpected-toggle"),
   differenceToggle: document.querySelector("#difference-toggle"),
   dnsType: document.querySelector("#dns-type"),
   driftCount: document.querySelector("#drift-count"),
@@ -363,6 +398,7 @@ const elements = {
   intentGroupSelectAll: document.querySelector("#intent-group-select-all"),
   intentGroupSelectionSummary: document.querySelector("#intent-group-selection-summary"),
   intentGroupTitle: document.querySelector("#intent-group-title"),
+  intentCoverageList: document.querySelector("#intent-coverage-list"),
   intentMetrics: document.querySelector("#intent-metrics"),
   intentPolicyDetail: document.querySelector("#intent-policy-detail"),
   intentPolicyDialog: document.querySelector("#intent-policy-dialog"),
@@ -478,6 +514,7 @@ const elements = {
 
 elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentAcknowledgementReason.maxLength = FLEET_INTENT_REASON_MAX_LENGTH
+elements.coverageIntentReason.maxLength = FLEET_INTENT_REASON_MAX_LENGTH
 elements.intentPolicyCustomKind.replaceChildren(...Object.values(JSON_VALUE_KIND).map((kind) => {
   const option = createElement("option", { text: humanizeValueField(kind) })
   option.value = kind
@@ -2970,6 +3007,116 @@ async function persistIntentDocument(document, successMessage) {
   }
 }
 
+function openCoverageIntentEditor(issue, expectation = null) {
+  if (!intentWritable()) {
+    toast("Expected coverage editing is unavailable in this session", "error")
+    return
+  }
+  const currentExpectation = expectation
+    || (issue ? coverageExpectationForIssue(issue) : null)
+  const target = issue || currentExpectation
+  if (!target) return
+  const changed = Boolean(issue && currentExpectation
+    && issue.observedCanonical !== currentExpectation.observedCanonical)
+  state.coverageIntentDraft = {
+    baseRevision: state.intent.revision,
+    expectation: currentExpectation,
+    issue,
+  }
+  elements.coverageIntentTitle.textContent = currentExpectation
+    ? changed ? "Update expected gap" : "Edit expected gap"
+    : "Mark gap as expected"
+  elements.coverageIntentTarget.textContent = coverageTargetLabel(target)
+  elements.coverageIntentPreview.replaceChildren(
+    createElement("strong", {
+      text: issue
+        ? changed ? "The failure changed" : "Observed failure"
+        : "No matching failure is active",
+    }),
+    document.createTextNode(issue?.detail
+      || "The saved allowance remains available if this exact failure returns."),
+  )
+  elements.coverageIntentReason.value = currentExpectation?.reason || ""
+  elements.coverageIntentRemove.hidden = !currentExpectation
+  elements.coverageIntentSave.textContent = currentExpectation
+    ? changed ? "Update expectation" : "Save expectation"
+    : "Mark expected"
+  clearFieldError(elements.coverageIntentReason, elements.coverageIntentError)
+  showDialog(elements.coverageIntentDialog, {
+    initialFocus: elements.coverageIntentReason,
+  })
+  elements.coverageIntentReason.select()
+}
+
+async function saveCoverageIntent(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const draft = state.coverageIntentDraft
+  if (!draft) return
+  if (event.submitter?.value === "remove") {
+    const expectation = draft.expectation
+    if (!expectation) return
+    elements.coverageIntentDialog.close()
+    requestIntentRemoval({
+      remove: (document) => removeFleetIntentCoverageExpectation(
+        document,
+        expectation.id,
+      ),
+      successMessage: `Expected coverage removed for ${coverageTargetLabel(expectation)}`,
+      summary: `Remove expected coverage for ${coverageTargetLabel(expectation)}? A matching failure will return to unexpected coverage.`,
+      title: "Remove expected coverage",
+    })
+    return
+  }
+  if (draft.baseRevision !== state.intent.revision) {
+    showFieldError(
+      elements.coverageIntentReason,
+      elements.coverageIntentError,
+      new Error("Fleet intent changed while this editor was open. Close and reopen it to review the latest coverage."),
+    )
+    return
+  }
+  const reason = elements.coverageIntentReason.value.trim()
+  if (!reason) {
+    showFieldError(
+      elements.coverageIntentReason,
+      elements.coverageIntentError,
+      new Error("Enter why this inventory gap is expected"),
+    )
+    return
+  }
+  const target = draft.issue || draft.expectation
+  const timestamp = new Date().toISOString()
+  const expectation = {
+    createdAt: draft.expectation?.createdAt || timestamp,
+    id: draft.expectation?.id || intentId("coverage"),
+    kind: target.kind,
+    observedCanonical: target.observedCanonical,
+    reason,
+    subjectId: target.subjectId,
+    subjectLabel: target.subjectLabel,
+    updatedAt: timestamp,
+    zoneId: target.zoneId,
+    zoneName: target.zoneName,
+  }
+  let document
+  try {
+    document = replaceFleetIntentCoverageExpectation(state.intent, expectation)
+  } catch (error) {
+    showFieldError(
+      elements.coverageIntentReason,
+      elements.coverageIntentError,
+      error,
+    )
+    return
+  }
+  const saved = await persistIntentDocument(
+    document,
+    `Expected coverage saved for ${coverageTargetLabel(expectation)}`,
+  )
+  if (saved) elements.coverageIntentDialog.close()
+}
+
 async function syncFleetIntent(options = {}) {
   if (!api.usesBroker || state.intentSaving || state.intentSyncing) return false
   state.intentSyncing = true
@@ -3915,6 +4062,101 @@ function renderIntentPolicies() {
   elements.intentPolicyList.replaceChildren(fragment)
 }
 
+function showCoverageExpectation(expectationState) {
+  const section = expectationState.status
+    === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.CHANGED
+    ? COVERAGE_SECTION.UNEXPECTED
+    : COVERAGE_SECTION.EXPECTED
+  state.coverageExpanded[section] = true
+  syncCoverageVisibility()
+  elements.intentDialog.close()
+  const toggle = section === COVERAGE_SECTION.UNEXPECTED
+    ? elements.coverageUnexpectedToggle
+    : elements.coverageExpectedToggle
+  toggle.scrollIntoView({
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    block: "center",
+  })
+  toggle.focus({ preventScroll: true })
+}
+
+function renderIntentCoverageExpectations() {
+  const fragment = document.createDocumentFragment()
+  const expectationStates = state.coverageEvaluation?.expectationStates
+    || state.intent.coverageExpectations.map((expectation) => ({
+      expectation,
+      issue: null,
+      status: FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.INACTIVE,
+    }))
+  for (const expectationState of expectationStates) {
+    const expectation = expectationState.expectation
+    const status = expectationState.status
+    const presentation = status === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.ACTIVE
+      ? {
+          className: "aligned",
+          label: "Expected",
+          summary: "The exact saved failure is active and shown in yellow",
+        }
+      : status === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.CHANGED
+        ? {
+            className: "actionable",
+            label: "Changed",
+            summary: "The current failure differs and is shown in red",
+          }
+        : {
+            className: "stale",
+            label: "Inactive",
+            summary: "No matching failure is present in the loaded inventory",
+          }
+    const item = createElement("article", {
+      className: `intent-item ${presentation.className}`,
+    })
+    const heading = createElement("div", { className: "intent-item-heading" })
+    heading.append(
+      createElement("h4", { text: coverageTargetLabel(expectation) }),
+      intentStatusBadge(presentation.label, presentation.className),
+    )
+    item.append(
+      heading,
+      createElement("p", {
+        className: "intent-item-summary",
+        text: presentation.summary,
+      }),
+      createElement("div", {
+        className: "intent-item-value",
+        text: expectation.reason,
+      }),
+    )
+    const actions = intentItemActions()
+    actions.append(
+      intentActionButton("Show coverage", () => {
+        showCoverageExpectation(expectationState)
+      }),
+      intentActionButton("Edit", () => {
+        openCoverageIntentEditor(expectationState.issue, expectation)
+      }, { write: true }),
+      intentActionButton("Remove", () => requestIntentRemoval({
+        remove: (document) => removeFleetIntentCoverageExpectation(
+          document,
+          expectation.id,
+        ),
+        successMessage: `Expected coverage removed for ${coverageTargetLabel(expectation)}`,
+        summary: `Remove expected coverage for ${coverageTargetLabel(expectation)}? A matching failure will return to unexpected coverage.`,
+        title: "Remove expected coverage",
+      }), { danger: true, write: true }),
+    )
+    item.append(actions)
+    fragment.append(item)
+  }
+  if (fragment.childNodes.length === 0) {
+    fragment.append(createElement("p", {
+      className: "intent-empty",
+      text: "No inventory gaps are marked as expected. Use Mark expected beside a red coverage issue.",
+    }))
+  }
+  elements.intentCoverageList.replaceChildren(fragment)
+}
+
 function renderIntentAcknowledgements() {
   const fragment = document.createDocumentFragment()
   for (const entry of state.intentEvaluation?.acknowledgementStates || []) {
@@ -3970,7 +4212,7 @@ function renderIntentManager() {
   const modeDetail = readOnly
     ? "This read-only session can inspect intent but cannot change it."
     : api.usesBroker
-      ? "Intent is persisted locally and shared by normal dashboard windows."
+      ? "Intent is persisted as project state and shared by normal dashboard windows."
       : "This debug session can inspect injected intent but cannot persist changes."
   elements.intentSummary.textContent = modeDetail
   elements.intentMetrics.replaceChildren(
@@ -3990,10 +4232,15 @@ function renderIntentManager() {
       className: `intent-metric${summary.staleAcknowledgements > 0 ? " actionable" : ""}`,
       text: `${summary.staleAcknowledgements} stale`,
     }),
+    createElement("span", {
+      className: `intent-metric${(state.coverageEvaluation?.summary.changed || 0) > 0 ? " actionable" : ""}`,
+      text: `${state.intent.coverageExpectations.length} coverage`,
+    }),
   )
   elements.intentAddGroup.disabled = !intentWritable()
   renderIntentGroups()
   renderIntentPolicies()
+  renderIntentCoverageExpectations()
   renderIntentAcknowledgements()
 }
 
@@ -4614,41 +4861,221 @@ function renderMatrix() {
   filterRows()
 }
 
+function coverageExpectationForIssue(issue) {
+  const targetKey = fleetIntentCoverageTargetKey(issue)
+  return state.intent.coverageExpectations.find(
+    (expectation) => fleetIntentCoverageTargetKey(expectation) === targetKey,
+  ) || null
+}
+
+function coverageTargetLabel(target) {
+  return target.zoneName
+    ? `${target.subjectLabel} | ${target.zoneName}`
+    : `${target.subjectLabel} | Fleet-wide limitation`
+}
+
+function coverageIssueGroups(issueStates) {
+  const groups = new Map()
+  for (const issueState of issueStates) {
+    const issue = issueState.issue
+    const key = JSON.stringify([issue.kind, issue.subjectId])
+    if (!groups.has(key)) {
+      groups.set(key, {
+        issueStates: [],
+        kind: issue.kind,
+        subjectId: issue.subjectId,
+        subjectLabel: issue.subjectLabel,
+      })
+    }
+    groups.get(key).issueStates.push(issueState)
+  }
+  return [...groups.values()]
+}
+
+function coverageIssueAction(issueState) {
+  if (!intentMutationSupported()) return null
+  const button = createElement("button", {
+    className: "button button-quiet",
+    text: issueState.expected
+      ? "Edit expectation"
+      : issueState.expectation
+        ? "Update expectation"
+        : "Mark expected",
+  })
+  button.type = "button"
+  button.dataset.intentWrite = ""
+  button.disabled = !intentWritable()
+  button.addEventListener("click", () => {
+    openCoverageIntentEditor(issueState.issue, issueState.expectation)
+  })
+  return button
+}
+
+function coverageIssueRow(issueState) {
+  const issue = issueState.issue
+  const row = createElement("div", { className: "coverage-issue" })
+  const copy = createElement("div", { className: "coverage-issue-copy" })
+  copy.append(
+    createElement("strong", {
+      text: issue.zoneName || "Fleet-wide limitation",
+    }),
+    createElement("small", { text: issue.detail }),
+  )
+  row.append(copy)
+  const action = coverageIssueAction(issueState)
+  if (action) row.append(action)
+  return row
+}
+
+function coverageIssueGroupItem(group, expected) {
+  const count = group.issueStates.length
+  const item = createElement("li", {
+    className: expected ? "expected" : "failed",
+  })
+  item.append(
+    createElement("span", { text: group.subjectLabel }),
+    createElement("small", {
+      text: group.kind === INVENTORY_COVERAGE_KIND.LIMITATION
+        ? expected ? "Expected fleet-wide limitation" : "Unexpected fleet-wide limitation"
+        : `${count} ${expected ? "expected" : "unexpected"} zone failure${count === 1 ? "" : "s"}`,
+    }),
+  )
+  const issues = createElement("div", { className: "coverage-issue-list" })
+  for (const issueState of group.issueStates) {
+    issues.append(coverageIssueRow(issueState))
+  }
+  item.append(issues)
+  return item
+}
+
+function coverageEmptyItem(text) {
+  return createElement("li", {
+    className: "coverage-empty",
+    text,
+  })
+}
+
+function inactiveCoverageExpectationItem(expectationState) {
+  const expectation = expectationState.expectation
+  const changed = expectationState.status
+    === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.CHANGED
+  const item = createElement("li", { className: "expected" })
+  item.append(
+    createElement("span", { text: expectation.subjectLabel }),
+    createElement("small", {
+      text: changed
+        ? `${expectation.zoneName || "Fleet-wide limitation"} | Failure changed and is red again`
+        : `${expectation.zoneName || "Fleet-wide limitation"} | No matching failure in this inventory`,
+    }),
+  )
+  const row = createElement("div", { className: "coverage-issue" })
+  const copy = createElement("div", { className: "coverage-issue-copy" })
+  copy.append(
+    createElement("strong", { text: changed ? "Needs review" : "Saved allowance inactive" }),
+    createElement("small", { text: expectation.reason }),
+  )
+  row.append(copy)
+  if (intentMutationSupported()) {
+    const review = createElement("button", {
+      className: "button button-quiet",
+      text: "Review",
+    })
+    review.type = "button"
+    review.dataset.intentWrite = ""
+    review.disabled = !intentWritable()
+    review.addEventListener("click", () => {
+      openCoverageIntentEditor(expectationState.issue, expectation)
+    })
+    row.append(review)
+  }
+  item.append(row)
+  return item
+}
+
 function syncCoverageVisibility() {
-  const healthyItems = [...elements.coverageList.querySelectorAll(".healthy")]
-  const issueCount = elements.coverageList.querySelectorAll(".failed, .blocked").length
-  for (const item of healthyItems) item.hidden = !state.coverageExpanded
-  elements.coverageList.hidden = issueCount === 0 && !state.coverageExpanded
-  elements.coverageToggle.hidden = healthyItems.length === 0
-  elements.coverageSummary.textContent = issueCount === 0
-    ? `All ${healthyItems.length} readable surfaces succeeded`
-    : `${issueCount} issue${issueCount === 1 ? "" : "s"} shown | ${healthyItems.length} healthy surface${healthyItems.length === 1 ? "" : "s"} ${state.coverageExpanded ? "shown" : "hidden"}`
-  elements.coverageToggle.textContent = state.coverageExpanded
-    ? "Show issues only"
-    : "Show all coverage"
-  elements.coverageToggle.setAttribute("aria-expanded", String(state.coverageExpanded))
+  const sections = [
+    {
+      key: COVERAGE_SECTION.UNEXPECTED,
+      list: elements.coverageUnexpectedList,
+      toggle: elements.coverageUnexpectedToggle,
+    },
+    {
+      key: COVERAGE_SECTION.EXPECTED,
+      list: elements.coverageExpectedList,
+      toggle: elements.coverageExpectedToggle,
+    },
+    {
+      key: COVERAGE_SECTION.HEALTHY,
+      list: elements.coverageHealthyList,
+      toggle: elements.coverageHealthyToggle,
+    },
+  ]
+  for (const section of sections) {
+    const expanded = state.coverageExpanded[section.key]
+    section.list.hidden = !expanded
+    section.toggle.setAttribute("aria-expanded", String(expanded))
+  }
 }
 
 function renderCoverage() {
-  const fragment = document.createDocumentFragment()
   const inventoryCoverage = coverageFor(state.inventory)
-  for (const coverage of inventoryCoverage) {
-    const item = createElement("li", { className: coverage.ok ? "healthy" : "failed" })
+  const issues = [
+    ...inventoryCoverage.flatMap((coverage) => coverage.failed),
+    ...staticCoverageIssues(STATIC_LIMITATIONS),
+  ]
+  const evaluation = evaluateFleetIntentCoverage(state.intent, issues)
+  state.coverageEvaluation = evaluation
+
+  const unexpectedFragment = document.createDocumentFragment()
+  for (const group of coverageIssueGroups(evaluation.unexpectedIssues)) {
+    unexpectedFragment.append(coverageIssueGroupItem(group, false))
+  }
+  if (unexpectedFragment.childNodes.length === 0) {
+    unexpectedFragment.append(coverageEmptyItem("No unexpected inventory gaps"))
+  }
+  elements.coverageUnexpectedList.replaceChildren(unexpectedFragment)
+
+  const expectedFragment = document.createDocumentFragment()
+  for (const group of coverageIssueGroups(evaluation.expectedIssues)) {
+    expectedFragment.append(coverageIssueGroupItem(group, true))
+  }
+  for (const expectationState of evaluation.expectationStates.filter(
+    (entry) => entry.status !== FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.ACTIVE,
+  )) {
+    expectedFragment.append(inactiveCoverageExpectationItem(expectationState))
+  }
+  if (expectedFragment.childNodes.length === 0) {
+    expectedFragment.append(coverageEmptyItem("No expected gaps have been saved"))
+  }
+  elements.coverageExpectedList.replaceChildren(expectedFragment)
+
+  const healthyFragment = document.createDocumentFragment()
+  const healthy = inventoryCoverage.filter((coverage) => coverage.ok)
+  for (const coverage of healthy) {
+    const item = createElement("li", { className: "healthy" })
     item.append(
       createElement("span", { text: coverage.label }),
       createElement("small", { text: coverage.detail }),
     )
-    fragment.append(item)
+    healthyFragment.append(item)
   }
-  for (const limitation of STATIC_LIMITATIONS) {
-    const item = createElement("li", { className: "blocked" })
-    item.append(
-      createElement("span", { text: limitation.label }),
-      createElement("small", { text: limitation.detail }),
-    )
-    fragment.append(item)
+  if (healthyFragment.childNodes.length === 0) {
+    healthyFragment.append(coverageEmptyItem("No surface succeeded across every zone"))
   }
-  elements.coverageList.replaceChildren(fragment)
+  elements.coverageHealthyList.replaceChildren(healthyFragment)
+
+  const expectedCurrent = evaluation.expectedIssues.length
+  elements.coverageUnexpectedCount.textContent = `${evaluation.unexpectedIssues.length} current`
+  const expectedCounts = [`${expectedCurrent} current`]
+  if (evaluation.summary.changed > 0) {
+    expectedCounts.push(`${evaluation.summary.changed} review`)
+  }
+  if (evaluation.summary.inactive > 0) {
+    expectedCounts.push(`${evaluation.summary.inactive} inactive`)
+  }
+  elements.coverageExpectedCount.textContent = expectedCounts.join(" | ")
+  elements.coverageHealthyCount.textContent = `${healthy.length} readable`
+  elements.coverageSummary.textContent = `${evaluation.unexpectedIssues.length} unexpected | ${expectedCurrent} expected | ${healthy.length} healthy surface${healthy.length === 1 ? "" : "s"}`
   syncCoverageVisibility()
 }
 
@@ -7234,9 +7661,9 @@ function renderInventory(inventory, source) {
     renderMatrixFilters()
     renderMatrix()
   }
+  renderCoverage()
   if (elements.intentDialog.open) renderIntentManager()
   if (elements.rulesetComparisonDialog.open) renderRulesetComparison()
-  renderCoverage()
   updateSelectionStyles()
   return matrixChanged
 }
@@ -7480,8 +7907,12 @@ elements.targetSelectDrifted.addEventListener("click", () => {
 elements.targetClear.addEventListener("click", () => {
   selectZoneIds([])
 })
-elements.coverageToggle.addEventListener("click", () => {
-  state.coverageExpanded = !state.coverageExpanded
+elements.coverageGroups.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-coverage-section]")
+  if (!toggle) return
+  const section = toggle.dataset.coverageSection
+  if (!Object.values(COVERAGE_SECTION).includes(section)) return
+  state.coverageExpanded[section] = !state.coverageExpanded[section]
   syncCoverageVisibility()
 })
 elements.alignEmail.addEventListener("click", alignEmail)
@@ -7616,6 +8047,16 @@ elements.renameValue.addEventListener("input", () => {
 })
 elements.renameForm.addEventListener("submit", reviewRuleRename)
 elements.manageIntent.addEventListener("click", openIntentManager)
+elements.coverageIntentReason.addEventListener("input", () => {
+  clearFieldError(
+    elements.coverageIntentReason,
+    elements.coverageIntentError,
+  )
+})
+elements.coverageIntentForm.addEventListener("submit", saveCoverageIntent)
+elements.coverageIntentDialog.addEventListener("close", () => {
+  state.coverageIntentDraft = null
+})
 elements.intentAddGroup.addEventListener("click", () => openIntentGroupEditor())
 elements.intentGroupMembers.addEventListener("change", updateIntentGroupSelectionSummary)
 elements.intentGroupSelectAll.addEventListener("click", () => {

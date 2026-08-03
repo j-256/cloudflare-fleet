@@ -2,8 +2,9 @@ import {
   shortDisplay,
   stableString,
 } from "./normalize.mjs"
+import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 2
+export const FLEET_INTENT_SCHEMA_VERSION = 3
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -31,6 +32,12 @@ export const FLEET_INTENT_ACKNOWLEDGEMENT_STATUS = Object.freeze({
   STALE: "stale",
 })
 
+export const FLEET_INTENT_COVERAGE_EXPECTATION_STATUS = Object.freeze({
+  ACTIVE: "active",
+  CHANGED: "changed",
+  INACTIVE: "inactive",
+})
+
 export const FLEET_INTENT_EXPECTED_ORIGIN = Object.freeze({
   AUTHORED: "authored",
   OBSERVED: "observed",
@@ -43,7 +50,8 @@ export const FLEET_INTENT_VALUE_CONSTRAINT = Object.freeze({
 })
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
-const LEGACY_FLEET_INTENT_SCHEMA_VERSION = 1
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_ONE = 1
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO = 2
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 
 function isObject(value) {
@@ -93,6 +101,7 @@ export function createEmptyFleetIntentDocument(accountId) {
   return {
     accountId,
     acknowledgements: [],
+    coverageExpectations: [],
     groups: [allZonesGroup()],
     policies: [],
     revision: FLEET_INTENT_EMPTY_REVISION,
@@ -188,6 +197,37 @@ function isAcknowledgement(acknowledgement) {
     && isTimestamp(acknowledgement.updatedAt)
 }
 
+function isCoverageTarget(target) {
+  if (!isObject(target)
+    || !Object.values(INVENTORY_COVERAGE_KIND).includes(target.kind)
+    || !isIdentifier(target.subjectId)
+    || !isLabel(target.subjectLabel)
+    || !isLabel(target.observedCanonical, 100000)) return false
+  if (target.kind === INVENTORY_COVERAGE_KIND.SURFACE) {
+    return isLabel(target.zoneId) && isLabel(target.zoneName)
+  }
+  return target.zoneId === null && target.zoneName === null
+}
+
+function isCoverageExpectation(expectation) {
+  return isCoverageTarget(expectation)
+    && isIdentifier(expectation.id)
+    && isLabel(expectation.reason, FLEET_INTENT_REASON_MAX_LENGTH)
+    && isTimestamp(expectation.createdAt)
+    && isTimestamp(expectation.updatedAt)
+}
+
+export function fleetIntentCoverageTargetKey(target) {
+  if (!isCoverageTarget(target)) {
+    throw new TypeError("Fleet intent coverage target is invalid")
+  }
+  return JSON.stringify([
+    target.kind,
+    target.subjectId,
+    target.zoneId,
+  ])
+}
+
 function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   if (!isObject(value)) return false
   if (value.schemaVersion !== schemaVersion) return false
@@ -200,9 +240,17 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   if (!Array.isArray(value.policies) || !value.policies.every(isPolicy)) return false
   if (!Array.isArray(value.acknowledgements)
     || !value.acknowledgements.every(isAcknowledgement)) return false
+  if (schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+    && (!Array.isArray(value.coverageExpectations)
+      || !value.coverageExpectations.every(isCoverageExpectation))) return false
   if (!hasUniqueIds(value.groups)
     || !hasUniqueIds(value.policies)
-    || !hasUniqueIds(value.acknowledgements)) return false
+    || !hasUniqueIds(value.acknowledgements)
+    || (schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+      && !hasUniqueIds(value.coverageExpectations))) return false
+  if (schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+    && new Set(value.coverageExpectations.map(fleetIntentCoverageTargetKey)).size
+      !== value.coverageExpectations.length) return false
   if (new Set(value.groups.map((group) => group.name.trim().toLowerCase())).size
     !== value.groups.length) return false
   const allGroup = value.groups.find(
@@ -229,18 +277,28 @@ export function isFleetIntentDocument(value, accountId = null) {
 
 export function migrateFleetIntentDocument(value, accountId = null) {
   if (isFleetIntentDocument(value, accountId)) return structuredClone(value)
-  const legacyValid = isFleetIntentDocumentVersion(
+  const versionOneValid = isFleetIntentDocumentVersion(
     value,
     accountId,
-    LEGACY_FLEET_INTENT_SCHEMA_VERSION,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_ONE,
   ) && value.policies.every((policy) => policy.valueConstraint === undefined)
-  if (!legacyValid) throw new TypeError("Fleet intent document cannot be migrated")
+  const versionTwoValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO,
+  )
+  if (!versionOneValid && !versionTwoValid) {
+    throw new TypeError("Fleet intent document cannot be migrated")
+  }
   const migrated = {
     ...structuredClone(value),
-    policies: value.policies.map((policy) => ({
-      ...structuredClone(policy),
-      valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
-    })),
+    coverageExpectations: [],
+    policies: versionOneValid
+      ? value.policies.map((policy) => ({
+        ...structuredClone(policy),
+        valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+      }))
+      : structuredClone(value.policies),
     schemaVersion: FLEET_INTENT_SCHEMA_VERSION,
   }
   if (!isFleetIntentDocument(migrated, accountId)) {
@@ -349,6 +407,101 @@ export function removeFleetIntentAcknowledgement(document, acknowledgementId) {
     throw new TypeError("Fleet intent acknowledgement was not found")
   }
   return next
+}
+
+export function replaceFleetIntentCoverageExpectation(document, expectation) {
+  const next = cloneFleetIntentDocument(document)
+  if (!isCoverageExpectation(expectation)) {
+    throw new TypeError("Fleet intent coverage expectation is invalid")
+  }
+  const targetKey = fleetIntentCoverageTargetKey(expectation)
+  if (next.coverageExpectations.some(
+    (entry) => entry.id !== expectation.id
+      && fleetIntentCoverageTargetKey(entry) === targetKey,
+  )) {
+    throw new TypeError("Fleet intent coverage target already has an expectation")
+  }
+  next.coverageExpectations = [
+    ...next.coverageExpectations.filter((entry) => entry.id !== expectation.id),
+    structuredClone(expectation),
+  ]
+  if (!isFleetIntentDocument(next)) {
+    throw new TypeError("Fleet intent coverage expectation produced an invalid document")
+  }
+  return next
+}
+
+export function removeFleetIntentCoverageExpectation(document, expectationId) {
+  const next = cloneFleetIntentDocument(document)
+  next.coverageExpectations = next.coverageExpectations.filter(
+    (expectation) => expectation.id !== expectationId,
+  )
+  if (next.coverageExpectations.length === document.coverageExpectations.length) {
+    throw new TypeError("Fleet intent coverage expectation was not found")
+  }
+  return next
+}
+
+export function evaluateFleetIntentCoverage(document, issues) {
+  if (!isFleetIntentDocument(document)) {
+    throw new TypeError("Fleet intent document is invalid")
+  }
+  if (!Array.isArray(issues) || !issues.every(isCoverageTarget)) {
+    throw new TypeError("Fleet intent coverage issues are invalid")
+  }
+  const issuesByTarget = new Map()
+  for (const issue of issues) {
+    const targetKey = fleetIntentCoverageTargetKey(issue)
+    if (issuesByTarget.has(targetKey)) {
+      throw new TypeError("Fleet intent coverage issues contain duplicate targets")
+    }
+    issuesByTarget.set(targetKey, issue)
+  }
+  const expectationsByTarget = new Map(document.coverageExpectations.map(
+    (expectation) => [fleetIntentCoverageTargetKey(expectation), expectation],
+  ))
+  const issueStates = issues.map((issue) => {
+    const expectation = expectationsByTarget.get(
+      fleetIntentCoverageTargetKey(issue),
+    ) || null
+    return {
+      expectation,
+      expected: expectation?.observedCanonical === issue.observedCanonical,
+      issue,
+    }
+  })
+  const expectationStates = document.coverageExpectations.map((expectation) => {
+    const issue = issuesByTarget.get(
+      fleetIntentCoverageTargetKey(expectation),
+    ) || null
+    return {
+      expectation,
+      issue,
+      status: !issue
+        ? FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.INACTIVE
+        : issue.observedCanonical === expectation.observedCanonical
+          ? FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.ACTIVE
+          : FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.CHANGED,
+    }
+  })
+  return {
+    expectationStates,
+    expectedIssues: issueStates.filter((entry) => entry.expected),
+    issueStates,
+    summary: {
+      active: expectationStates.filter(
+        (entry) => entry.status === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.ACTIVE,
+      ).length,
+      changed: expectationStates.filter(
+        (entry) => entry.status === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.CHANGED,
+      ).length,
+      inactive: expectationStates.filter(
+        (entry) => entry.status === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.INACTIVE,
+      ).length,
+      unexpected: issueStates.filter((entry) => !entry.expected).length,
+    },
+    unexpectedIssues: issueStates.filter((entry) => !entry.expected),
+  }
 }
 
 export function fleetIntentGroupZoneIds(group, inventory) {

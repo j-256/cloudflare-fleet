@@ -1,8 +1,10 @@
 import {
   DEFAULT_CONCURRENCY,
+  INVENTORY_COVERAGE_KIND,
   SURFACES,
 } from "./constants.mjs"
 import { serializeApiError } from "./api.mjs"
+import { stableString } from "./normalize.mjs"
 
 async function runPool(tasks, worker, concurrency, onProgress) {
   let cursor = 0
@@ -170,13 +172,53 @@ export function coverageFor(inventory) {
       id: surface.id,
       label: surface.label,
       ok: failed.length === 0,
-      failed: failed.map((zone) => ({
-        zone: zone.meta.name,
-        error: zone.surfaces[surface.id]?.error || { message: "No response" },
-      })),
+      failed: failed.map((zone) => {
+        const error = zone.surfaces[surface.id]?.error || { message: "No response" }
+        return {
+          detail: coverageErrorDetail(error),
+          error,
+          kind: INVENTORY_COVERAGE_KIND.SURFACE,
+          observedCanonical: coverageIssueCanonical(error),
+          subjectId: surface.id,
+          subjectLabel: surface.label,
+          zoneId: zone.meta.id,
+          zoneName: zone.meta.name,
+        }
+      }),
       detail: failed.length === 0
         ? `Read successfully for all ${inventory.zones.length} zones`
         : `${failed.length} zone request${failed.length === 1 ? "" : "s"} failed`,
     }
   })
+}
+
+export function coverageErrorDetail(error) {
+  const firstApiError = error?.errors?.find(
+    (entry) => typeof entry?.message === "string" && entry.message.trim(),
+  )
+  return firstApiError?.message || error?.message || "No response"
+}
+
+export function coverageIssueCanonical(error) {
+  const codes = [...new Set((error?.errors || [])
+    .map((entry) => entry?.code)
+    .filter((code) => typeof code === "number" || typeof code === "string"))]
+    .sort((left, right) => String(left).localeCompare(String(right)))
+  return stableString({
+    codes,
+    message: codes.length === 0 ? coverageErrorDetail(error) : null,
+    status: error?.status ?? null,
+  })
+}
+
+export function staticCoverageIssues(limitations) {
+  return limitations.map((limitation) => ({
+    detail: limitation.detail,
+    kind: INVENTORY_COVERAGE_KIND.LIMITATION,
+    observedCanonical: stableString({ detail: limitation.detail }),
+    subjectId: limitation.id,
+    subjectLabel: limitation.label,
+    zoneId: null,
+    zoneName: null,
+  }))
 }

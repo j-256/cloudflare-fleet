@@ -52,6 +52,11 @@ export const POLICY_EXCEPTION_STATUS = Object.freeze({
   VIOLATED: "violated",
 })
 
+export const INVENTORY_COVERAGE_KIND = Object.freeze({
+  LIMITATION: "limitation",
+  SURFACE: "surface",
+})
+
 export const HOLE_RESOLUTION_KIND = Object.freeze({
   DNS_RECORDS: "dns-record-copy",
   EMAIL_POLICY: "email-policy",
@@ -197,18 +202,22 @@ export const SURFACES = Object.freeze([
 
 export const STATIC_LIMITATIONS = Object.freeze([
   {
+    id: "legacy-page-rules",
     label: "Legacy Page Rules",
     detail: "Cloudflare rejects this endpoint for account-owned tokens (API error 1011)",
   },
   {
+    id: "argo-smart-routing",
     label: "Argo Smart Routing",
     detail: "The account token is not authorized to read the smart_routing setting (API error 1015)",
   },
   {
+    id: "spectrum-applications",
     label: "Spectrum applications",
     detail: "The plan or token rejects this surface with HTTP 403",
   },
   {
+    id: "custom-hostnames",
     label: "Custom hostnames",
     detail: "No SSL for SaaS quota is allocated to the fleet (API error 1404)",
   },

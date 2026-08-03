@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { loadInventory } from "../src/inventory.mjs"
+import {
+  coverageFor,
+  coverageIssueCanonical,
+  loadInventory,
+  staticCoverageIssues,
+} from "../src/inventory.mjs"
+import { STATIC_LIMITATIONS } from "../src/constants.mjs"
 
 function zone(name) {
   return {
@@ -223,4 +229,67 @@ test("zone-scoped inventory rejects unknown zone identifiers", async () => {
     }),
     /Unknown zone identifier/,
   )
+})
+
+test("coverage failures expose stable intent targets and friendly details", () => {
+  const error = {
+    errors: [{ code: 1001, message: "Product is not enabled" }],
+    message: "GET /bot_management failed",
+    status: 403,
+  }
+  const inventory = {
+    zones: [{
+      meta: {
+        id: "zone-alpha",
+        name: "alpha.example",
+      },
+      surfaces: {
+        "bot-management": {
+          error,
+          ok: false,
+        },
+      },
+    }],
+  }
+
+  const coverage = coverageFor(inventory).find(
+    (entry) => entry.id === "bot-management",
+  )
+  assert.equal(coverage.ok, false)
+  assert.deepEqual(coverage.failed[0], {
+    detail: "Product is not enabled",
+    error,
+    kind: "surface",
+    observedCanonical: "{\"codes\":[1001],\"message\":null,\"status\":403}",
+    subjectId: "bot-management",
+    subjectLabel: "Bot management",
+    zoneId: "zone-alpha",
+    zoneName: "alpha.example",
+  })
+  assert.equal(
+    coverageIssueCanonical({
+      ...error,
+      errors: [{ code: 1001, message: "Wording changed" }],
+    }),
+    coverage.failed[0].observedCanonical,
+  )
+  assert.notEqual(
+    coverageIssueCanonical({ ...error, status: 401 }),
+    coverage.failed[0].observedCanonical,
+  )
+})
+
+test("static limitations have stable fleet-wide coverage targets", () => {
+  const issues = staticCoverageIssues(STATIC_LIMITATIONS)
+
+  assert.equal(
+    new Set(issues.map((issue) => issue.subjectId)).size,
+    STATIC_LIMITATIONS.length,
+  )
+  assert.equal(issues.every((issue) => (
+    issue.kind === "limitation"
+      && issue.zoneId === null
+      && issue.zoneName === null
+      && issue.observedCanonical.length > 0
+  )), true)
 })

@@ -176,10 +176,34 @@
           </div>
           <div class="coverage-heading-meta">
             <p id="coverage-summary">Checking readable surfaces</p>
-            <button class="button button-quiet" id="coverage-toggle" type="button" aria-expanded="false" aria-controls="coverage-list">Show all coverage</button>
           </div>
         </div>
-        <ul id="coverage-list"></ul>
+        <div class="coverage-groups" id="coverage-groups">
+          <section class="coverage-group unexpected" aria-labelledby="coverage-unexpected-toggle">
+            <button class="coverage-group-toggle" id="coverage-unexpected-toggle" type="button" data-coverage-section="unexpected" aria-expanded="true" aria-controls="coverage-unexpected-list">
+              <span>Unexpected issues</span>
+              <small id="coverage-unexpected-count">0 current</small>
+              <span class="coverage-disclosure-icon" aria-hidden="true"></span>
+            </button>
+            <ul id="coverage-unexpected-list"></ul>
+          </section>
+          <section class="coverage-group expected" aria-labelledby="coverage-expected-toggle">
+            <button class="coverage-group-toggle" id="coverage-expected-toggle" type="button" data-coverage-section="expected" aria-expanded="false" aria-controls="coverage-expected-list">
+              <span>Expected gaps</span>
+              <small id="coverage-expected-count">0 saved</small>
+              <span class="coverage-disclosure-icon" aria-hidden="true"></span>
+            </button>
+            <ul id="coverage-expected-list" hidden></ul>
+          </section>
+          <section class="coverage-group healthy" aria-labelledby="coverage-healthy-toggle">
+            <button class="coverage-group-toggle" id="coverage-healthy-toggle" type="button" data-coverage-section="healthy" aria-expanded="false" aria-controls="coverage-healthy-list">
+              <span>Healthy surfaces</span>
+              <small id="coverage-healthy-count">0 readable</small>
+              <span class="coverage-disclosure-icon" aria-hidden="true"></span>
+            </button>
+            <ul id="coverage-healthy-list" hidden></ul>
+          </section>
+        </div>
       </section>
     </main>
 
@@ -392,6 +416,15 @@
         </div>
         <div class="intent-list" id="intent-policy-list"></div>
       </section>
+      <section class="intent-section" aria-labelledby="intent-coverage-title">
+        <div class="intent-section-heading">
+          <div>
+            <h3 id="intent-coverage-title">Expected inventory coverage</h3>
+            <p>Saved API failures stay yellow only while the exact observed failure remains the same.</p>
+          </div>
+        </div>
+        <div class="intent-list" id="intent-coverage-list"></div>
+      </section>
       <section class="intent-section" aria-labelledby="intent-acknowledgements-title">
         <div class="intent-section-heading">
           <div>
@@ -405,6 +438,25 @@
         <button class="button button-primary" type="button" data-dialog-close>Done</button>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="coverage-intent-dialog" aria-labelledby="coverage-intent-title" aria-describedby="coverage-intent-target coverage-intent-preview">
+    <form method="dialog" id="coverage-intent-form" novalidate>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close expected coverage editor">&times;</button>
+      <p class="dialog-kicker">Inventory coverage intent</p>
+      <h2 id="coverage-intent-title">Mark expected</h2>
+      <p id="coverage-intent-target"></p>
+      <div class="coverage-intent-preview" id="coverage-intent-preview"></div>
+      <label for="coverage-intent-reason">Why is this unavailable by design?</label>
+      <textarea id="coverage-intent-reason" rows="3" maxlength="2000" aria-errormessage="coverage-intent-error" required></textarea>
+      <p class="field-error" id="coverage-intent-error" role="alert" aria-live="assertive" hidden></p>
+      <div class="dialog-actions coverage-intent-actions">
+        <button class="button button-danger" id="coverage-intent-remove" value="remove" hidden>Remove expectation</button>
+        <span class="dialog-action-spacer"></span>
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="coverage-intent-save" value="save">Mark expected</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="intent-group-dialog" aria-labelledby="intent-group-title" aria-describedby="intent-group-help">
