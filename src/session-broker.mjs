@@ -235,7 +235,7 @@ async function persistSnapshot(request, response, options) {
 async function handleFleetIntent(request, response, options) {
   if (request.method === HTTP_METHOD.GET) {
     const document = await readFleetIntentDocument(
-      options.stateDir,
+      options.stateFile,
       options.accountId,
     )
     jsonResponse(response, 200, {
@@ -265,7 +265,7 @@ async function handleFleetIntent(request, response, options) {
   }
   try {
     const document = await persistFleetIntentDocument(
-      options.stateDir,
+      options.stateFile,
       options.accountId,
       payload.expectedRevision,
       payload.document,
@@ -293,7 +293,7 @@ async function handleFleetIntent(request, response, options) {
 
 export async function startSessionBroker(options) {
   if (!options.accountId || !options.apiToken || !options.cacheDir || !options.runtimeDir
-    || !options.sessionId || !options.sessionSecret || !options.stateDir) {
+    || !options.sessionId || !options.sessionSecret || !options.stateFile) {
     throw new TypeError("Session broker options are incomplete")
   }
   const cloudflareFetch = options.cloudflareFetch ?? globalThis.fetch

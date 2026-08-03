@@ -12,7 +12,6 @@ import {
 } from "../src/fleet-intent.mjs"
 import {
   FleetIntentRevisionConflictError,
-  importLegacyFleetIntentDocument,
   persistFleetIntentDocument,
   prepareFleetIntentScript,
   readFleetIntentDocument,
@@ -29,17 +28,23 @@ async function temporaryDirectory(context) {
   return directory
 }
 
+function stateFile(directory, filename = "state.json") {
+  return path.join(directory, filename)
+}
+
 test("intent store starts with an account-scoped empty document", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
 
-  const document = await readFleetIntentDocument(directory, "account-one")
+  const document = await readFleetIntentDocument(file, "account-one")
 
   assert.deepEqual(document, createEmptyFleetIntentDocument("account-one"))
-  assert.equal((await fs.stat(directory)).mode & 0o777, 0o700)
+  await assert.rejects(fs.stat(file), { code: "ENOENT" })
 })
 
 test("intent store atomically persists a restrictive revisioned document", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const document = createEmptyFleetIntentDocument("account-one")
   document.groups.push({
     id: "primary-zones",
@@ -49,29 +54,26 @@ test("intent store atomically persists a restrictive revisioned document", async
   })
 
   const saved = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     document.revision,
     document,
   )
-  const reread = await readFleetIntentDocument(directory, "account-one")
+  const reread = await readFleetIntentDocument(file, "account-one")
   const entries = await fs.readdir(directory)
-  const persistedPath = path.join(
-    directory,
-    entries.find((entry) => entry.startsWith("intent-") && entry.endsWith(".json")),
-  )
 
   assert.deepEqual(reread, saved)
   assert.match(saved.revision, /^[a-f0-9]{64}$/)
   assert.equal(typeof saved.updatedAt, "string")
-  assert.equal((await fs.stat(persistedPath)).mode & 0o777, 0o600)
-  assert.match(await fs.readFile(persistedPath, "utf8"), /^\{\n  "/)
+  assert.equal((await fs.stat(file)).mode & 0o777, 0o600)
+  assert.match(await fs.readFile(file, "utf8"), /^\{\n  "/)
   assert.equal(entries.some((entry) => entry.endsWith(".tmp")), false)
   assert.equal(entries.some((entry) => entry.endsWith(".lock")), false)
 })
 
 test("intent store persists source-free value constraints", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const document = createEmptyFleetIntentDocument("account-one")
   document.policies.push({
     expected: null,
@@ -87,12 +89,12 @@ test("intent store persists source-free value constraints", async (context) => {
   })
 
   const saved = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     document.revision,
     document,
   )
-  const reread = await readFleetIntentDocument(directory, "account-one")
+  const reread = await readFleetIntentDocument(file, "account-one")
 
   assert.deepEqual(reread, saved)
   assert.equal(reread.policies[0].expected, null)
@@ -102,26 +104,22 @@ test("intent store persists source-free value constraints", async (context) => {
   )
 })
 
-test("intent store reads legacy documents through the schema migration", async (context) => {
+test("intent store reads older documents through the schema migration", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const document = createEmptyFleetIntentDocument("account-one")
   const saved = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     document.revision,
     document,
   )
-  const entries = await fs.readdir(directory)
-  const persistedPath = path.join(
-    directory,
-    entries.find((entry) => entry.startsWith("intent-") && entry.endsWith(".json")),
-  )
-  await fs.writeFile(persistedPath, `${JSON.stringify({
+  await fs.writeFile(file, `${JSON.stringify({
     ...saved,
     schemaVersion: 1,
   })}\n`)
 
-  const migrated = await readFleetIntentDocument(directory, "account-one")
+  const migrated = await readFleetIntentDocument(file, "account-one")
 
   assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
   assert.equal(migrated.revision, saved.revision)
@@ -129,9 +127,10 @@ test("intent store reads legacy documents through the schema migration", async (
 
 test("intent store rejects stale revisions with the latest document", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const original = createEmptyFleetIntentDocument("account-one")
   const saved = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     original.revision,
     original,
@@ -139,7 +138,7 @@ test("intent store rejects stale revisions with the latest document", async (con
 
   await assert.rejects(
     persistFleetIntentDocument(
-      directory,
+      file,
       "account-one",
       original.revision,
       original,
@@ -154,6 +153,7 @@ test("intent store rejects stale revisions with the latest document", async (con
 
 test("serialized intent writers allow only one update from a shared revision", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const original = createEmptyFleetIntentDocument("account-one")
   const left = structuredClone(original)
   left.groups.push({
@@ -171,32 +171,28 @@ test("serialized intent writers allow only one update from a shared revision", a
   })
 
   const outcomes = await Promise.allSettled([
-    persistFleetIntentDocument(directory, "account-one", "", left),
-    persistFleetIntentDocument(directory, "account-one", "", right),
+    persistFleetIntentDocument(file, "account-one", "", left),
+    persistFleetIntentDocument(file, "account-one", "", right),
   ])
 
   assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1)
   const rejection = outcomes.find((outcome) => outcome.status === "rejected")
   assert.ok(rejection.reason instanceof FleetIntentRevisionConflictError)
-  const saved = await readFleetIntentDocument(directory, "account-one")
+  const saved = await readFleetIntentDocument(file, "account-one")
   assert.equal(saved.groups.length, 2)
 })
 
 test("intent store recovers an abandoned stale lock", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const original = createEmptyFleetIntentDocument("account-one")
   const saved = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     original.revision,
     original,
   )
-  const entries = await fs.readdir(directory)
-  const persistedPath = path.join(
-    directory,
-    entries.find((entry) => entry.startsWith("intent-") && entry.endsWith(".json")),
-  )
-  const lockPath = `${persistedPath}.lock`
+  const lockPath = `${file}.lock`
   await fs.mkdir(lockPath)
   const staleTime = new Date(Date.now() - 60000)
   await fs.utimes(lockPath, staleTime, staleTime)
@@ -209,7 +205,7 @@ test("intent store recovers an abandoned stale lock", async (context) => {
     name: "Recovered zones",
   })
   const recovered = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     saved.revision,
     next,
@@ -219,8 +215,9 @@ test("intent store recovers an abandoned stale lock", async (context) => {
   assert.equal((await fs.readdir(directory)).some((entry) => entry.includes(".lock")), false)
 })
 
-test("account digests isolate intent files without exposing account identifiers", async (context) => {
+test("state files reject another Cloudflare account explicitly", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const first = createEmptyFleetIntentDocument("account-one")
   first.groups.push({
     id: "first-zones",
@@ -228,21 +225,39 @@ test("account digests isolate intent files without exposing account identifiers"
     mode: "members",
     name: "First zones",
   })
-  await persistFleetIntentDocument(directory, "account-one", "", first)
+  await persistFleetIntentDocument(file, "account-one", "", first)
 
-  const second = await readFleetIntentDocument(directory, "account-two")
-  const entries = await fs.readdir(directory)
+  await assert.rejects(
+    readFleetIntentDocument(file, "account-two"),
+    /belongs to Cloudflare account account-one; this session uses account-two/,
+  )
 
-  assert.equal(second.groups.length, 1)
-  assert.equal(entries.some((entry) => entry.includes("account-one")), false)
+  assert.deepEqual(await fs.readdir(directory), ["state.json"])
+})
+
+test("intent store supports explicitly named profile files", async (context) => {
+  const directory = await temporaryDirectory(context)
+  const file = stateFile(directory, "state.personal.json")
+  const document = createEmptyFleetIntentDocument("account-one")
+
+  const saved = await persistFleetIntentDocument(
+    file,
+    "account-one",
+    document.revision,
+    document,
+  )
+
+  assert.deepEqual(await readFleetIntentDocument(file, "account-one"), saved)
+  assert.deepEqual(await fs.readdir(directory), ["state.personal.json"])
 })
 
 test("intent preparation injects the latest valid document", async (context) => {
   const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
   const outputPath = path.join(directory, "intent.js")
   const document = createEmptyFleetIntentDocument("account-one")
   const saved = await persistFleetIntentDocument(
-    directory,
+    file,
     "account-one",
     "",
     document,
@@ -251,157 +266,12 @@ test("intent preparation injects the latest valid document", async (context) => 
   const prepared = await prepareFleetIntentScript({
     accountId: "account-one",
     outputPath,
-    stateDir: directory,
+    stateFile: file,
   })
   const script = await fs.readFile(outputPath, "utf8")
 
-  assert.deepEqual(prepared.document, saved)
-  assert.equal(prepared.imported, false)
+  assert.deepEqual(prepared, saved)
   assert.match(script, new RegExp(FLEET_INTENT_DOCUMENT_GLOBAL))
   assert.match(script, new RegExp(saved.revision))
   assert.equal((await fs.stat(outputPath)).mode & 0o777, 0o600)
-})
-
-test("intent preparation imports a legacy cache document without removing it", async (context) => {
-  const root = await temporaryDirectory(context)
-  const legacyDir = path.join(root, "cache")
-  const stateDir = path.join(root, "state")
-  const outputPath = path.join(root, "intent.js")
-  const original = createEmptyFleetIntentDocument("account-one")
-  original.groups.push({
-    id: "legacy-zones",
-    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
-    mode: "members",
-    name: "Legacy zones",
-  })
-  const saved = await persistFleetIntentDocument(
-    legacyDir,
-    "account-one",
-    original.revision,
-    original,
-  )
-
-  const prepared = await prepareFleetIntentScript({
-    accountId: "account-one",
-    legacyDir,
-    outputPath,
-    stateDir,
-  })
-
-  assert.equal(prepared.imported, true)
-  assert.deepEqual(prepared.document, saved)
-  assert.deepEqual(
-    await readFleetIntentDocument(stateDir, "account-one"),
-    saved,
-  )
-  assert.deepEqual(
-    await readFleetIntentDocument(legacyDir, "account-one"),
-    saved,
-  )
-  assert.equal(
-    (await fs.readdir(stateDir)).some((entry) => entry.endsWith(".lock")),
-    false,
-  )
-})
-
-test("existing project intent remains authoritative over a legacy cache document", async (context) => {
-  const root = await temporaryDirectory(context)
-  const legacyDir = path.join(root, "cache")
-  const stateDir = path.join(root, "state")
-  const legacy = createEmptyFleetIntentDocument("account-one")
-  legacy.groups.push({
-    id: "legacy-zones",
-    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
-    mode: "members",
-    name: "Legacy zones",
-  })
-  await persistFleetIntentDocument(
-    legacyDir,
-    "account-one",
-    legacy.revision,
-    legacy,
-  )
-  const project = createEmptyFleetIntentDocument("account-one")
-  project.groups.push({
-    id: "project-zones",
-    members: [{ zoneId: "zone-b", zoneName: "b.example" }],
-    mode: "members",
-    name: "Project zones",
-  })
-  const saved = await persistFleetIntentDocument(
-    stateDir,
-    "account-one",
-    project.revision,
-    project,
-  )
-
-  const imported = await importLegacyFleetIntentDocument(
-    stateDir,
-    legacyDir,
-    "account-one",
-  )
-
-  assert.equal(imported.imported, false)
-  assert.deepEqual(imported.document, saved)
-})
-
-test("concurrent legacy imports converge on one project document", async (context) => {
-  const root = await temporaryDirectory(context)
-  const legacyDir = path.join(root, "cache")
-  const stateDir = path.join(root, "state")
-  const original = createEmptyFleetIntentDocument("account-one")
-  original.groups.push({
-    id: "shared-zones",
-    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
-    mode: "members",
-    name: "Shared zones",
-  })
-  const saved = await persistFleetIntentDocument(
-    legacyDir,
-    "account-one",
-    original.revision,
-    original,
-  )
-
-  const results = await Promise.all([
-    importLegacyFleetIntentDocument(stateDir, legacyDir, "account-one"),
-    importLegacyFleetIntentDocument(stateDir, legacyDir, "account-one"),
-  ])
-
-  assert.equal(results.filter((result) => result.imported).length, 1)
-  assert.deepEqual(results[0].document, saved)
-  assert.deepEqual(results[1].document, saved)
-  assert.deepEqual(
-    await readFleetIntentDocument(stateDir, "account-one"),
-    saved,
-  )
-})
-
-test("invalid legacy intent is rejected instead of replaced", async (context) => {
-  const root = await temporaryDirectory(context)
-  const legacyDir = path.join(root, "cache")
-  const stateDir = path.join(root, "state")
-  const original = createEmptyFleetIntentDocument("account-one")
-  await persistFleetIntentDocument(
-    legacyDir,
-    "account-one",
-    original.revision,
-    original,
-  )
-  const intentName = (await fs.readdir(legacyDir)).find(
-    (entry) => entry.startsWith("intent-") && entry.endsWith(".json"),
-  )
-  await fs.writeFile(
-    path.join(legacyDir, intentName),
-    "not-json\n",
-  )
-
-  await assert.rejects(
-    importLegacyFleetIntentDocument(stateDir, legacyDir, "account-one"),
-    /not valid JSON/,
-  )
-  assert.equal(
-    (await fs.readdir(stateDir)).some((entry) => entry.endsWith(".json")),
-    false,
-  )
 })

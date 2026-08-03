@@ -10,8 +10,6 @@ import {
   migrateFleetIntentDocument,
 } from "./fleet-intent.mjs"
 
-const INTENT_FILE_PREFIX = "intent-"
-const INTENT_FILE_SUFFIX = ".json"
 const LOCK_ATTEMPTS = 80
 const LOCK_RETRY_MS = 25
 const STALE_LOCK_MS = 30000
@@ -24,20 +22,11 @@ export class FleetIntentRevisionConflictError extends Error {
   }
 }
 
-function accountDigest(accountId) {
-  return createHash("sha256").update(accountId).digest("hex")
-}
-
-function intentFilename(accountId) {
-  return `${INTENT_FILE_PREFIX}${accountDigest(accountId)}${INTENT_FILE_SUFFIX}`
-}
-
-async function ensureIntentDirectory(stateDir) {
-  await fs.mkdir(stateDir, {
+async function ensureStateParent(stateFile) {
+  await fs.mkdir(path.dirname(stateFile), {
     mode: 0o700,
     recursive: true,
   })
-  await fs.chmod(stateDir, 0o700)
 }
 
 function wait(milliseconds) {
@@ -103,6 +92,12 @@ async function readExistingIntentFile(filePath, accountId) {
   } catch {
     throw new Error("Persisted fleet intent is not valid JSON")
   }
+  if (typeof document?.accountId === "string"
+    && document.accountId !== accountId) {
+    throw new Error(
+      `Persisted fleet intent belongs to Cloudflare account ${document.accountId}; this session uses ${accountId}`,
+    )
+  }
   try {
     document = migrateFleetIntentDocument(document, accountId)
   } catch {
@@ -116,52 +111,9 @@ async function readIntentFile(filePath, accountId) {
   return existing ?? createEmptyFleetIntentDocument(accountId)
 }
 
-export async function readFleetIntentDocument(stateDir, accountId) {
-  await ensureIntentDirectory(stateDir)
-  return readIntentFile(path.join(stateDir, intentFilename(accountId)), accountId)
-}
-
-export async function importLegacyFleetIntentDocument(
-  stateDir,
-  legacyDir,
-  accountId,
-) {
-  await ensureIntentDirectory(stateDir)
-  const filePath = path.join(stateDir, intentFilename(accountId))
-  const lockPath = `${filePath}.lock`
-  const release = await acquireIntentLock(lockPath)
-  try {
-    const current = await readExistingIntentFile(filePath, accountId)
-    if (current) {
-      return {
-        document: current,
-        imported: false,
-      }
-    }
-    if (!legacyDir || path.resolve(legacyDir) === path.resolve(stateDir)) {
-      return {
-        document: createEmptyFleetIntentDocument(accountId),
-        imported: false,
-      }
-    }
-    const legacy = await readExistingIntentFile(
-      path.join(legacyDir, intentFilename(accountId)),
-      accountId,
-    )
-    if (!legacy) {
-      return {
-        document: createEmptyFleetIntentDocument(accountId),
-        imported: false,
-      }
-    }
-    await atomicWrite(filePath, `${JSON.stringify(legacy, null, 2)}\n`)
-    return {
-      document: legacy,
-      imported: true,
-    }
-  } finally {
-    await release()
-  }
+export async function readFleetIntentDocument(stateFile, accountId) {
+  await ensureStateParent(stateFile)
+  return readIntentFile(stateFile, accountId)
 }
 
 function nextPersistedDocument(document) {
@@ -181,7 +133,7 @@ function nextPersistedDocument(document) {
 }
 
 export async function persistFleetIntentDocument(
-  stateDir,
+  stateFile,
   accountId,
   expectedRevision,
   document,
@@ -192,12 +144,11 @@ export async function persistFleetIntentDocument(
   if (document.revision !== expectedRevision) {
     throw new TypeError("Fleet intent revision does not match the expected revision")
   }
-  await ensureIntentDirectory(stateDir)
-  const filePath = path.join(stateDir, intentFilename(accountId))
-  const lockPath = `${filePath}.lock`
+  await ensureStateParent(stateFile)
+  const lockPath = `${stateFile}.lock`
   const release = await acquireIntentLock(lockPath)
   try {
-    const current = await readIntentFile(filePath, accountId)
+    const current = await readIntentFile(stateFile, accountId)
     if (current.revision !== expectedRevision) {
       throw new FleetIntentRevisionConflictError(current)
     }
@@ -205,7 +156,7 @@ export async function persistFleetIntentDocument(
     if (!isFleetIntentDocument(next, accountId)) {
       throw new TypeError("Fleet intent could not be serialized")
     }
-    await atomicWrite(filePath, `${JSON.stringify(next, null, 2)}\n`)
+    await atomicWrite(stateFile, `${JSON.stringify(next, null, 2)}\n`)
     return next
   } finally {
     await release()
@@ -213,20 +164,10 @@ export async function persistFleetIntentDocument(
 }
 
 export async function prepareFleetIntentScript(options) {
-  const prepared = options.legacyDir
-    ? await importLegacyFleetIntentDocument(
-      options.stateDir,
-      options.legacyDir,
-      options.accountId,
-    )
-    : {
-      document: await readFleetIntentDocument(
-        options.stateDir,
-        options.accountId,
-      ),
-      imported: false,
-    }
-  const { document } = prepared
+  const document = await readFleetIntentDocument(
+    options.stateFile,
+    options.accountId,
+  )
   const payload = JSON.stringify(document)
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029")
@@ -234,24 +175,23 @@ export async function prepareFleetIntentScript(options) {
     options.outputPath,
     `window[${JSON.stringify(FLEET_INTENT_DOCUMENT_GLOBAL)}] = ${payload}\n`,
   )
-  return prepared
+  return document
 }
 
 async function main(args) {
-  const [command, stateDir, accountId, outputPath, legacyDir] = args
-  if (command !== "prepare" || !stateDir || !accountId || !outputPath) {
-    throw new Error("Usage: intent-store.mjs prepare STATE_DIR ACCOUNT_ID OUTPUT_PATH [LEGACY_DIR]")
+  const [command, stateFile, accountId, outputPath] = args
+  if (args.length !== 4
+    || command !== "prepare" || !stateFile || !accountId || !outputPath) {
+    throw new Error("Usage: intent-store.mjs prepare STATE_FILE ACCOUNT_ID OUTPUT_PATH")
   }
-  const prepared = await prepareFleetIntentScript({
+  const document = await prepareFleetIntentScript({
     accountId,
-    legacyDir,
     outputPath,
-    stateDir,
+    stateFile,
   })
   process.stdout.write(`${JSON.stringify({
-    imported: prepared.imported,
-    policies: prepared.document.policies.length,
-    revision: prepared.document.revision,
+    policies: document.policies.length,
+    revision: document.revision,
   })}\n`)
 }
 
