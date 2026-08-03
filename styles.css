@@ -2019,6 +2019,8 @@ dialog form {
 }
 
 .intent-dialog {
+  --intent-policy-card-min-width: 400px;
+  --intent-value-preview-max-height: 240px;
   width: min(1040px, calc(100vw - 24px));
 }
 
@@ -2720,7 +2722,15 @@ dialog form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 8px;
+  align-items: start;
   margin-top: 10px;
+}
+
+#intent-policy-list {
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(var(--intent-policy-card-min-width), 100%), 1fr)
+  );
 }
 
 .intent-item {
@@ -2831,17 +2841,37 @@ dialog form > .intent-field-help {
 }
 
 .intent-item-value {
+  max-height: var(--intent-value-preview-max-height);
   margin-top: 7px;
   padding: 7px;
   border: 1px solid rgba(43, 59, 77, 0.72);
   border-radius: 6px;
   background: rgba(11, 19, 28, 0.62);
+  overflow: auto;
   overflow-wrap: anywhere;
 }
 
 .intent-item-value code {
   font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: normal;
+}
+
+.intent-item-value .structured-object {
+  display: block;
+}
+
+.intent-item-value .structured-object dt {
+  margin-top: 7px;
+}
+
+.intent-item-value .structured-object dt:first-child {
+  margin-top: 0;
+}
+
+.intent-item-value .structured-object dd {
+  margin-top: 2px;
+  padding-left: 7px;
+  border-left: 1px solid var(--line);
 }
 
 .intent-item-actions {
