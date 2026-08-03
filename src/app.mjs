@@ -71,6 +71,12 @@ import {
   matrixRenderKey,
 } from "./matrix.mjs"
 import {
+  buildIntentAdoptionCandidates,
+  INTENT_ADOPTION_CLASSIFICATION,
+  INTENT_ADOPTION_CONFIDENCE,
+  previewIntentAdoption,
+} from "./intent-adoption.mjs"
+import {
   matrixNavigationTarget,
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
@@ -231,6 +237,39 @@ const INTENT_REMEDIATION_KIND = Object.freeze({
   COMPARE_ONLY: "compare-only",
   REMEDIABLE: "remediable",
 })
+const INTENT_ADOPTION_FILTER = Object.freeze({
+  HIGH: "high",
+  MISSING: "missing",
+  REVIEW: "review",
+  ZONE_SPECIFIC: "zone-specific",
+})
+const INTENT_ADOPTION_CLASSIFICATION_PRESENTATION = Object.freeze({
+  [INTENT_ADOPTION_CLASSIFICATION.MISSING_COVERAGE]: Object.freeze({
+    label: "Sparse coverage",
+    status: "actionable",
+  }),
+  [INTENT_ADOPTION_CLASSIFICATION.SPLIT_CONSENSUS]: Object.freeze({
+    label: "Close split",
+    status: "compare-only",
+  }),
+  [INTENT_ADOPTION_CLASSIFICATION.STRONG_CONSENSUS]: Object.freeze({
+    label: "Clear present consensus",
+    status: "aligned",
+  }),
+  [INTENT_ADOPTION_CLASSIFICATION.TIED_VARIANTS]: Object.freeze({
+    label: "Tied variants",
+    status: "compare-only",
+  }),
+  [INTENT_ADOPTION_CLASSIFICATION.ZONE_SPECIFIC]: Object.freeze({
+    label: "Zone-specific values",
+    status: "compare-only",
+  }),
+})
+const INTENT_ADOPTION_CONSTRAINT_LABEL = Object.freeze({
+  [FLEET_INTENT_VALUE_CONSTRAINT.EXACT]: "Exact value",
+  [FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER]: "May differ",
+  [FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER]: "Must differ",
+})
 const REDIRECT_FROM_VALUE_PATH = Object.freeze([
   "action_parameters",
   "from_value",
@@ -285,6 +324,7 @@ const state = {
   inlineEditor: null,
   intent: initialIntent,
   intentAcknowledgementDraft: null,
+  intentAdoptionDraft: null,
   intentDeleteDraft: null,
   intentEvaluation: null,
   intentGroupDraft: null,
@@ -383,6 +423,20 @@ const elements = {
   intentAcknowledgementReason: document.querySelector("#intent-acknowledgement-reason"),
   intentAcknowledgementTarget: document.querySelector("#intent-acknowledgement-target"),
   intentAcknowledgementList: document.querySelector("#intent-acknowledgement-list"),
+  intentAdoptionAddGroup: document.querySelector("#intent-adoption-add-group"),
+  intentAdoptionCategory: document.querySelector("#intent-adoption-category"),
+  intentAdoptionClear: document.querySelector("#intent-adoption-clear"),
+  intentAdoptionDialog: document.querySelector("#intent-adoption-dialog"),
+  intentAdoptionError: document.querySelector("#intent-adoption-error"),
+  intentAdoptionImpactMetrics: document.querySelector("#intent-adoption-impact-metrics"),
+  intentAdoptionImpactSummary: document.querySelector("#intent-adoption-impact-summary"),
+  intentAdoptionImpactTitle: document.querySelector("#intent-adoption-impact-title"),
+  intentAdoptionList: document.querySelector("#intent-adoption-list"),
+  intentAdoptionPattern: document.querySelector("#intent-adoption-pattern"),
+  intentAdoptionSave: document.querySelector("#intent-adoption-save"),
+  intentAdoptionSearch: document.querySelector("#intent-adoption-search"),
+  intentAdoptionSelectClear: document.querySelector("#intent-adoption-select-clear"),
+  intentAdoptionVisible: document.querySelector("#intent-adoption-visible"),
   intentAddGroup: document.querySelector("#intent-add-group"),
   intentDeleteApply: document.querySelector("#intent-delete-apply"),
   intentDeleteDialog: document.querySelector("#intent-delete-dialog"),
@@ -431,6 +485,7 @@ const elements = {
   intentPolicyTarget: document.querySelector("#intent-policy-target"),
   intentPolicyTitle: document.querySelector("#intent-policy-title"),
   intentPolicyValue: document.querySelector("#intent-policy-value"),
+  intentReviewUngoverned: document.querySelector("#intent-review-ungoverned"),
   intentSummary: document.querySelector("#intent-summary"),
   loadProgress: document.querySelector("#load-progress"),
   manageIntent: document.querySelector("#manage-intent"),
@@ -3816,6 +3871,7 @@ function openIntentGroupEditor(group = null, options = {}) {
   state.intentGroupDraft = {
     baseRevision: state.intent.revision,
     group,
+    returnToAdoption: Boolean(options.returnToAdoption),
     returnToPolicy: Boolean(options.returnToPolicy),
   }
   elements.intentGroupTitle.textContent = group ? "Edit zone group" : "New zone group"
@@ -3881,6 +3937,10 @@ async function saveIntentGroup(event) {
     if (state.intentGroupDraft?.returnToPolicy && state.intentPolicyDraft) {
       state.intentPolicyDraft.baseRevision = state.intent.revision
       renderIntentPolicyGroupOptions(group.id)
+    }
+    if (state.intentGroupDraft?.returnToAdoption && state.intentAdoptionDraft) {
+      state.intentAdoptionDraft.baseRevision = state.intent.revision
+      renderIntentAdoptionCandidates()
     }
     elements.intentGroupDialog.close()
   }
@@ -4375,6 +4435,465 @@ function renderIntentAcknowledgements() {
   elements.intentAcknowledgementList.replaceChildren(fragment)
 }
 
+function intentAdoptionSelectedEntries() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return []
+  return draft.candidates
+    .filter((candidate) => draft.selections.get(candidate.id)?.selected)
+    .map((candidate) => ({
+      candidate,
+      selection: draft.selections.get(candidate.id),
+    }))
+}
+
+function intentAdoptionCandidateMatches(candidate) {
+  const search = elements.intentAdoptionSearch.value.trim().toLowerCase()
+  const category = elements.intentAdoptionCategory.value
+  const pattern = elements.intentAdoptionPattern.value
+  if (search && !candidate.search.includes(search)) return false
+  if (category && candidate.category !== category) return false
+  if (pattern === INTENT_ADOPTION_FILTER.HIGH
+    && candidate.confidence !== INTENT_ADOPTION_CONFIDENCE.HIGH) return false
+  if (pattern === INTENT_ADOPTION_FILTER.REVIEW
+    && candidate.confidence !== INTENT_ADOPTION_CONFIDENCE.REVIEW) return false
+  if (pattern === INTENT_ADOPTION_FILTER.MISSING
+    && candidate.missingCount === 0) return false
+  if (pattern === INTENT_ADOPTION_FILTER.ZONE_SPECIFIC
+    && candidate.classification
+      !== INTENT_ADOPTION_CLASSIFICATION.ZONE_SPECIFIC) return false
+  return true
+}
+
+function filterIntentAdoptionCandidates() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return
+  let visibleCount = 0
+  for (const candidate of draft.candidates) {
+    const visible = intentAdoptionCandidateMatches(candidate)
+    draft.controls.get(candidate.id).card.hidden = !visible
+    if (visible) visibleCount += 1
+  }
+  draft.empty.hidden = visibleCount > 0
+  const selectedCount = intentAdoptionSelectedEntries().length
+  elements.intentAdoptionVisible.textContent = `${visibleCount} suggestion${visibleCount === 1 ? "" : "s"} shown | ${selectedCount} selected`
+}
+
+function intentAdoptionMetric(value, label, status = "") {
+  const metric = createElement("span", {
+    className: `intent-adoption-impact-metric${status ? ` ${status}` : ""}`,
+  })
+  metric.append(
+    createElement("strong", { text: String(value) }),
+    createElement("span", { text: label }),
+  )
+  return metric
+}
+
+function renderIntentAdoptionImpact() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return
+  const entries = intentAdoptionSelectedEntries()
+  elements.intentAdoptionError.hidden = true
+  elements.intentAdoptionError.textContent = ""
+  if (entries.length === 0) {
+    draft.preview = null
+    elements.intentAdoptionImpactTitle.textContent = "No suggestions selected"
+    elements.intentAdoptionImpactSummary.textContent = "Select one or more suggestions to preview how the loaded fleet would evaluate under them."
+    elements.intentAdoptionImpactMetrics.replaceChildren()
+    elements.intentAdoptionSave.textContent = "Save selected intents"
+    elements.intentAdoptionSave.disabled = true
+    filterIntentAdoptionCandidates()
+    return
+  }
+  try {
+    draft.preview = previewIntentAdoption(
+      state.intent,
+      state.inventory,
+      state.matrix,
+      entries,
+    )
+    const summary = draft.preview.summary
+    elements.intentAdoptionImpactTitle.textContent = `${summary.policiesAdded} suggested polic${summary.policiesAdded === 1 ? "y" : "ies"} ready`
+    elements.intentAdoptionImpactSummary.textContent = summary.actionableCells === 0
+      ? `All ${summary.targetedCells} covered cells satisfy the selected policies. Future drift will become visible against durable intent.`
+      : `${summary.matchingCells} of ${summary.targetedCells} covered cells already satisfy the selected policies; ${summary.actionableCells} would enter the actionable queue.`
+    elements.intentAdoptionImpactMetrics.replaceChildren(
+      intentAdoptionMetric(summary.policiesAdded, "Policies"),
+      intentAdoptionMetric(summary.matchingCells, "Match", "aligned"),
+      intentAdoptionMetric(
+        summary.actionableCells,
+        "Actionable",
+        summary.actionableCells > 0 ? "actionable" : "aligned",
+      ),
+      intentAdoptionMetric(summary.missingCells, "Missing"),
+      intentAdoptionMetric(summary.variantCells, "Variants"),
+      ...(summary.conflictCells > 0
+        ? [intentAdoptionMetric(summary.conflictCells, "Conflicts", "actionable")]
+        : []),
+    )
+    elements.intentAdoptionSave.textContent = `Save ${summary.policiesAdded} intent${summary.policiesAdded === 1 ? "" : "s"}`
+    elements.intentAdoptionSave.disabled = !intentWritable()
+  } catch (error) {
+    draft.preview = null
+    elements.intentAdoptionImpactTitle.textContent = "Preview unavailable"
+    elements.intentAdoptionImpactSummary.textContent = "Review the selected scope and value relationship."
+    elements.intentAdoptionImpactMetrics.replaceChildren()
+    elements.intentAdoptionError.textContent = error instanceof Error ? error.message : String(error)
+    elements.intentAdoptionError.hidden = false
+    elements.intentAdoptionSave.disabled = true
+  }
+  filterIntentAdoptionCandidates()
+}
+
+function intentAdoptionGroupOption(group) {
+  const scope = intentGroupScope(group)
+  const option = createElement("option", {
+    text: `${intentGroupPrimaryText(group, scope)} | Group: ${group.name}`,
+  })
+  option.value = group.id
+  return option
+}
+
+function renderIntentAdoptionGroupDetails(container, summary, groupId) {
+  const group = intentGroupById(groupId)
+  const scope = intentGroupScope(group)
+  summary.textContent = group
+    ? `${intentGroupPrimaryText(group, scope)} | Group: ${group.name}`
+    : "Missing zone group"
+  renderIntentZoneScope(container, scope, {
+    groupName: group?.name || "Missing group",
+  })
+}
+
+function intentAdoptionVariantLabel(variant) {
+  return `${variant.count} zone${variant.count === 1 ? "" : "s"} | ${variant.sourceZoneName} | ${variant.display}`
+}
+
+function lazyStructuredValueDetails(summaryText, value) {
+  const details = document.createElement("details")
+  details.append(createElement("summary", { text: summaryText }))
+  details.addEventListener("toggle", () => {
+    if (details.open) details.append(structuredValueElement(value))
+  }, { once: true })
+  return details
+}
+
+function renderIntentAdoptionValuePreview(container, candidate, selection) {
+  if (selection.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
+    container.replaceChildren(createElement("span", {
+      text: "Every covered zone must have a value; observed values may differ.",
+    }))
+    return
+  }
+  if (selection.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
+    container.replaceChildren(createElement("span", {
+      text: "Every covered zone must have a distinct value.",
+    }))
+    return
+  }
+  const variant = candidate.variants.find(
+    (entry) => entry.canonical === selection.expectedCanonical,
+  )
+  if (!variant) {
+    container.replaceChildren(createElement("span", {
+      text: "Choose an observed expected value",
+    }))
+    return
+  }
+  if (variant.value === null || typeof variant.value !== "object") {
+    container.replaceChildren(structuredValueElement(variant.value))
+    return
+  }
+  const summary = createElement("div", {
+    className: "intent-adoption-compact-value",
+  })
+  summary.append(
+    createElement("strong", { text: variant.display }),
+    createElement("span", { text: `Observed source: ${variant.sourceZoneName}` }),
+  )
+  const details = lazyStructuredValueDetails(
+    "Inspect selected value",
+    variant.value,
+  )
+  container.replaceChildren(summary, details)
+}
+
+function intentAdoptionVariantList(candidate) {
+  const list = createElement("ul", { className: "intent-adoption-variant-list" })
+  for (const variant of candidate.variants) {
+    const item = document.createElement("li")
+    const heading = createElement("div", { className: "intent-adoption-variant-heading" })
+    heading.append(
+      createElement("strong", {
+        text: `${variant.count} zone${variant.count === 1 ? "" : "s"}`,
+      }),
+      createElement("span", { text: `Source: ${variant.sourceZoneName}` }),
+    )
+    const value = createElement("div", { className: "intent-adoption-variant-value" })
+    value.append(structuredValueElement(variant.value))
+    item.append(heading, value)
+    list.append(item)
+  }
+  return list
+}
+
+function renderIntentAdoptionCandidate(candidate, index) {
+  const draft = state.intentAdoptionDraft
+  const selection = draft.selections.get(candidate.id)
+  const card = createElement("article", { className: "intent-adoption-candidate" })
+  const overview = createElement("div", { className: "intent-adoption-overview" })
+  const selectionLabel = createElement("label", {
+    className: "intent-adoption-select",
+  })
+  const checkbox = document.createElement("input")
+  checkbox.type = "checkbox"
+  checkbox.id = `intent-adoption-candidate-${index}`
+  checkbox.checked = selection.selected
+  const title = createElement("span")
+  title.append(
+    createElement("strong", { text: candidate.label }),
+    createElement("small", { text: candidate.category }),
+  )
+  selectionLabel.htmlFor = checkbox.id
+  selectionLabel.append(checkbox, title)
+  const badges = createElement("div", { className: "intent-item-badges" })
+  const presentation = INTENT_ADOPTION_CLASSIFICATION_PRESENTATION[
+    candidate.classification
+  ]
+  badges.append(intentStatusBadge(presentation.label, presentation.status))
+  if (candidate.missingCount > 0
+    && candidate.classification !== INTENT_ADOPTION_CLASSIFICATION.MISSING_COVERAGE) {
+    badges.append(intentStatusBadge(`${candidate.missingCount} missing`, "actionable"))
+  }
+  const heading = createElement("div", { className: "intent-adoption-candidate-heading" })
+  heading.append(selectionLabel, badges)
+  const leadingCount = candidate.variants[0]?.count || 0
+  overview.append(
+    heading,
+    createElement("p", {
+      className: "intent-adoption-observation",
+      text: `${candidate.presentCount}/${state.inventory.zones.length} present | ${candidate.variants.length} observed variant${candidate.variants.length === 1 ? "" : "s"} | leading value ${leadingCount}/${candidate.presentCount}`,
+    }),
+    createElement("p", {
+      className: "intent-adoption-recommendation",
+      text: `Suggestion: ${candidate.recommendation.reason}`,
+    }),
+  )
+  const variants = document.createElement("details")
+  variants.className = "intent-adoption-variants"
+  variants.append(createElement("summary", {
+    text: `Compare ${candidate.variants.length} observed variant${candidate.variants.length === 1 ? "" : "s"}`,
+  }))
+  variants.addEventListener("toggle", () => {
+    if (variants.open) variants.append(intentAdoptionVariantList(candidate))
+  }, { once: true })
+  overview.append(variants)
+
+  const controls = createElement("div", { className: "intent-adoption-controls" })
+  const groupField = createElement("label", { className: "intent-adoption-field" })
+  groupField.append(createElement("span", { text: "Applies to zones" }))
+  const groupSelect = document.createElement("select")
+  groupSelect.replaceChildren(...state.intent.groups.map(intentAdoptionGroupOption))
+  groupSelect.value = selection.groupId
+  groupField.append(groupSelect)
+
+  const constraintField = createElement("label", { className: "intent-adoption-field" })
+  constraintField.append(createElement("span", { text: "Value relationship" }))
+  const constraintSelect = document.createElement("select")
+  for (const valueConstraint of Object.values(FLEET_INTENT_VALUE_CONSTRAINT)) {
+    const option = createElement("option", {
+      text: INTENT_ADOPTION_CONSTRAINT_LABEL[valueConstraint],
+    })
+    option.value = valueConstraint
+    constraintSelect.append(option)
+  }
+  constraintSelect.value = selection.valueConstraint
+  constraintField.append(constraintSelect)
+
+  const expectedField = createElement("label", { className: "intent-adoption-field" })
+  expectedField.append(createElement("span", { text: "Expected observed value" }))
+  const expectedSelect = document.createElement("select")
+  for (const variant of candidate.variants) {
+    const option = createElement("option", { text: intentAdoptionVariantLabel(variant) })
+    option.value = variant.canonical
+    expectedSelect.append(option)
+  }
+  expectedSelect.value = selection.expectedCanonical || candidate.variants[0].canonical
+  expectedField.append(expectedSelect)
+  expectedField.hidden = selection.valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+
+  const groupDetails = document.createElement("details")
+  groupDetails.className = "intent-adoption-scope"
+  const groupSummary = document.createElement("summary")
+  const groupScope = createElement("div", { className: "intent-zone-scope" })
+  groupDetails.append(groupSummary, groupScope)
+  renderIntentAdoptionGroupDetails(
+    groupScope,
+    groupSummary,
+    selection.groupId,
+  )
+  const valuePreview = createElement("div", {
+    className: "intent-adoption-value-preview",
+  })
+  renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
+  controls.append(groupField, constraintField, expectedField, groupDetails, valuePreview)
+  card.append(overview, controls)
+
+  const selectCandidate = () => {
+    selection.selected = true
+    checkbox.checked = true
+    card.classList.add("selected")
+  }
+  checkbox.addEventListener("change", () => {
+    selection.selected = checkbox.checked
+    card.classList.toggle("selected", selection.selected)
+    renderIntentAdoptionImpact()
+  })
+  groupSelect.addEventListener("change", () => {
+    selection.groupId = groupSelect.value
+    renderIntentAdoptionGroupDetails(groupScope, groupSummary, selection.groupId)
+    selectCandidate()
+    renderIntentAdoptionImpact()
+  })
+  constraintSelect.addEventListener("change", () => {
+    selection.valueConstraint = constraintSelect.value
+    if (selection.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+      && !selection.expectedCanonical) {
+      selection.expectedCanonical = candidate.variants[0].canonical
+    }
+    expectedField.hidden = selection.valueConstraint
+      !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
+    selectCandidate()
+    renderIntentAdoptionImpact()
+  })
+  expectedSelect.addEventListener("change", () => {
+    selection.expectedCanonical = expectedSelect.value
+    renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
+    selectCandidate()
+    renderIntentAdoptionImpact()
+  })
+  draft.controls.set(candidate.id, {
+    card,
+    checkbox,
+  })
+  return card
+}
+
+function renderIntentAdoptionCandidates() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return
+  draft.controls = new Map()
+  draft.empty = createElement("p", {
+    className: "intent-empty",
+    text: "No suggestions match these filters.",
+  })
+  elements.intentAdoptionList.replaceChildren(
+    ...draft.candidates.map(renderIntentAdoptionCandidate),
+    draft.empty,
+  )
+  filterIntentAdoptionCandidates()
+  renderIntentAdoptionImpact()
+}
+
+function openIntentAdoption() {
+  if (!state.inventory || !state.matrix) {
+    toast("Load the fleet before reviewing ungoverned drift", "error")
+    return
+  }
+  if (!intentWritable()) {
+    toast("Fleet intent editing is unavailable in this session", "error")
+    return
+  }
+  const candidates = buildIntentAdoptionCandidates(
+    state.intent,
+    state.inventory,
+    state.matrix,
+  )
+  if (candidates.length === 0) {
+    toast("Every drifted facet already has intent")
+    return
+  }
+  state.intentAdoptionDraft = {
+    baseRevision: state.intent.revision,
+    candidates,
+    controls: new Map(),
+    preview: null,
+    selections: new Map(candidates.map((candidate) => [
+      candidate.id,
+      {
+        expectedCanonical: candidate.recommendation.expectedCanonical,
+        groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+        policyId: intentId("policy"),
+        selected: false,
+        valueConstraint: candidate.recommendation.valueConstraint,
+      },
+    ])),
+  }
+  elements.intentAdoptionSearch.value = ""
+  elements.intentAdoptionPattern.value = INTENT_ADOPTION_FILTER.HIGH
+  elements.intentAdoptionCategory.replaceChildren(
+    createElement("option", { text: "All categories" }),
+    ...[...new Set(candidates.map((candidate) => candidate.category))]
+      .sort()
+      .map((category) => {
+        const option = createElement("option", { text: category })
+        option.value = category
+        return option
+      }),
+  )
+  elements.intentAdoptionCategory.firstElementChild.value = ""
+  renderIntentAdoptionCandidates()
+  showDialog(elements.intentAdoptionDialog, {
+    initialFocus: elements.intentAdoptionSearch,
+  })
+}
+
+function selectClearIntentAdoptionCandidates() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return
+  for (const candidate of draft.candidates) {
+    if (candidate.confidence !== INTENT_ADOPTION_CONFIDENCE.HIGH
+      || !intentAdoptionCandidateMatches(candidate)) continue
+    const selection = draft.selections.get(candidate.id)
+    selection.selected = true
+    draft.controls.get(candidate.id).checkbox.checked = true
+    draft.controls.get(candidate.id).card.classList.add("selected")
+  }
+  renderIntentAdoptionImpact()
+}
+
+function clearIntentAdoptionSelection() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return
+  for (const candidate of draft.candidates) {
+    const selection = draft.selections.get(candidate.id)
+    selection.selected = false
+    draft.controls.get(candidate.id).checkbox.checked = false
+    draft.controls.get(candidate.id).card.classList.remove("selected")
+  }
+  renderIntentAdoptionImpact()
+}
+
+async function saveIntentAdoption() {
+  const draft = state.intentAdoptionDraft
+  if (!draft?.preview) return
+  if (draft.baseRevision !== state.intent.revision) {
+    elements.intentAdoptionError.textContent = "Fleet intent changed while this review was open. Close and reopen it to review the latest policies."
+    elements.intentAdoptionError.hidden = false
+    elements.intentAdoptionSave.disabled = true
+    return
+  }
+  const policyCount = draft.preview.summary.policiesAdded
+  const saved = await persistIntentDocument(
+    draft.preview.document,
+    `${policyCount} fleet intent polic${policyCount === 1 ? "y" : "ies"} saved`,
+  )
+  if (saved && elements.intentAdoptionDialog.open) {
+    elements.intentAdoptionDialog.close()
+  }
+}
+
 function renderIntentManager() {
   const summary = state.intentEvaluation?.summary || {
     acknowledgedCells: 0,
@@ -4411,6 +4930,21 @@ function renderIntentManager() {
     }),
   )
   elements.intentAddGroup.disabled = !intentWritable()
+  const adoptionCandidateCount = state.inventory && state.matrix
+    ? buildIntentAdoptionCandidates(
+        state.intent,
+        state.inventory,
+        state.matrix,
+      ).length
+    : 0
+  elements.intentReviewUngoverned.textContent = adoptionCandidateCount > 0
+    ? `Review ${adoptionCandidateCount} ungoverned facet${adoptionCandidateCount === 1 ? "" : "s"}`
+    : "No ungoverned drift"
+  elements.intentReviewUngoverned.dataset.intentBlocked = String(
+    adoptionCandidateCount === 0,
+  )
+  elements.intentReviewUngoverned.disabled = adoptionCandidateCount === 0
+    || !intentWritable()
   renderIntentGroups()
   renderIntentPolicies()
   renderIntentCoverageExpectations()
@@ -5459,6 +5993,10 @@ function updateActionButtons() {
     ".intent-set-policy, .acknowledge-intent, .remove-acknowledgement, #intent-add-group, [data-intent-write]",
   )) {
     button.disabled = intentLocked || button.dataset.intentBlocked === "true"
+  }
+  if (elements.intentAdoptionSave) {
+    elements.intentAdoptionSave.disabled = intentLocked
+      || !state.intentAdoptionDraft?.preview
   }
   syncMatrixActionTabStop()
 }
@@ -8221,6 +8759,22 @@ elements.renameValue.addEventListener("input", () => {
 })
 elements.renameForm.addEventListener("submit", reviewRuleRename)
 elements.manageIntent.addEventListener("click", openIntentManager)
+elements.intentReviewUngoverned.addEventListener("click", openIntentAdoption)
+elements.intentAdoptionAddGroup.addEventListener("click", () => {
+  openIntentGroupEditor(null, { returnToAdoption: true })
+})
+elements.intentAdoptionSearch.addEventListener("input", filterIntentAdoptionCandidates)
+elements.intentAdoptionPattern.addEventListener("change", filterIntentAdoptionCandidates)
+elements.intentAdoptionCategory.addEventListener("change", filterIntentAdoptionCandidates)
+elements.intentAdoptionSelectClear.addEventListener(
+  "click",
+  selectClearIntentAdoptionCandidates,
+)
+elements.intentAdoptionClear.addEventListener("click", clearIntentAdoptionSelection)
+elements.intentAdoptionSave.addEventListener("click", saveIntentAdoption)
+elements.intentAdoptionDialog.addEventListener("close", () => {
+  state.intentAdoptionDraft = null
+})
 elements.coverageIntentReason.addEventListener("input", () => {
   clearFieldError(
     elements.coverageIntentReason,

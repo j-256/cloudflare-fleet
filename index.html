@@ -412,6 +412,7 @@
             <h3 id="intent-policies-title">Facet policies</h3>
             <p>Each policy combines one matrix facet, one zone group, and one expected fleet value.</p>
           </div>
+          <button class="button button-accent" id="intent-review-ungoverned" type="button" data-intent-write>Review ungoverned drift</button>
         </div>
         <div class="intent-list" id="intent-policy-list"></div>
       </section>
@@ -436,6 +437,55 @@
       <div class="dialog-actions">
         <button class="button button-primary" type="button" data-dialog-close>Done</button>
       </div>
+    </div>
+  </dialog>
+
+  <dialog class="intent-adoption-dialog" id="intent-adoption-dialog" aria-labelledby="intent-adoption-title" aria-describedby="intent-adoption-summary intent-adoption-impact-summary">
+    <div class="intent-adoption-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close guided intent adoption">&times;</button>
+      <header class="intent-adoption-heading">
+        <div>
+          <p class="dialog-kicker">Guided intent adoption</p>
+          <h2 id="intent-adoption-title">Review ungoverned drift</h2>
+          <p id="intent-adoption-summary">Choose which observed fleet patterns should become durable policy. Suggestions do not change Cloudflare configuration.</p>
+        </div>
+        <div class="intent-adoption-heading-actions">
+          <button class="button button-quiet" id="intent-adoption-add-group" type="button" data-intent-write>Create zone group</button>
+          <button class="button button-accent" id="intent-adoption-select-clear" type="button">Select fleet consensus</button>
+          <button class="button button-quiet" id="intent-adoption-clear" type="button">Clear selection</button>
+        </div>
+      </header>
+      <div class="intent-adoption-toolbar" role="search" aria-label="Filter intent suggestions">
+        <label class="sr-only" for="intent-adoption-search">Search intent suggestions</label>
+        <input id="intent-adoption-search" type="search" placeholder="Search facets, values, or source zones">
+        <label class="sr-only" for="intent-adoption-pattern">Filter by observed pattern</label>
+        <select id="intent-adoption-pattern">
+          <option value="">All observed patterns</option>
+          <option value="high">Fleet-level consensus</option>
+          <option value="review">Needs judgment</option>
+          <option value="missing">Missing coverage</option>
+          <option value="zone-specific">Zone-specific values</option>
+        </select>
+        <label class="sr-only" for="intent-adoption-category">Filter by category</label>
+        <select id="intent-adoption-category">
+          <option value="">All categories</option>
+        </select>
+        <span id="intent-adoption-visible" role="status" aria-live="polite">0 suggestions</span>
+      </div>
+      <div class="intent-adoption-list" id="intent-adoption-list"></div>
+      <section class="intent-adoption-impact" aria-labelledby="intent-adoption-impact-title">
+        <div>
+          <p class="dialog-kicker">Before-save effect</p>
+          <h3 id="intent-adoption-impact-title">No suggestions selected</h3>
+          <p id="intent-adoption-impact-summary" role="status" aria-live="polite">Select one or more suggestions to preview how the loaded fleet would evaluate under them.</p>
+        </div>
+        <div class="intent-adoption-impact-metrics" id="intent-adoption-impact-metrics" aria-label="Selected intent effect"></div>
+        <p class="field-error" id="intent-adoption-error" role="alert" aria-live="assertive" hidden></p>
+        <div class="dialog-actions intent-adoption-actions">
+          <button class="button button-quiet" type="button" data-dialog-close>Cancel</button>
+          <button class="button button-primary" id="intent-adoption-save" type="button" data-intent-write disabled>Save selected intents</button>
+        </div>
+      </section>
     </div>
   </dialog>
 
