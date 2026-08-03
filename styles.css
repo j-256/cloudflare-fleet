@@ -2131,6 +2131,80 @@ dialog form {
   line-height: 1.4;
 }
 
+.intent-field-heading {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+
+dialog .intent-field-heading > label {
+  margin: 0;
+}
+
+.intent-field-heading .button {
+  flex: 0 0 auto;
+}
+
+.intent-zone-scope {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(43, 59, 77, 0.72);
+  border-radius: 7px;
+  background: rgba(11, 19, 28, 0.62);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.intent-zone-scope-row,
+.intent-zone-group-label {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.intent-zone-scope-row strong,
+.intent-zone-group-label strong {
+  color: var(--muted);
+  font: 700 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.intent-zone-scope-row span,
+.intent-zone-group-label span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.intent-zone-group-label {
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.intent-item-scope,
+.intent-policy-scope {
+  margin-top: 7px;
+}
+
+.intent-group-selection-summary {
+  margin-top: 10px;
+}
+
+dialog form > .intent-field-help {
+  margin: 5px 0 0;
+  font-size: 10px;
+}
+
+.intent-zone-unavailable {
+  border-style: dashed;
+}
+
 .intent-item-value {
   margin-top: 7px;
   padding: 7px;

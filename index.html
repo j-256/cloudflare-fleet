@@ -400,9 +400,9 @@
         <div class="intent-section-heading">
           <div>
             <h3 id="intent-groups-title">Zone groups</h3>
-            <p>Use all zones or name a stable subset for policy coverage.</p>
+            <p>Saved membership defines where a policy applies; the group label is secondary.</p>
           </div>
-          <button class="button button-quiet" id="intent-add-group" type="button">New group</button>
+          <button class="button button-quiet" id="intent-add-group" type="button">Create zone group</button>
         </div>
         <div class="intent-list" id="intent-group-list"></div>
       </section>
@@ -463,15 +463,17 @@
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close zone group editor">&times;</button>
       <p class="dialog-kicker">Fleet intent coverage</p>
       <h2 id="intent-group-title">New zone group</h2>
-      <p id="intent-group-help">Group membership is stored by zone identifier, with the current domain retained for review.</p>
-      <label for="intent-group-name">Group name</label>
-      <input id="intent-group-name" type="text" autocomplete="off" spellcheck="false" aria-errormessage="intent-group-error" required>
+      <p id="intent-group-help">Choose exactly where policies using this group apply. Membership is stored by zone identifier, with the current domain retained for review.</p>
       <div class="target-tools">
         <button class="button button-quiet" id="intent-group-select-all" type="button">Select all</button>
         <button class="button button-quiet" id="intent-group-clear" type="button">Clear</button>
       </div>
-      <p class="target-selection-summary" id="intent-group-selection-summary" role="status" aria-live="polite">No zones selected</p>
       <div class="target-options" id="intent-group-members"></div>
+      <div class="intent-zone-scope intent-group-selection-summary" id="intent-group-selection-summary"></div>
+      <p class="sr-only" id="intent-group-selection-announcement" role="status" aria-live="polite"></p>
+      <label for="intent-group-name">Group label</label>
+      <input id="intent-group-name" type="text" autocomplete="off" spellcheck="false" aria-describedby="intent-group-label-help" aria-errormessage="intent-group-error" required>
+      <p class="intent-field-help" id="intent-group-label-help">This secondary label helps distinguish groups with similar membership.</p>
       <p class="field-error" id="intent-group-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
@@ -486,8 +488,12 @@
       <p class="dialog-kicker">Fleet intent policy</p>
       <h2 id="intent-policy-title">Set facet intent</h2>
       <p id="intent-policy-target"></p>
-      <label for="intent-policy-group">Expected coverage</label>
-      <select id="intent-policy-group" required></select>
+      <div class="intent-field-heading">
+        <label for="intent-policy-group">Applies to zones</label>
+        <button class="button button-quiet" id="intent-policy-add-group" type="button">Create zone group</button>
+      </div>
+      <select id="intent-policy-group" aria-describedby="intent-policy-scope" required></select>
+      <div class="intent-zone-scope intent-policy-scope" id="intent-policy-scope"></div>
       <fieldset class="intent-value-source intent-value-constraint">
         <legend>Value relationship</legend>
         <div class="intent-value-source-options intent-value-constraint-options">
