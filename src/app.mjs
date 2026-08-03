@@ -179,6 +179,11 @@ import {
   valueControlDescriptor,
 } from "./value-editor.mjs"
 import {
+  compareFleetRowValues,
+  diffValueText,
+  VALUE_TEXT_DIFF_KIND,
+} from "./value-comparison.mjs"
+import {
   verificationTargetsForPlans,
   verificationTargetsForResults,
   WRITE_VERIFICATION_KIND,
@@ -217,6 +222,8 @@ const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGN
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
+const VALUE_COMPARISON_CONTEXT_LENGTH = 84
+const VALUE_COMPARISON_ELLIPSIS = "..."
 const MATRIX_COMPARISON_STATE = Object.freeze({
   MATCH: "match",
   NO_CONSENSUS: "no-consensus",
@@ -371,6 +378,7 @@ const state = {
   startupCacheLoadedAt: null,
   toastTimer: null,
   transportAvailable: true,
+  valueComparisonRowKey: null,
   wafPolicies: null,
 }
 const editActionByCell = new WeakMap()
@@ -381,6 +389,7 @@ const workspaceActionByButton = new WeakMap()
 const intentCellActionByButton = new WeakMap()
 const intentPolicyRowByButton = new WeakMap()
 const rulesetComparisonRowByButton = new WeakMap()
+const valueComparisonRowByButton = new WeakMap()
 const activityEntryByButton = new WeakMap()
 
 const elements = {
@@ -604,6 +613,15 @@ const elements = {
   valueEditor: document.querySelector("#value-editor"),
   valueEditorContext: document.querySelector("#value-editor-context"),
   valueEditorFields: document.querySelector("#value-editor-fields"),
+  valueComparisonComplete: document.querySelector("#value-comparison-complete"),
+  valueComparisonCompleteGrid: document.querySelector("#value-comparison-complete-grid"),
+  valueComparisonDifferences: document.querySelector("#value-comparison-differences"),
+  valueComparisonDifferenceSummary: document.querySelector("#value-comparison-difference-summary"),
+  valueComparisonDialog: document.querySelector("#value-comparison-dialog"),
+  valueComparisonGroups: document.querySelector("#value-comparison-groups"),
+  valueComparisonMetrics: document.querySelector("#value-comparison-metrics"),
+  valueComparisonSummary: document.querySelector("#value-comparison-summary"),
+  valueComparisonTitle: document.querySelector("#value-comparison-title"),
   visibleCount: document.querySelector("#visible-count"),
   wafPolicyDetail: document.querySelector("#waf-policy-detail"),
   wafPolicyDrift: document.querySelector("#waf-policy-drift"),
@@ -2385,6 +2403,378 @@ function allowRulesetCountDifferences() {
   }
   openIntentPolicyEditor(row, policies[0] || null, {
     valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  })
+}
+
+function currentValueComparisonRow() {
+  const key = state.valueComparisonRowKey
+  if (!key) return null
+  return state.matrix?.rows.find(
+    (row) => row.category === key.category && row.key === key.key,
+  ) || null
+}
+
+function valueComparisonVariantLabel(comparison, variant, index) {
+  if (variant.canonical === comparison.consensusCanonical) {
+    return "Fleet consensus"
+  }
+  if (variant.canonical === comparison.referenceCanonical) {
+    return "Reference value"
+  }
+  if (comparison.variantCount === 2) return "Alternate value"
+  return `Value ${index + 1}`
+}
+
+function valueComparisonZoneList(zones) {
+  const list = createElement("ul", { className: "value-comparison-zone-list" })
+  list.append(...zones.map((zone) => createElement("li", { text: zone.name })))
+  return list
+}
+
+function useComparedValueAsIntent(row, variant) {
+  if (!intentWritable()) return
+  const policies = row.intentState?.policies || []
+  elements.valueComparisonDialog.close()
+  if (policies.length > 1) {
+    openIntentManager()
+    return
+  }
+  openIntentPolicyEditor(row, policies[0] || null, {
+    expectedCanonical: variant.intentCanonical,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  })
+}
+
+function valueComparisonVariantSummary(comparison, index) {
+  const summaries = comparison.differences.flatMap((difference) => {
+    const entry = difference.values[index]
+    const label = valueComparisonPathLabel(difference.path)
+    if (!entry.present) return [`${label}: Missing`]
+    if (entry.value === null) return [`${label}: None`]
+    if (["boolean", "number"].includes(typeof entry.value)) {
+      return [`${label}: ${String(entry.value)}`]
+    }
+    if (typeof entry.value === "string"
+      && entry.value.length <= VALUE_COMPARISON_CONTEXT_LENGTH) {
+      return [`${label}: ${entry.value || "None"}`]
+    }
+    return []
+  })
+  if (summaries.length > 0 && summaries.length <= 2) {
+    return summaries.join(" | ")
+  }
+  return `${comparison.differences.length} differing field${comparison.differences.length === 1 ? "" : "s"}`
+}
+
+function valueComparisonGroup(row, comparison, variant, index) {
+  const consensus = variant.canonical === comparison.consensusCanonical
+  const reference = variant.canonical === comparison.referenceCanonical
+  const article = createElement("article", {
+    className: `value-comparison-group${consensus ? " consensus" : ""}`,
+  })
+  const heading = createElement("div", {
+    className: "value-comparison-group-heading",
+  })
+  const badges = createElement("div", {
+    className: "value-comparison-group-badges",
+  })
+  if (consensus) badges.append(rulesetBadge("Leading", "baseline"))
+  else if (reference) badges.append(rulesetBadge("Reference"))
+  else badges.append(rulesetBadge("Different", "outlier"))
+  badges.append(rulesetBadge(
+    `${variant.count} zone${variant.count === 1 ? "" : "s"}`,
+  ))
+  heading.append(
+    createElement("h4", {
+      text: valueComparisonVariantLabel(comparison, variant, index),
+    }),
+    badges,
+  )
+  article.append(
+    heading,
+    createElement("p", {
+      className: "value-comparison-group-summary",
+      text: valueComparisonVariantSummary(comparison, index),
+    }),
+    valueComparisonZoneList(variant.zones),
+  )
+  if (intentMutationSupported()) {
+    const policies = row.intentState?.policies || []
+    const actions = createElement("div", {
+      className: "value-comparison-group-actions",
+    })
+    const button = createElement("button", {
+      className: "button button-quiet",
+      text: policies.length > 1 ? "Manage intents" : "Use as exact intent",
+    })
+    button.type = "button"
+    button.setAttribute(
+      "aria-label",
+      policies.length > 1
+        ? `Manage intents for ${row.label}`
+        : `Use as exact intent: ${valueComparisonVariantLabel(comparison, variant, index)} for ${row.label}`,
+    )
+    button.disabled = !intentWritable()
+      || (!variant.intentCanonical && policies.length <= 1)
+    button.title = policies.length > 1
+      ? "Multiple policies overlap this facet; review their coverage before choosing a value"
+      : variant.intentCanonical
+        ? "Open the intent editor with this observed value selected"
+        : "This matrix value maps to multiple intent values and cannot be selected as one expectation"
+    button.addEventListener("click", () => useComparedValueAsIntent(row, variant))
+    actions.append(button)
+    article.append(actions)
+  }
+  return article
+}
+
+function missingValueComparisonGroup(comparison) {
+  const article = createElement("article", {
+    className: "value-comparison-group missing",
+  })
+  const heading = createElement("div", {
+    className: "value-comparison-group-heading",
+  })
+  heading.append(
+    createElement("h4", { text: "Missing" }),
+    rulesetBadge(
+      `${comparison.missingZones.length} zone${comparison.missingZones.length === 1 ? "" : "s"}`,
+      "outlier",
+    ),
+  )
+  article.append(heading, valueComparisonZoneList(comparison.missingZones))
+  return article
+}
+
+function compactValueDiffSegments(segments) {
+  const firstDifference = segments.findIndex(
+    (segment) => segment.kind !== VALUE_TEXT_DIFF_KIND.EQUAL,
+  )
+  const lastDifference = segments.findLastIndex(
+    (segment) => segment.kind !== VALUE_TEXT_DIFF_KIND.EQUAL,
+  )
+  return segments.map((segment, index) => {
+    if (segment.kind !== VALUE_TEXT_DIFF_KIND.EQUAL
+      || segment.text.length <= VALUE_COMPARISON_CONTEXT_LENGTH * 2) {
+      return segment
+    }
+    if (index < firstDifference) {
+      return {
+        ...segment,
+        text: `${VALUE_COMPARISON_ELLIPSIS}${segment.text.slice(-VALUE_COMPARISON_CONTEXT_LENGTH)}`,
+      }
+    }
+    if (index > lastDifference) {
+      return {
+        ...segment,
+        text: `${segment.text.slice(0, VALUE_COMPARISON_CONTEXT_LENGTH)}${VALUE_COMPARISON_ELLIPSIS}`,
+      }
+    }
+    return {
+      ...segment,
+      text: `${segment.text.slice(0, VALUE_COMPARISON_CONTEXT_LENGTH)}${VALUE_COMPARISON_ELLIPSIS}${segment.text.slice(-VALUE_COMPARISON_CONTEXT_LENGTH)}`,
+    }
+  })
+}
+
+function valueComparisonTextDiff(reference, candidate, options = {}) {
+  const code = document.createElement("code")
+  const segments = compactValueDiffSegments(diffValueText(reference, candidate))
+  for (const segment of segments) {
+    if (options.reference && segment.kind === VALUE_TEXT_DIFF_KIND.INSERT) continue
+    let node
+    if (options.reference && segment.kind === VALUE_TEXT_DIFF_KIND.DELETE) {
+      node = document.createElement("mark")
+    } else if (segment.kind === VALUE_TEXT_DIFF_KIND.DELETE) {
+      node = document.createElement("del")
+    } else if (segment.kind === VALUE_TEXT_DIFF_KIND.INSERT) {
+      node = document.createElement("ins")
+    } else {
+      node = document.createElement("span")
+    }
+    node.textContent = segment.text
+    code.append(node)
+  }
+  return code
+}
+
+function valueComparisonLeaf(value) {
+  if (Array.isArray(value) && value.length === 0) {
+    return createElement("span", { text: "Empty list" })
+  }
+  if (value && typeof value === "object" && Object.keys(value).length === 0) {
+    return createElement("span", { text: "Empty object" })
+  }
+  return structuredValueElement(value)
+}
+
+function valueComparisonFieldValue(difference, index, referenceIndex) {
+  const entry = difference.values[index]
+  if (!entry.present) {
+    return createElement("span", {
+      className: "value-comparison-missing-field",
+      text: "Field missing",
+    })
+  }
+  const reference = difference.values[referenceIndex]
+  if (typeof entry.value === "string" && reference.present
+    && typeof reference.value === "string") {
+    if (index === referenceIndex) {
+      if (difference.values.length > 2) return valueComparisonLeaf(entry.value)
+      const candidate = difference.values.find(
+        (value, candidateIndex) => candidateIndex !== referenceIndex
+          && value.present
+          && typeof value.value === "string"
+          && value.value !== reference.value,
+      )
+      return candidate
+        ? valueComparisonTextDiff(reference.value, candidate.value, {
+            reference: true,
+          })
+        : valueComparisonLeaf(entry.value)
+    }
+    return valueComparisonTextDiff(reference.value, entry.value)
+  }
+  return valueComparisonLeaf(entry.value)
+}
+
+function valueComparisonPathLabel(path) {
+  if (path.length === 0) return "Value"
+  return path.map((part) => (
+    typeof part === "number"
+      ? `Item ${part + 1}`
+      : humanizeValueField(part)
+  )).join(" > ")
+}
+
+function valueComparisonTable(comparison) {
+  const table = createElement("table", { className: "value-comparison-table" })
+  const caption = createElement("caption", {
+    className: "sr-only",
+    text: "Fields that differ between the observed fleet values",
+  })
+  const head = document.createElement("thead")
+  const headingRow = document.createElement("tr")
+  const fieldHeading = createElement("th", {
+    className: "value-comparison-field-heading",
+    text: "Differing field",
+  })
+  fieldHeading.scope = "col"
+  headingRow.append(fieldHeading)
+  for (const [index, variant] of comparison.variants.entries()) {
+    const heading = document.createElement("th")
+    heading.scope = "col"
+    heading.textContent = `${valueComparisonVariantLabel(
+      comparison,
+      variant,
+      index,
+    )} | ${variant.count} zone${variant.count === 1 ? "" : "s"}`
+    headingRow.append(heading)
+  }
+  head.append(headingRow)
+
+  const body = document.createElement("tbody")
+  const referenceIndex = comparison.variants.findIndex(
+    (variant) => variant.canonical === comparison.referenceCanonical,
+  )
+  for (const difference of comparison.differences) {
+    const row = document.createElement("tr")
+    const field = createElement("th", {
+      className: "value-comparison-field-heading",
+      text: valueComparisonPathLabel(difference.path),
+    })
+    field.scope = "row"
+    row.append(field)
+    for (const index of comparison.variants.keys()) {
+      const cell = document.createElement("td")
+      cell.append(valueComparisonFieldValue(
+        difference,
+        index,
+        referenceIndex,
+      ))
+      row.append(cell)
+    }
+    body.append(row)
+  }
+  table.append(caption, head, body)
+  return table
+}
+
+function valueComparisonCompleteCard(comparison, variant, index) {
+  const card = createElement("article", {
+    className: "value-comparison-complete-card",
+  })
+  card.append(createElement("h4", {
+    text: `${valueComparisonVariantLabel(comparison, variant, index)} | ${variant.count} zone${variant.count === 1 ? "" : "s"}`,
+  }))
+  const value = createElement("div", {
+    className: "value-comparison-complete-value",
+  })
+  value.append(structuredValueElement(variant.value))
+  card.append(value, createRawValueDetails(variant.value))
+  return card
+}
+
+function renderValueComparison() {
+  const row = currentValueComparisonRow()
+  const comparison = row
+    ? compareFleetRowValues(row, state.inventory?.zones || [])
+    : null
+  if (!row || !comparison || comparison.variantCount < 2) {
+    if (elements.valueComparisonDialog.open) elements.valueComparisonDialog.close()
+    return
+  }
+  const leadingSummary = comparison.hasUniqueConsensus
+    ? `The leading value covers ${comparison.consensusCount} of ${comparison.presentCount} configured zones.`
+    : `No value has a unique lead across ${comparison.presentCount} configured zones.`
+  const missingSummary = comparison.missingZones.length > 0
+    ? ` ${comparison.missingZones.length} zone${comparison.missingZones.length === 1 ? " is" : "s are"} missing this facet.`
+    : ""
+  elements.valueComparisonTitle.textContent = row.label
+  elements.valueComparisonSummary.textContent = `${comparison.variantCount} normalized values are present. ${leadingSummary}${missingSummary}`
+  elements.valueComparisonMetrics.replaceChildren(
+    rulesetBadge(`${comparison.variantCount} values`, "outlier"),
+    comparison.hasUniqueConsensus
+      ? rulesetBadge(`${comparison.consensusCount} consensus`, "baseline")
+      : rulesetBadge("Tied values", "outlier"),
+    rulesetBadge(
+      `${comparison.differences.length} differing field${comparison.differences.length === 1 ? "" : "s"}`,
+    ),
+    ...(comparison.missingZones.length > 0
+      ? [rulesetBadge(`${comparison.missingZones.length} missing`, "outlier")]
+      : []),
+  )
+  elements.valueComparisonGroups.replaceChildren(
+    ...comparison.variants.map(
+      (variant, index) => valueComparisonGroup(row, comparison, variant, index),
+    ),
+    ...(comparison.missingZones.length > 0
+      ? [missingValueComparisonGroup(comparison)]
+      : []),
+  )
+  const matchingSummary = comparison.commonFieldCount === 0
+    ? "No matching fields are omitted."
+    : `${comparison.commonFieldCount} matching field${comparison.commonFieldCount === 1 ? " is" : "s are"} omitted.`
+  elements.valueComparisonDifferenceSummary.textContent = `${comparison.differences.length} of ${comparison.fieldCount} normalized field${comparison.fieldCount === 1 ? "" : "s"} differ${comparison.differences.length === 1 ? "s" : ""}. ${matchingSummary}`
+  elements.valueComparisonDifferences.replaceChildren(
+    valueComparisonTable(comparison),
+  )
+  elements.valueComparisonComplete.open = false
+  elements.valueComparisonCompleteGrid.replaceChildren(
+    ...comparison.variants.map(
+      (variant, index) => valueComparisonCompleteCard(comparison, variant, index),
+    ),
+  )
+}
+
+function showValueComparison(row) {
+  state.valueComparisonRowKey = {
+    category: row.category,
+    key: row.key,
+  }
+  renderValueComparison()
+  showDialog(elements.valueComparisonDialog, {
+    initialFocus: elements.valueComparisonDialog.querySelector("[data-dialog-close]"),
   })
 }
 
@@ -5375,6 +5765,20 @@ function renderMatrix() {
     const secondaryActionTypes = new Set(
       [...row.cells.values()].map((cell) => cell.secondaryAction?.type).filter(Boolean),
     )
+    if (row.variantCount > 1 && !rulesetComparison?.hasDifferences) {
+      const compareButton = createElement("button", {
+        className: "cell-action compare-values",
+        text: `Compare ${row.variantCount} values`,
+      })
+      compareButton.type = "button"
+      compareButton.setAttribute(
+        "aria-label",
+        `Compare ${row.variantCount} observed values for ${row.label}`,
+      )
+      compareButton.title = "See the zones using each value and only the fields that differ"
+      valueComparisonRowByButton.set(compareButton, row)
+      facetActions.append(compareButton)
+    }
     if (rulesetComparison?.hasDifferences) {
       const reviewButton = createElement("button", {
         className: "cell-action review-ruleset-comparison",
@@ -8753,6 +9157,7 @@ function renderInventory(inventory, source) {
   renderCoverage()
   if (elements.intentDialog.open) renderIntentManager()
   if (elements.rulesetComparisonDialog.open) renderRulesetComparison()
+  if (elements.valueComparisonDialog.open) renderValueComparison()
   updateSelectionStyles()
   return matrixChanged
 }
@@ -8913,6 +9318,16 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
+  const valueComparisonButton = event.target.closest(".compare-values")
+  if (valueComparisonButton) {
+    const row = valueComparisonRowByButton.get(valueComparisonButton)
+    if (!row) {
+      toast("The selected value comparison is no longer available", "error")
+      return
+    }
+    showValueComparison(row)
+    return
+  }
   const rulesetComparisonButton = event.target.closest(
     ".review-ruleset-comparison",
   )
@@ -9144,6 +9559,9 @@ elements.rulesetComparisonAllowDifferences.addEventListener(
 )
 elements.rulesetComparisonDialog.addEventListener("close", () => {
   state.rulesetComparisonRowKey = null
+})
+elements.valueComparisonDialog.addEventListener("close", () => {
+  state.valueComparisonRowKey = null
 })
 elements.rulesetDescriptionDialog.addEventListener("close", () => {
   clearFieldError(

@@ -282,6 +282,45 @@
     </div>
   </dialog>
 
+  <dialog class="value-comparison-dialog" id="value-comparison-dialog" aria-labelledby="value-comparison-title" aria-describedby="value-comparison-summary value-comparison-difference-summary">
+    <div class="value-comparison-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close value comparison">&times;</button>
+      <header class="value-comparison-heading">
+        <div>
+          <p class="dialog-kicker">Fleet value comparison</p>
+          <h2 id="value-comparison-title">Competing values</h2>
+          <p id="value-comparison-summary"></p>
+        </div>
+        <div class="value-comparison-metrics" id="value-comparison-metrics" aria-label="Value comparison summary"></div>
+      </header>
+      <section class="value-comparison-section" aria-labelledby="value-comparison-groups-title">
+        <div class="value-comparison-section-heading">
+          <div>
+            <h3 id="value-comparison-groups-title">Where each value is used</h3>
+            <p>Zone coverage is grouped by the exact normalized value used by the matrix.</p>
+          </div>
+        </div>
+        <div class="value-comparison-groups" id="value-comparison-groups"></div>
+      </section>
+      <section class="value-comparison-section" aria-labelledby="value-comparison-differences-title">
+        <div class="value-comparison-section-heading">
+          <div>
+            <h3 id="value-comparison-differences-title">What differs</h3>
+            <p id="value-comparison-difference-summary"></p>
+          </div>
+        </div>
+        <div class="value-comparison-table-wrap" id="value-comparison-differences"></div>
+      </section>
+      <details class="value-comparison-complete" id="value-comparison-complete">
+        <summary>Show complete friendly values</summary>
+        <div class="value-comparison-complete-grid" id="value-comparison-complete-grid"></div>
+      </details>
+      <div class="value-comparison-actions">
+        <button class="button button-primary" type="button" data-dialog-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="ruleset-description-dialog" aria-labelledby="ruleset-description-title" aria-describedby="ruleset-description-help">
     <form method="dialog" id="ruleset-description-form" novalidate>
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close description editor">&times;</button>
