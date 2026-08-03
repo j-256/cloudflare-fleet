@@ -38,7 +38,9 @@ INTENT_RESULT=""
 STATE_FILE=""
 DEFAULT_STATE_FILENAME="state.json"
 CACHE_HIT="false"
+CACHE_FRESH="false"
 CACHE_LOADED_AT=""
+CACHE_MAX_AGE_HOURS=""
 CACHE_MODE="use"
 CACHE_MODE_USE="use"
 CACHE_MODE_FRESH="fresh"
@@ -441,7 +443,9 @@ cp "$SCRIPT_DIR"/src/*.mjs "$RUNTIME_DIR/src/"
 CACHE_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/cache-store.mjs" prepare \
     "$CACHE_DIR" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/cache.js" "$CACHE_MODE")"
 CACHE_HIT="$(printf '%s' "$CACHE_RESULT" | jq -r '.cacheHit')"
+CACHE_FRESH="$(printf '%s' "$CACHE_RESULT" | jq -r '.cacheFresh')"
 CACHE_LOADED_AT="$(printf '%s' "$CACHE_RESULT" | jq -r '.loadedAt // empty')"
+CACHE_MAX_AGE_HOURS="$(printf '%s' "$CACHE_RESULT" | jq -r '.maxAgeHours')"
 INTENT_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/intent-store.mjs" prepare \
     "$STATE_FILE" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/intent.js")"
 
@@ -450,7 +454,11 @@ if [ "$(printf '%s' "$INTENT_RESULT" | jq -r '.policies')" -gt 0 ]; then
 fi
 
 if [ "$CACHE_HIT" = true ]; then
-    echo "[INF][$SCRIPT_NAME] Cached snapshot $CACHE_LOADED_AT will render immediately; full refresh is explicit"
+    if [ "$CACHE_FRESH" = true ]; then
+        echo "[INF][$SCRIPT_NAME] Cached snapshot $CACHE_LOADED_AT will render immediately; full refresh is explicit"
+    else
+        echo "[INF][$SCRIPT_NAME] Cached snapshot $CACHE_LOADED_AT exceeds the ${CACHE_MAX_AGE_HOURS}-hour freshness window; it will render immediately while a full audit refreshes it"
+    fi
 elif [ "$CACHE_MODE" = "$CACHE_MODE_CLEAR" ]; then
     echo "[INF][$SCRIPT_NAME] Cached snapshots cleared; loading live state"
 elif [ "$CACHE_MODE" = "$CACHE_MODE_FRESH" ]; then

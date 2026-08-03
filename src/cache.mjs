@@ -1,6 +1,10 @@
 export const CACHE_SCHEMA_VERSION = 1
 export const CACHE_RECORD_GLOBAL = "__CLOUDFLARE_FLEET_CACHE__"
 export const CACHE_SNAPSHOT_GLOBAL = "__CLOUDFLARE_FLEET_SNAPSHOT__"
+export const CACHE_MAX_AGE_HOURS = 8
+
+const MILLISECONDS_PER_HOUR = 60 * 60 * 1000
+const CACHE_MAX_AGE_MS = CACHE_MAX_AGE_HOURS * MILLISECONDS_PER_HOUR
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -26,6 +30,12 @@ export function isCacheRecord(value, accountId = null) {
 
 export function cacheRecordUpdatedAt(record) {
   return record.updatedAt || record.loadedAt
+}
+
+export function cacheRecordIsFresh(record, now = Date.now()) {
+  if (!isCacheRecord(record)) return false
+  if (!Number.isFinite(now)) throw new TypeError("Cache freshness requires a valid current time")
+  return now - Date.parse(record.loadedAt) < CACHE_MAX_AGE_MS
 }
 
 export function compareCacheRecordsNewestFirst(left, right) {

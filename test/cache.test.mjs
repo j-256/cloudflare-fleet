@@ -5,7 +5,9 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  CACHE_MAX_AGE_HOURS,
   cacheRecordUpdatedAt,
+  cacheRecordIsFresh,
   CACHE_RECORD_GLOBAL,
   CACHE_SCHEMA_VERSION,
   createCacheRecord,
@@ -54,6 +56,38 @@ test("cache records contain inventory but not launcher credentials", () => {
 
   assert.equal(serialized.includes("apiToken"), false)
   assert.equal(serialized.includes("Authorization"), false)
+})
+
+test("cache freshness expires after eight hours from the full audit", () => {
+  const loadedAt = "2026-07-29T01:00:00Z"
+  const record = createCacheRecord(
+    "account-id",
+    inventoryAt(loadedAt),
+    { updatedAt: "2026-07-29T08:59:59Z" },
+  )
+  const maximumAgeMs = CACHE_MAX_AGE_HOURS * 60 * 60 * 1000
+
+  assert.equal(
+    cacheRecordIsFresh(record, Date.parse(loadedAt) + maximumAgeMs - 1),
+    true,
+  )
+  assert.equal(
+    cacheRecordIsFresh(record, Date.parse(loadedAt) + maximumAgeMs),
+    false,
+  )
+})
+
+test("a scoped cache update does not postpone the next full audit", () => {
+  const record = createCacheRecord(
+    "account-id",
+    inventoryAt("2026-07-29T01:00:00Z"),
+    { updatedAt: "2026-07-30T00:59:00Z" },
+  )
+
+  assert.equal(
+    cacheRecordIsFresh(record, Date.parse("2026-07-30T01:00:00Z")),
+    false,
+  )
 })
 
 test("newestCacheRecord ignores invalid and older records", () => {
@@ -122,13 +156,16 @@ test("cache store persists independent sessions and injects the newest snapshot"
     accountId: "account-id",
     cacheDir: directory,
     mode: CACHE_MODE.USE,
+    now: Date.parse("2026-07-29T02:30:00Z"),
     outputPath,
   })
   const script = await fs.readFile(outputPath, "utf8")
 
   assert.deepEqual(result, {
+    cacheFresh: true,
     cacheHit: true,
     loadedAt: newer.loadedAt,
+    maxAgeHours: CACHE_MAX_AGE_HOURS,
   })
   assert.equal(script.startsWith(`window[${JSON.stringify(CACHE_RECORD_GLOBAL)}] = `), true)
   assert.equal(script.includes(newer.loadedAt), true)
@@ -152,6 +189,7 @@ test("fresh bypasses cache and clear removes account snapshots", async (context)
     mode: CACHE_MODE.FRESH,
     outputPath,
   })
+  assert.equal(fresh.cacheFresh, false)
   assert.equal(fresh.cacheHit, false)
   assert.equal((await fs.readFile(outputPath, "utf8")).includes(" = null"), true)
 

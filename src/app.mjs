@@ -3,8 +3,10 @@ import {
   FleetIntentApiConflictError,
 } from "./api.mjs"
 import {
+  CACHE_MAX_AGE_HOURS,
   CACHE_RECORD_GLOBAL,
   CACHE_SNAPSHOT_GLOBAL,
+  cacheRecordIsFresh,
   createCacheRecord,
   isCacheRecord,
 } from "./cache.mjs"
@@ -8767,6 +8769,11 @@ async function refreshInventory(options = {}) {
 
   setBusy(true)
   setRefreshDetail()
+  if (options.staleCache) {
+    setRefreshDetail(
+      `Cached full audit is older than ${CACHE_MAX_AGE_HOURS} hours; automatic refresh running`,
+    )
+  }
   setWriteReadiness("Running a complete live fleet audit")
   setStatus(state.inventory ? "Refreshing full fleet" : "Loading fleet")
   elements.loadProgress.hidden = false
@@ -8837,6 +8844,12 @@ async function initialize() {
     state.startupCacheLoadedAt = cachedRecord.loadedAt
     renderInventory(cachedRecord.inventory, INVENTORY_SOURCE.CACHE)
     restoreInventoryStatus()
+    if (!cacheRecordIsFresh(cachedRecord)) {
+      await refreshInventory({
+        preserveSelection: true,
+        staleCache: true,
+      })
+    }
     return
   }
   await refreshInventory()

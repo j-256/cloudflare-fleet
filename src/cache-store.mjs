@@ -2,7 +2,9 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 
 import {
+  CACHE_MAX_AGE_HOURS,
   CACHE_RECORD_GLOBAL,
+  cacheRecordIsFresh,
   compareCacheRecordsNewestFirst,
   isCacheRecord,
   newestCacheRecord,
@@ -141,8 +143,10 @@ export async function prepareCacheScript(options) {
   )
 
   return {
+    cacheFresh: record !== null && cacheRecordIsFresh(record, options.now),
     cacheHit: record !== null,
     loadedAt: record?.loadedAt || null,
+    maxAgeHours: CACHE_MAX_AGE_HOURS,
   }
 }
 
