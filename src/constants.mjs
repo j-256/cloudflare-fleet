@@ -26,6 +26,14 @@ export const EMAIL_ROUTING_RULE_IDENTIFIER = Object.freeze({
   CATCH_ALL: "catch_all",
 })
 
+export const DNSSEC_STATUS = Object.freeze({
+  ACTIVE: "active",
+  DISABLED: "disabled",
+  ERROR: "error",
+  PENDING: "pending",
+  PENDING_DISABLED: "pending-disabled",
+})
+
 export const RULESET_KIND = Object.freeze({
   CUSTOM: "custom",
   MANAGED: "managed",

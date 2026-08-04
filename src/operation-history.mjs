@@ -1,6 +1,8 @@
 import {
+  DNSSEC_STATUS,
   HTTP_METHOD,
 } from "./constants.mjs"
+import { dnssecRequestedStatus } from "./dnssec.mjs"
 import {
   stableString,
 } from "./normalize.mjs"
@@ -32,6 +34,10 @@ const WRITE_METHODS = new Set([
   HTTP_METHOD.PATCH,
   HTTP_METHOD.POST,
   HTTP_METHOD.PUT,
+])
+const DNSSEC_WRITABLE_STATUS_SET = new Set([
+  DNSSEC_STATUS.ACTIVE,
+  DNSSEC_STATUS.DISABLED,
 ])
 
 function isObject(value) {
@@ -115,7 +121,9 @@ function isVerificationTarget(target) {
       && target.kinds.every(isNonEmptyString)
   }
   if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
-    return Object.values(WRITE_VERIFICATION_SURFACE).includes(target.surfaceId)
+    if (!Object.values(WRITE_VERIFICATION_SURFACE).includes(target.surfaceId)) return false
+    return target.surfaceId !== WRITE_VERIFICATION_SURFACE.DNSSEC
+      || DNSSEC_WRITABLE_STATUS_SET.has(target.expectedStatus)
   }
   return false
 }
@@ -406,6 +414,10 @@ export function verificationObservation(entry) {
     && target.surfaceId === WRITE_VERIFICATION_SURFACE.EMAIL_DNS) {
     value = emailDnsSnapshot(response.result)
     summary = "Email Routing DNS"
+  } else if (target.kind === WRITE_VERIFICATION_KIND.SURFACE
+    && target.surfaceId === WRITE_VERIFICATION_SURFACE.DNSSEC) {
+    value = { status: dnssecRequestedStatus(response.result?.status) }
+    summary = `DNSSEC ${value.status || "unknown"}`
   } else {
     value = jsonClone(response.result)
     summary = target.surfaceId || target.kind
@@ -492,6 +504,11 @@ function inverseOperation(operation, response, createdRuleIds) {
       method: HTTP_METHOD.PATCH,
       path: operation.path,
     }
+  }
+
+  if (segments[2] === "dnssec" && segments.length === 3
+    && operation.method === HTTP_METHOD.PATCH) {
+    throw new Error(`${operation.label} cannot be automatically undone because DNSSEC rollback depends on parent DS record timing`)
   }
 
   if (segments[2] === "dns_records") {

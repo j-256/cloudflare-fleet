@@ -1,4 +1,5 @@
 import {
+  DNSSEC_STATUS,
   EMAIL_POLICY_COMPONENT,
   EMAIL_ROUTING_ACTION_KIND,
   EMAIL_ROUTING_RULE_IDENTIFIER,
@@ -8,6 +9,7 @@ import {
   RULESET_KIND,
   WAF_PHASE,
 } from "./constants.mjs"
+import { dnssecRequestedStatus } from "./dnssec.mjs"
 import {
   materializeValue,
   normalizeValue,
@@ -106,6 +108,10 @@ const DNS_RECORD_PRIORITY_TYPES = new Set([
 const DNS_RECORD_PRIVATE_ROUTING_TYPES = new Set([
   "A",
   "AAAA",
+])
+const DNSSEC_WRITABLE_STATUS_SET = new Set([
+  DNSSEC_STATUS.ACTIVE,
+  DNSSEC_STATUS.DISABLED,
 ])
 const RULESET_PLAN_KIND = Object.freeze({
   CREATE_RULE: "rule-create",
@@ -1974,6 +1980,44 @@ export function buildZoneSettingPlan(zone, settingId, value) {
     summary: operations.length === 0
       ? `${settingId} already matches the desired value`
       : `Update ${settingId} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildDnssecStatusPlan(zone, desiredStatus) {
+  if (!DNSSEC_WRITABLE_STATUS_SET.has(desiredStatus)) {
+    throw new TypeError("DNSSEC status must be active or disabled")
+  }
+  const dnssec = resultFor(zone, "dnssec")
+  if (!dnssec || typeof dnssec !== "object") {
+    throw new Error(`DNSSEC is unavailable on ${zone.meta.name}`)
+  }
+  const currentStatus = dnssecRequestedStatus(dnssec.status)
+  if (!currentStatus) {
+    throw new Error(`DNSSEC status ${dnssec.status || "unknown"} cannot be changed safely on ${zone.meta.name}`)
+  }
+  const operations = currentStatus === desiredStatus
+    ? []
+    : [
+        {
+          body: { status: desiredStatus },
+          currentValue: { status: currentStatus },
+          label: desiredStatus === DNSSEC_STATUS.ACTIVE
+            ? "Enable DNSSEC"
+            : "Disable DNSSEC",
+          method: HTTP_METHOD.PATCH,
+          path: `zones/${zone.meta.id}/dnssec`,
+        },
+      ]
+
+  return {
+    id: `dnssec:${zone.meta.id}`,
+    kind: "dnssec",
+    operations,
+    summary: operations.length === 0
+      ? `DNSSEC already has the requested status on ${zone.meta.name}`
+      : `${desiredStatus === DNSSEC_STATUS.ACTIVE ? "Enable" : "Disable"} DNSSEC on ${zone.meta.name}`,
     zoneId: zone.meta.id,
     zoneName: zone.meta.name,
   }

@@ -11,6 +11,7 @@ import {
   isCacheRecord,
 } from "./cache.mjs"
 import {
+  DNSSEC_STATUS,
   EMAIL_POLICY_COMPONENT,
   EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_ACTION_KIND,
@@ -63,6 +64,11 @@ import {
   showDialog,
 } from "./dialogs.mjs"
 import {
+  dnssecDesiredStatus,
+  dnssecIntentCorrection,
+  rowSupportsDnssecIntentCorrection,
+} from "./dnssec-intent.mjs"
+import {
   coverageFor,
   loadInventory,
   staticCoverageIssues,
@@ -104,6 +110,7 @@ import {
   matrixRowMatchesFilters,
 } from "./matrix-filter.mjs"
 import {
+  buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
@@ -184,6 +191,7 @@ import {
   VALUE_TEXT_DIFF_KIND,
 } from "./value-comparison.mjs"
 import {
+  assertWriteVerificationResponse,
   verificationTargetsForPlans,
   verificationTargetsForResults,
   WRITE_VERIFICATION_KIND,
@@ -219,6 +227,7 @@ const INVENTORY_SOURCE = Object.freeze({
   LIVE: "live",
 })
 const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGNMENT]
+const DNSSEC_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.DNSSEC_ALIGNMENT]
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
@@ -387,6 +396,7 @@ const bulkFillRowByButton = new WeakMap()
 const fleetActionByButton = new WeakMap()
 const workspaceActionByButton = new WeakMap()
 const intentCellActionByButton = new WeakMap()
+const intentCorrectionByButton = new WeakMap()
 const intentPolicyRowByButton = new WeakMap()
 const rulesetComparisonRowByButton = new WeakMap()
 const valueComparisonRowByButton = new WeakMap()
@@ -1859,8 +1869,10 @@ async function readWriteVerificationTarget(target) {
   if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
     const surface = SURFACE_BY_ID.get(target.surfaceId)
     if (!surface) throw new Error(`Unknown verification surface ${target.surfaceId}`)
+    const response = await api.request(surface.path(target.zoneId))
+    assertWriteVerificationResponse(target, response)
     return {
-      response: await api.request(surface.path(target.zoneId)),
+      response,
       target,
     }
   }
@@ -3766,6 +3778,13 @@ function intentPolicyRemediation(
       text: "Choose an expected value to see its remediation support.",
     }
   }
+  if (rowSupportsDnssecIntentCorrection(row)
+    && dnssecDesiredStatus(expected)) {
+    return {
+      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+      text: "Remediable: DNSSEC status can be enabled or disabled. Cloudflare-generated key metadata remains inspection-only.",
+    }
+  }
   const matchingSource = expected.resolutionCanonical !== null
     && [...row.cells.values()].some((cell) => (
       cell.resolutionCanonical === expected.resolutionCanonical
@@ -4495,6 +4514,9 @@ function renderIntentPolicies() {
       policy.expected,
       valueConstraint,
     )
+    const correction = row
+      ? dnssecIntentCorrection(row, { policyId: policy.id })
+      : null
     const item = createElement("article", { className: `intent-item ${status}` })
     const heading = createElement("div", { className: "intent-item-heading" })
     const badges = createElement("div", { className: "intent-item-badges" })
@@ -4543,6 +4565,20 @@ function renderIntentPolicies() {
     actions.append(
       intentActionButton("Show", () => showIntentPolicyInMatrix(policy)),
     )
+    if (correction?.available) {
+      const correctionCount = correction.targets.length
+      actions.append(intentActionButton(
+        `Align ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+        () => reviewDnssecIntentCorrection(
+          correction,
+          `Align ${policy.facet.label} with fleet intent`,
+        ),
+        {
+          title: `Live-validate and preview DNSSEC status changes for ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+          write: true,
+        },
+      ))
+    }
     if (row) {
       actions.append(
         intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), { write: true }),
@@ -5830,6 +5866,23 @@ function renderMatrix() {
       })
       facetActions.append(intentButton)
     }
+    const intentCorrection = dnssecIntentCorrection(row)
+    if (!readOnly && intentCorrection.available) {
+      const correctionCount = intentCorrection.targets.length
+      const correctionButton = createElement("button", {
+        className: "cell-action apply-intent-correction",
+        text: `Align ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+      })
+      correctionButton.type = "button"
+      correctionButton.setAttribute(
+        "aria-label",
+        `Align ${row.label} with fleet intent on ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+      )
+      correctionButton.title = "Fresh-read the drifting zones and preview the DNSSEC status writes"
+      correctionButton.dataset.actionTitle = correctionButton.title
+      intentCorrectionByButton.set(correctionButton, intentCorrection)
+      facetActions.append(correctionButton)
+    }
     if (actionTypes.has("zone-setting")) {
       facetActions.append(createElement("small", { className: "capability-badge", text: "Edit settings" }))
     }
@@ -6314,6 +6367,10 @@ function updateActionButtons() {
         : `Copy this rule to ${targetCount} selected destination zone${targetCount === 1 ? "" : "s"} after live validation`
   }
   for (const button of document.querySelectorAll(".rename-rule")) {
+    button.disabled = writeLocked
+    button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
+  }
+  for (const button of document.querySelectorAll(".apply-intent-correction")) {
     button.disabled = writeLocked
     button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
   }
@@ -7035,6 +7092,66 @@ function selectedLiveZones(inventory, zoneIds) {
     throw new Error("One or more selected zones no longer exist in the account")
   }
   return zoneIds.map((zoneId) => byId.get(zoneId))
+}
+
+async function reviewDnssecIntentCorrection(correction, title = "Align DNSSEC with fleet intent") {
+  if (!correction?.available || correction.targets.length === 0) {
+    toast(correction?.reason || "No correctable DNSSEC status drift is present", "error")
+    return false
+  }
+  const desiredStatusByZoneId = new Map(
+    correction.targets.map((target) => [target.zoneId, target.desiredStatus]),
+  )
+  const zoneIds = correction.targets.map((target) => target.zoneId)
+  const intentWasOpen = elements.intentDialog.open
+  try {
+    const liveData = await runWritePreflight(
+      "DNSSEC intent",
+      () => executePreflightRead([
+        {
+          type: READ_ACTION.DNSSEC_ALIGNMENT,
+          zoneIds,
+        },
+      ]),
+    )
+    const liveInventory = liveData.inventory
+    assertSurfaceReads(liveInventory, DNSSEC_PREFLIGHT_SURFACE_IDS, "DNSSEC")
+    const plans = selectedLiveZones(liveInventory, zoneIds).map((zone) => {
+      const desiredStatus = desiredStatusByZoneId.get(zone.meta.id)
+      if (!desiredStatus) {
+        throw new Error(`DNSSEC intent is unavailable for ${zone.meta.name}`)
+      }
+      return buildDnssecStatusPlan(zone, desiredStatus)
+    })
+    if (intentWasOpen) elements.intentDialog.close()
+    const applied = await applyPlans(
+      title,
+      createLivePlanSet(plans),
+      {
+        confirmationNote: dnssecConfirmationNote(plans),
+        successMessage: "DNSSEC correction requests succeeded and live state was re-read",
+      },
+    )
+    if (intentWasOpen) openIntentManager()
+    return applied
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error), "error")
+    return false
+  }
+}
+
+function dnssecConfirmationNote(plans) {
+  const statuses = new Set(plans.flatMap((plan) => (
+    plan.operations.map((operation) => operation.body?.status)
+  )))
+  const notes = []
+  if (statuses.has(DNSSEC_STATUS.ACTIVE)) {
+    notes.push("Cloudflare may report DNSSEC as pending until the parent DS record is published; a non-Cloudflare registrar may require manual DS setup.")
+  }
+  if (statuses.has(DNSSEC_STATUS.DISABLED)) {
+    notes.push("Before disabling, remove the parent DS record and wait for its TTL to expire; otherwise validating resolvers can fail.")
+  }
+  return notes.join(" ")
 }
 
 function executePreflightRead(actions) {
@@ -9318,6 +9435,16 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
+  const intentCorrectionButton = event.target.closest(".apply-intent-correction")
+  if (intentCorrectionButton) {
+    const correction = intentCorrectionByButton.get(intentCorrectionButton)
+    if (!correction) {
+      toast("The selected intent correction is no longer available", "error")
+      return
+    }
+    reviewDnssecIntentCorrection(correction)
+    return
+  }
   const valueComparisonButton = event.target.closest(".compare-values")
   if (valueComparisonButton) {
     const row = valueComparisonRowByButton.get(valueComparisonButton)

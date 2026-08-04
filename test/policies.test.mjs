@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
@@ -1380,6 +1381,40 @@ test("zone setting plans reject read-only settings", () => {
   assert.throws(
     () => buildZoneSettingPlan(zone, "readonly", "off"),
     /read-only/,
+  )
+})
+
+test("DNSSEC status plans preserve the requested state without copying generated key fields", () => {
+  const zone = makeZone("alpha.example", {
+    surfaces: {
+      dnssec: ok({
+        algorithm: null,
+        digest: null,
+        status: "disabled",
+      }),
+    },
+  })
+
+  const plan = buildDnssecStatusPlan(zone, "active")
+
+  assert.equal(plan.operations.length, 1)
+  assert.equal(plan.operations[0].method, "PATCH")
+  assert.equal(plan.operations[0].path, "zones/zone-alpha.example/dnssec")
+  assert.deepEqual(plan.operations[0].body, { status: "active" })
+  assert.deepEqual(plan.operations[0].currentValue, { status: "disabled" })
+})
+
+test("DNSSEC status plans treat an in-flight request as already requested", () => {
+  const zone = makeZone("alpha.example", {
+    surfaces: {
+      dnssec: ok({ status: "pending" }),
+    },
+  })
+
+  assert.deepEqual(buildDnssecStatusPlan(zone, "active").operations, [])
+  assert.throws(
+    () => buildDnssecStatusPlan(zone, "pending"),
+    /must be active or disabled/,
   )
 })
 

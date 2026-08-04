@@ -3,6 +3,7 @@ import test from "node:test"
 
 import { HTTP_METHOD } from "../src/constants.mjs"
 import {
+  assertWriteVerificationResponse,
   verificationTargetsForOperation,
   verificationTargetsForPlans,
   verificationTargetsForResults,
@@ -39,6 +40,36 @@ test("write verification targets exact settings and DNS records", () => {
         zoneId: "zone-alpha",
       },
     ],
+  )
+})
+
+test("DNSSEC writes verify only the changed DNSSEC surface", () => {
+  assert.deepEqual(
+    verificationTargetsForOperation({
+      body: { status: "active" },
+      method: HTTP_METHOD.PATCH,
+      path: "zones/zone-alpha/dnssec",
+    }),
+    [{
+      expectedStatus: "active",
+      kind: WRITE_VERIFICATION_KIND.SURFACE,
+      surfaceId: "dnssec",
+      zoneId: "zone-alpha",
+    }],
+  )
+  const target = verificationTargetsForOperation({
+    body: { status: "active" },
+    method: HTTP_METHOD.PATCH,
+    path: "zones/zone-alpha/dnssec",
+  })[0]
+  assert.doesNotThrow(() => assertWriteVerificationResponse(target, {
+    result: { status: "pending" },
+  }))
+  assert.throws(
+    () => assertWriteVerificationResponse(target, {
+      result: { status: "disabled" },
+    }),
+    /instead of requested active/,
   )
 })
 

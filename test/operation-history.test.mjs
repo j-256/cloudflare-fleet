@@ -205,6 +205,23 @@ test("inverse plans restore direct edits and reverse operation order", () => {
   )
 })
 
+test("DNSSEC status changes remain non-reversible because parent DS timing is external", () => {
+  const operation = {
+    body: { status: "active" },
+    currentValue: { status: "disabled" },
+    label: "Enable DNSSEC",
+    method: "PATCH",
+    path: "zones/zone-one/dnssec",
+  }
+  const inverse = buildInversePlans([
+    result(operation, { status: "pending" }),
+  ])
+
+  assert.equal(inverse.available, false)
+  assert.match(inverse.reason, /parent DS record timing/)
+  assert.deepEqual(inverse.plans, [])
+})
+
 test("inverse adapters cover every directly reversible resource lifecycle", () => {
   const cases = [
     {
@@ -526,4 +543,26 @@ test("DNS surface guards are stable across API list ordering", () => {
     response: { result: [...records].reverse() },
     target,
   }]).matches, true)
+})
+
+test("DNSSEC guards treat pending and active as the same requested state", () => {
+  const target = {
+    expectedStatus: "active",
+    kind: WRITE_VERIFICATION_KIND.SURFACE,
+    surfaceId: WRITE_VERIFICATION_SURFACE.DNSSEC,
+    zoneId: "zone-one",
+  }
+  const guards = createVerificationGuards([{
+    response: { result: { algorithm: "13", status: "pending" } },
+    target,
+  }])
+
+  assert.equal(compareVerificationGuards(guards, [{
+    response: { result: { algorithm: "13", status: "active" } },
+    target,
+  }]).matches, true)
+  assert.equal(compareVerificationGuards(guards, [{
+    response: { result: { status: "disabled" } },
+    target,
+  }]).matches, false)
 })

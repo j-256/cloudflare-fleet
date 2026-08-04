@@ -13,6 +13,7 @@ const REQUIREMENT_KIND = Object.freeze({
   RULESET_PHASE: "ruleset-phase",
 })
 export const READ_ACTION = Object.freeze({
+  DNSSEC_ALIGNMENT: "dnssec-alignment",
   DNS_RECORD_COPY: "dns-record-copy",
   DNS_RECORD_EDIT: "dns-record-edit",
   EMAIL_ALIGNMENT: "email-alignment",
@@ -43,10 +44,14 @@ const EMAIL_SURFACE_IDS = Object.freeze([
   "email-dns",
   "email-catch-all",
 ])
+const DNSSEC_SURFACE_IDS = Object.freeze([
+  "dnssec",
+])
 const RULESET_SURFACE_IDS = Object.freeze([
   "rulesets",
 ])
 export const READ_ACTION_SURFACES = Object.freeze({
+  [READ_ACTION.DNSSEC_ALIGNMENT]: DNSSEC_SURFACE_IDS,
   [READ_ACTION.EMAIL_ALIGNMENT]: EMAIL_SURFACE_IDS,
   [READ_ACTION.WAF_ALIGNMENT]: RULESET_SURFACE_IDS,
 })
@@ -144,6 +149,21 @@ export function actionResourceId(action) {
 }
 
 export function readRequirementsForAction(action) {
+  if (action.type === READ_ACTION.DNSSEC_ALIGNMENT) {
+    const zoneIds = unique(action.zoneIds || [])
+    if (zoneIds.length === 0) {
+      throw new TypeError("At least one DNSSEC zone identifier is required")
+    }
+    for (const zoneId of zoneIds) {
+      requiredIdentifier(zoneId, "DNSSEC zone identifier")
+    }
+    return [
+      inventoryRead({
+        surfaceIds: DNSSEC_SURFACE_IDS,
+        zoneIds,
+      }),
+    ]
+  }
   if (action.type === READ_ACTION.EMAIL_ALIGNMENT) {
     return [
       inventoryRead({

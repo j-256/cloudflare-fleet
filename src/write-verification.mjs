@@ -1,4 +1,5 @@
-import { HTTP_METHOD, RULESET_KIND } from "./constants.mjs"
+import { DNSSEC_STATUS, HTTP_METHOD, RULESET_KIND } from "./constants.mjs"
+import { dnssecStatusRequestSatisfied } from "./dnssec.mjs"
 
 export const WRITE_VERIFICATION_KIND = Object.freeze({
   DNS_RECORD: "dns-record",
@@ -12,9 +13,15 @@ export const WRITE_VERIFICATION_KIND = Object.freeze({
 
 export const WRITE_VERIFICATION_SURFACE = Object.freeze({
   DNS: "dns",
+  DNSSEC: "dnssec",
   EMAIL: "email",
   EMAIL_DNS: "email-dns",
 })
+
+const DNSSEC_WRITABLE_STATUS_SET = new Set([
+  DNSSEC_STATUS.ACTIVE,
+  DNSSEC_STATUS.DISABLED,
+])
 
 function requiredString(value, label) {
   if (typeof value !== "string" || value.length === 0) {
@@ -54,6 +61,18 @@ export function verificationTargetsForOperation(operation) {
     throw new Error(`Unsupported write verification path: ${operation.path}`)
   }
   const zoneId = segments[1]
+
+  if (segments[2] === "dnssec" && segments.length === 3
+    && operation.method === HTTP_METHOD.PATCH) {
+    const expectedStatus = operation.body?.status
+    if (!DNSSEC_WRITABLE_STATUS_SET.has(expectedStatus)) {
+      throw new TypeError("DNSSEC verification requires an active or disabled request status")
+    }
+    return [{
+      ...surfaceTarget(zoneId, WRITE_VERIFICATION_SURFACE.DNSSEC),
+      expectedStatus,
+    }]
+  }
 
   if (segments[2] === "settings" && segments.length === 4) {
     return [{
@@ -124,6 +143,15 @@ export function verificationTargetsForOperation(operation) {
   }
 
   throw new Error(`Unsupported write verification path: ${operation.path}`)
+}
+
+export function assertWriteVerificationResponse(target, response) {
+  if (target?.kind !== WRITE_VERIFICATION_KIND.SURFACE
+    || target.surfaceId !== WRITE_VERIFICATION_SURFACE.DNSSEC) return
+  const actualStatus = response?.result?.status
+  if (!dnssecStatusRequestSatisfied(actualStatus, target.expectedStatus)) {
+    throw new Error(`DNSSEC verification returned ${actualStatus || "unknown"} instead of requested ${target.expectedStatus}`)
+  }
 }
 
 function verificationTargetKey(target) {

@@ -175,6 +175,33 @@ test("action composer derives scoped Cloudflare reads from required actions", ()
   })
 })
 
+test("DNSSEC intent correction reads only the selected DNSSEC surfaces", () => {
+  const plan = composeActionReadPlan([
+    {
+      type: READ_ACTION.DNSSEC_ALIGNMENT,
+      zoneIds: ["zone-beta", "zone-alpha", "zone-beta"],
+    },
+  ])
+
+  assert.deepEqual(plan, {
+    inventory: {
+      includeEmailAddresses: false,
+      includeRuleDetails: false,
+      surfaceIds: ["dnssec"],
+      zoneIds: ["zone-beta", "zone-alpha"],
+    },
+    resources: [],
+    rulePhases: [],
+  })
+  assert.throws(
+    () => composeActionReadPlan([{
+      type: READ_ACTION.DNSSEC_ALIGNMENT,
+      zoneIds: [],
+    }]),
+    /At least one DNSSEC zone identifier/,
+  )
+})
+
 test("DNS hole resolution reads only source and target DNS surfaces", () => {
   const plan = composeActionReadPlan([
     {
