@@ -3004,6 +3004,11 @@ dialog form {
   color: var(--green);
 }
 
+.intent-status-badge.manual {
+  border-color: rgba(90, 169, 255, 0.44);
+  color: var(--blue);
+}
+
 .intent-status-badge.compare-only {
   border-color: rgba(255, 180, 84, 0.42);
   color: var(--accent-2);
@@ -3305,6 +3310,11 @@ dialog .intent-value-source-option {
 .intent-remediation-status.remediable {
   border-color: rgba(119, 208, 143, 0.44);
   color: var(--green);
+}
+
+.intent-remediation-status.manual {
+  border-color: rgba(90, 169, 255, 0.44);
+  color: var(--blue);
 }
 
 .intent-remediation-status.compare-only {

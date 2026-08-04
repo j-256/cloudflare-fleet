@@ -72,7 +72,6 @@ import {
   showDialog,
 } from "./dialogs.mjs"
 import {
-  dnssecDesiredStatus,
   dnssecIntentCorrection,
   rowSupportsDnssecIntentCorrection,
 } from "./dnssec-intent.mjs"
@@ -93,6 +92,11 @@ import {
   previewIntentAdoption,
   selectIntentAdoptionGroup,
 } from "./intent-adoption.mjs"
+import {
+  INTENT_REMEDIATION_KIND,
+  INTENT_REMEDIATION_PRESENTATION,
+  intentPolicyRemediation,
+} from "./intent-remediation.mjs"
 import {
   matrixNavigationTarget,
   MATRIX_NAVIGATION_KEYS,
@@ -291,10 +295,6 @@ const INTENT_POLICY_VALUE_SEPARATOR = "\u0000"
 const INTENT_POLICY_VALUE_MODE = Object.freeze({
   CUSTOM: "custom",
   OBSERVED: "observed",
-})
-const INTENT_REMEDIATION_KIND = Object.freeze({
-  COMPARE_ONLY: "compare-only",
-  REMEDIABLE: "remediable",
 })
 const INTENT_ADOPTION_FILTER = Object.freeze({
   HIGH: "high",
@@ -3950,96 +3950,6 @@ function selectedIntentPolicyExpected() {
   return observedIntentExpected(selectedIntentPolicyVariant())
 }
 
-function intentPolicyRemediation(
-  row,
-  expected,
-  valueConstraint = FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
-) {
-  if (!row) {
-    return {
-      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
-      text: "This facet is unavailable, so remediation cannot be evaluated.",
-    }
-  }
-  const directEdit = [...row.cells.values()].some((cell) => Boolean(cell.action))
-  const anyFill = [...row.missingResolutions.values()].some(
-    (resolution) => resolution?.available,
-  )
-  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
-    if (anyFill || directEdit) {
-      return {
-        className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-        text: "Remediable: any value satisfies this policy, so missing cells can use an available create or fleet-copy flow.",
-      }
-    }
-    return {
-      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
-      text: "Compare only: this facet has no direct editor or create flow. Intent will still require a value in every covered zone.",
-    }
-  }
-  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
-    if (directEdit) {
-      return {
-        className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-        text: "Partly remediable: duplicate values can be edited directly. Missing cells need a new value because copying another covered zone would violate uniqueness.",
-      }
-    }
-    return {
-      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
-      text: "Compare only: intent detects missing and duplicate values, but no direct editor can create a distinct replacement.",
-    }
-  }
-  if (!expected) {
-    return {
-      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
-      text: "Choose an expected value to see its remediation support.",
-    }
-  }
-  if (rowSupportsDnssecIntentCorrection(row)
-    && dnssecDesiredStatus(expected)) {
-    return {
-      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-      text: "Remediable: DNSSEC status can be enabled or disabled. Cloudflare-generated key metadata remains inspection-only.",
-    }
-  }
-  const matchingSource = expected.resolutionCanonical !== null
-    && [...row.cells.values()].some((cell) => (
-      cell.resolutionCanonical === expected.resolutionCanonical
-        && Boolean(cell.resolutionSource)
-    ))
-  const matchingHole = expected.resolutionCanonical !== null
-    && [...row.missingResolutions.values()].some((resolution) => (
-      resolution?.available && resolution.candidates?.some(
-        (candidate) => candidate.canonical === expected.resolutionCanonical,
-      )
-    ))
-  const productCreate = row.resolutionKind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
-    && !fleetIntentExpectedIsAuthored(expected)
-  const matchingFill = matchingSource || matchingHole || productCreate
-  if (directEdit && matchingFill) {
-    return {
-      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-      text: "Remediable: edit present values directly or fill missing values from a matching fleet source.",
-    }
-  }
-  if (directEdit) {
-    return {
-      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-      text: "Partly remediable: present values can be edited directly. Missing values need a matching observed source or a product-specific create flow.",
-    }
-  }
-  if (matchingFill) {
-    return {
-      className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-      text: "Remediable: missing values can be filled from a matching fleet source.",
-    }
-  }
-  return {
-    className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
-    text: "Compare only: this facet has no direct editor or matching fill source. Intent will still detect and filter drift.",
-  }
-}
-
 function renderIntentPolicyRemediation() {
   const support = intentPolicyRemediation(
     state.intentPolicyDraft?.row,
@@ -4758,9 +4668,7 @@ function renderIntentPolicies() {
     const heading = createElement("div", { className: "intent-item-heading" })
     const badges = createElement("div", { className: "intent-item-badges" })
     const remediationBadge = intentStatusBadge(
-      remediation.className === INTENT_REMEDIATION_KIND.REMEDIABLE
-        ? "Remediable"
-        : "Compare only",
+      INTENT_REMEDIATION_PRESENTATION[remediation.className].label,
       remediation.className,
     )
     remediationBadge.title = remediation.text
