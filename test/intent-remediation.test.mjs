@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { FLEET_INTENT_VALUE_CONSTRAINT } from "../src/fleet-intent.mjs"
+import {
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
+  FLEET_INTENT_VALUE_CONSTRAINT,
+} from "../src/fleet-intent.mjs"
 import {
   INTENT_REMEDIATION_KIND,
   INTENT_REMEDIATION_PRESENTATION,
@@ -69,4 +72,45 @@ test("editable ruleset workspaces describe manual non-exact remediation", () => 
   assert.match(mayDiffer.text, /no automatic create flow/)
   assert.equal(mustDiffer.className, INTENT_REMEDIATION_KIND.MANUAL)
   assert.match(mustDiffer.text, /no automatic uniqueness action/)
+})
+
+test("optional may-differ intent is presented as allowed variation", () => {
+  const remediation = intentPolicyRemediation(
+    row("custom"),
+    null,
+    FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  )
+
+  assert.equal(remediation.className, INTENT_REMEDIATION_KIND.ALLOWANCE)
+  assert.equal(
+    INTENT_REMEDIATION_PRESENTATION[remediation.className].label,
+    "Allowed variation",
+  )
+  assert.match(remediation.text, /may omit this facet/)
+})
+
+test("optional exact intent does not describe missing values as drift", () => {
+  const remediation = intentPolicyRemediation(
+    row("zone"),
+    expected,
+    FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  )
+
+  assert.equal(remediation.className, INTENT_REMEDIATION_KIND.MANUAL)
+  assert.match(remediation.text, /Missing values are allowed/)
+  assert.doesNotMatch(remediation.text, /fill missing/)
+})
+
+test("forbidden intent describes supported removal as manual remediation", () => {
+  const remediation = intentPolicyRemediation(
+    row("zone"),
+    null,
+    FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+  )
+
+  assert.equal(remediation.className, INTENT_REMEDIATION_KIND.MANUAL)
+  assert.match(remediation.text, /remove present values/)
 })

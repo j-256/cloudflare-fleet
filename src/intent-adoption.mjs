@@ -2,6 +2,7 @@ import {
   evaluateFleetIntent,
   FLEET_INTENT_CELL_STATUS,
   FLEET_INTENT_EXPECTED_ORIGIN,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
   replaceFleetIntentPolicy,
@@ -114,7 +115,7 @@ function recommendedConstraint(classification) {
 
 function recommendationReason(classification, missingCount) {
   const missingSuffix = missingCount > 0
-    ? `; ${missingCount} missing zone${missingCount === 1 ? "" : "s"} would become actionable`
+    ? `; preserve optional presence across ${missingCount} missing zone${missingCount === 1 ? "" : "s"}`
     : ""
   if (classification === INTENT_ADOPTION_CLASSIFICATION.STRONG_CONSENSUS) {
     return `Use the clear leading value as exact intent${missingSuffix}`
@@ -123,12 +124,12 @@ function recommendationReason(classification, missingCount) {
     return `Use the leading value, but review the close split before saving${missingSuffix}`
   }
   if (classification === INTENT_ADOPTION_CLASSIFICATION.TIED_VARIANTS) {
-    return `Require presence while allowing the tied values to differ${missingSuffix}`
+    return `Allow the tied present values to differ${missingSuffix}`
   }
   if (classification === INTENT_ADOPTION_CLASSIFICATION.ZONE_SPECIFIC) {
-    return `Require presence while preserving each zone's observed value${missingSuffix}`
+    return `Preserve each present zone's observed value${missingSuffix}`
   }
-  return "Use the only observed value as exact intent; every other covered zone is missing"
+  return "Use the only observed value as exact intent while allowing other covered zones to omit it"
 }
 
 export function buildIntentAdoptionCandidates(document, inventory, matrix) {
@@ -144,6 +145,9 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
     const presentCount = variants.reduce((sum, variant) => sum + variant.count, 0)
     const missingCount = Math.max(0, inventory.zones.length - presentCount)
     const classification = classifyCandidate(variants, presentCount, missingCount)
+    const presenceConstraint = missingCount > 0
+      ? FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+      : FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
     const valueConstraint = recommendedConstraint(classification)
     const highConfidence = classification
       === INTENT_ADOPTION_CLASSIFICATION.STRONG_CONSENSUS
@@ -165,6 +169,7 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
         expectedCanonical: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
           ? variants[0].canonical
           : null,
+        presenceConstraint,
         reason: recommendationReason(classification, missingCount),
         valueConstraint,
       },
@@ -187,13 +192,24 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
 }
 
 export function createIntentAdoptionPolicy(candidate, selection) {
-  const valueConstraint = selection.valueConstraint
-  const expectedVariant = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  const presenceConstraint = selection.presenceConstraint
+    ?? FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
+  if (!Object.values(FLEET_INTENT_PRESENCE_CONSTRAINT).includes(presenceConstraint)) {
+    throw new TypeError(`Choose a presence rule for ${candidate.label}`)
+  }
+  const valuesApply = presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+  const valueConstraint = valuesApply
+    ? selection.valueConstraint
+    : FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+  const expectedVariant = valuesApply
+    && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
     ? candidate.variants.find(
         (variant) => variant.canonical === selection.expectedCanonical,
       ) || null
     : null
-  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT && !expectedVariant) {
+  if (valuesApply
+    && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    && !expectedVariant) {
     throw new TypeError(`Choose an observed expected value for ${candidate.label}`)
   }
   return {
@@ -216,6 +232,7 @@ export function createIntentAdoptionPolicy(candidate, selection) {
     },
     groupId: selection.groupId,
     id: selection.policyId,
+    presenceConstraint,
     valueConstraint,
   }
 }

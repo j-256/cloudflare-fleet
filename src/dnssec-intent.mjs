@@ -5,7 +5,9 @@ import {
 } from "./dnssec.mjs"
 import {
   FLEET_INTENT_CELL_STATUS,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
+  fleetIntentPolicyPresenceConstraint,
   fleetIntentPolicyValueConstraint,
 } from "./fleet-intent.mjs"
 
@@ -63,6 +65,8 @@ export function dnssecIntentCorrection(row, options = {}) {
       conflicts.push(cell.zone.meta.name)
       continue
     }
+    if (fleetIntentPolicyPresenceConstraint(cell.policy)
+      === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) continue
     if (fleetIntentPolicyValueConstraint(cell.policy)
       !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) continue
     const desiredStatus = dnssecDesiredStatus(cell.policy.expected)

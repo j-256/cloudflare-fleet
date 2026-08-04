@@ -2809,7 +2809,7 @@ dialog form {
 
 .intent-adoption-controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -3007,6 +3007,11 @@ dialog form {
 .intent-status-badge.manual {
   border-color: rgba(90, 169, 255, 0.44);
   color: var(--blue);
+}
+
+.intent-status-badge.allowance {
+  border-color: rgba(180, 151, 255, 0.44);
+  color: var(--purple);
 }
 
 .intent-status-badge.compare-only {
@@ -3317,9 +3322,25 @@ dialog .intent-value-source-option {
   color: var(--blue);
 }
 
+.intent-remediation-status.allowance {
+  border-color: rgba(180, 151, 255, 0.44);
+  color: var(--purple);
+}
+
 .intent-remediation-status.compare-only {
   border-color: rgba(255, 193, 92, 0.42);
   color: var(--accent-2);
+}
+
+.intent-policy-overlap {
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 180, 84, 0.42);
+  border-radius: 7px;
+  color: var(--accent-2);
+  background: rgba(255, 180, 84, 0.06);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 #intent-acknowledgement-reason {

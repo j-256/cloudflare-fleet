@@ -5,7 +5,7 @@ import {
 import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 4
+export const FLEET_INTENT_SCHEMA_VERSION = 5
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -50,12 +50,19 @@ export const FLEET_INTENT_VALUE_CONSTRAINT = Object.freeze({
   MUST_DIFFER: "must-differ",
 })
 
+export const FLEET_INTENT_PRESENCE_CONSTRAINT = Object.freeze({
+  FORBIDDEN: "forbidden",
+  OPTIONAL: "optional",
+  REQUIRED: "required",
+})
+
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const DNSSEC_INTENT_CATEGORY = "DNSSEC"
 const DNSSEC_INTENT_CONFIGURATION_KEY = "configuration"
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_ONE = 1
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO = 2
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE = 3
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR = 4
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 
 function isObject(value) {
@@ -152,6 +159,12 @@ export function fleetIntentPolicyValueConstraint(policy) {
     : policy.valueConstraint
 }
 
+export function fleetIntentPolicyPresenceConstraint(policy) {
+  return policy?.presenceConstraint === undefined
+    ? FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
+    : policy.presenceConstraint
+}
+
 function isDnssecIntentPolicy(policy) {
   return policy?.facet?.category === DNSSEC_INTENT_CATEGORY
     && policy.facet.key === DNSSEC_INTENT_CONFIGURATION_KEY
@@ -172,6 +185,12 @@ function dnssecStatusExpectedIsNormalized(expected) {
 
 function normalizeFleetIntentPolicy(policy) {
   const normalized = structuredClone(policy)
+  normalized.presenceConstraint = fleetIntentPolicyPresenceConstraint(normalized)
+  if (normalized.presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    normalized.expected = null
+    normalized.valueConstraint = FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+    return normalized
+  }
   if (!isDnssecIntentPolicy(normalized)
     || fleetIntentPolicyValueConstraint(normalized)
       !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) return normalized
@@ -193,10 +212,14 @@ function normalizeFleetIntentPolicy(policy) {
 }
 
 function isPolicy(policy, options = {}) {
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
   const valueConstraint = fleetIntentPolicyValueConstraint(policy)
-  const expectedValid = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-    ? isExpected(policy?.expected)
-    : policy?.expected === null
+  const expectedValid = presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+    ? valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+      && policy?.expected === null
+    : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+      ? isExpected(policy?.expected)
+      : policy?.expected === null
   return isObject(policy)
     && isIdentifier(policy.id)
     && isIdentifier(policy.groupId)
@@ -206,8 +229,11 @@ function isPolicy(policy, options = {}) {
     && isLabel(policy.facet.label)
     && (policy.facet.description === undefined
       || typeof policy.facet.description === "string")
+    && Object.values(FLEET_INTENT_PRESENCE_CONSTRAINT).includes(presenceConstraint)
     && Object.values(FLEET_INTENT_VALUE_CONSTRAINT).includes(valueConstraint)
     && expectedValid
+    && (!options.requireNormalizedPresence
+      || policy.presenceConstraint === presenceConstraint)
     && (!options.requireNormalizedDnssec
       || !isDnssecIntentPolicy(policy)
       || valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
@@ -279,6 +305,7 @@ export function fleetIntentCoverageTargetKey(target) {
 function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   const supportsCoverageIntent = schemaVersion === FLEET_INTENT_SCHEMA_VERSION
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE
+    || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
   if (!isObject(value)) return false
   if (value.schemaVersion !== schemaVersion) return false
   if (!isLabel(value.accountId)) return false
@@ -289,7 +316,9 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   if (!Array.isArray(value.groups) || !value.groups.every(isGroup)) return false
   if (!Array.isArray(value.policies) || !value.policies.every(
     (policy) => isPolicy(policy, {
-      requireNormalizedDnssec: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+      requireNormalizedDnssec: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR,
+      requireNormalizedPresence: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
     }),
   )) return false
   if (!Array.isArray(value.acknowledgements)
@@ -346,7 +375,12 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     accountId,
     LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE,
   )
-  if (!versionOneValid && !versionTwoValid && !versionThreeValid) {
+  const versionFourValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR,
+  )
+  if (!versionOneValid && !versionTwoValid && !versionThreeValid && !versionFourValid) {
     throw new TypeError("Fleet intent document cannot be migrated")
   }
   const legacyPolicies = versionOneValid
@@ -376,7 +410,7 @@ export function migrateFleetIntentDocument(value, accountId = null) {
   const migrated = {
     ...structuredClone(value),
     acknowledgements,
-    coverageExpectations: versionThreeValid
+    coverageExpectations: versionThreeValid || versionFourValid
       ? structuredClone(value.coverageExpectations)
       : [],
     policies,
@@ -394,6 +428,11 @@ export function fleetIntentFacetId(category, key) {
 
 export function fleetIntentPolicyFacetId(policy) {
   return fleetIntentFacetId(policy.facet.category, policy.facet.key)
+}
+
+function fleetIntentPoliciesShareTarget(left, right) {
+  return left.groupId === right.groupId
+    && fleetIntentPolicyFacetId(left) === fleetIntentPolicyFacetId(right)
 }
 
 export function cloneFleetIntentDocument(document) {
@@ -425,7 +464,7 @@ export function removeFleetIntentGroup(document, groupId) {
     throw new TypeError("The all-zones group cannot be removed")
   }
   if (document.policies.some((policy) => policy.groupId === groupId)) {
-    throw new TypeError("Remove or retarget policies that use this group first")
+    throw new TypeError("Remove policies that use this group first")
   }
   const next = cloneFleetIntentDocument(document)
   next.groups = next.groups.filter((group) => group.id !== groupId)
@@ -438,11 +477,23 @@ export function removeFleetIntentGroup(document, groupId) {
 export function replaceFleetIntentPolicy(document, policy) {
   const next = cloneFleetIntentDocument(document)
   const normalizedPolicy = normalizeFleetIntentPolicy(policy)
-  if (!isPolicy(normalizedPolicy, { requireNormalizedDnssec: true })) {
+  if (!isPolicy(normalizedPolicy, {
+    requireNormalizedDnssec: true,
+    requireNormalizedPresence: true,
+  })) {
     throw new TypeError("Fleet intent policy is invalid")
   }
   if (!next.groups.some((group) => group.id === normalizedPolicy.groupId)) {
     throw new TypeError("Fleet intent policy group was not found")
+  }
+  const existingPolicy = next.policies.find(
+    (entry) => entry.id === normalizedPolicy.id,
+  )
+  if (existingPolicy && !fleetIntentPoliciesShareTarget(
+    existingPolicy,
+    normalizedPolicy,
+  )) {
+    throw new TypeError("Fleet intent policy identifiers cannot be retargeted")
   }
   next.policies = [
     ...next.policies.filter((entry) => entry.id !== normalizedPolicy.id),
@@ -610,9 +661,20 @@ function uniquenessCanonical(row, zoneName) {
     ?? FLEET_INTENT_MISSING_CANONICAL
 }
 
-function basePolicyCellStatus(valueConstraint, expected, observation, duplicateCount) {
+function basePolicyCellStatus(
+  presenceConstraint,
+  valueConstraint,
+  expected,
+  observation,
+  duplicateCount,
+) {
   if (observation.observedCanonical === FLEET_INTENT_MISSING_CANONICAL) {
-    return FLEET_INTENT_CELL_STATUS.MISSING
+    return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
+      ? FLEET_INTENT_CELL_STATUS.MISSING
+      : FLEET_INTENT_CELL_STATUS.MATCH
+  }
+  if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    return FLEET_INTENT_CELL_STATUS.VARIANT
   }
   if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
     return FLEET_INTENT_CELL_STATUS.MATCH
@@ -630,6 +692,7 @@ function basePolicyCellStatus(valueConstraint, expected, observation, duplicateC
 function policyEvaluation(policy, group, row, inventory, acknowledgements) {
   const zoneById = new Map(inventory.zones.map((zone) => [zone.meta.id, zone]))
   const targetedZoneIds = fleetIntentGroupZoneIds(group, inventory)
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
   const valueConstraint = fleetIntentPolicyValueConstraint(policy)
   const observations = targetedZoneIds
     .map((zoneId) => zoneById.get(zoneId))
@@ -651,6 +714,7 @@ function policyEvaluation(policy, group, row, inventory, acknowledgements) {
   for (const observation of observations) {
     const duplicateCount = uniquenessCounts.get(observation.uniquenessCanonical) || 0
     const statusWithoutAcknowledgement = basePolicyCellStatus(
+      presenceConstraint,
       valueConstraint,
       policy.expected,
       observation,

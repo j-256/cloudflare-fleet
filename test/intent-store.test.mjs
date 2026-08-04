@@ -5,11 +5,16 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   FLEET_INTENT_DOCUMENT_GLOBAL,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_SCHEMA_VERSION,
   FLEET_INTENT_VALUE_CONSTRAINT,
+  replaceFleetIntentGroup,
+  replaceFleetIntentPolicy,
 } from "../src/fleet-intent.mjs"
+import { fleetIntentPolicyGroupSelection } from "../src/intent-defaults.mjs"
 import {
   FleetIntentRevisionConflictError,
   persistFleetIntentDocument,
@@ -85,6 +90,7 @@ test("intent store persists source-free value constraints", async (context) => {
     },
     groupId: "all-zones",
     id: "unique-selector",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
     valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
   })
 
@@ -102,6 +108,98 @@ test("intent store persists source-free value constraints", async (context) => {
     reread.policies[0].valueConstraint,
     FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
   )
+})
+
+test("distinct facet policies survive save and reload per zone group", async (context) => {
+  const directory = await temporaryDirectory(context)
+  const file = stateFile(directory)
+  let document = createEmptyFleetIntentDocument("account-one")
+  const groups = [
+    {
+      id: "alpha-zone",
+      members: [{ zoneId: "zone-alpha", zoneName: "alpha.example" }],
+      mode: "members",
+      name: "Alpha zone",
+    },
+    {
+      id: "beta-zone",
+      members: [{ zoneId: "zone-beta", zoneName: "beta.example" }],
+      mode: "members",
+      name: "Beta zone",
+    },
+  ]
+  for (const group of groups) {
+    document = replaceFleetIntentGroup(document, group)
+  }
+  document = replaceFleetIntentPolicy(document, {
+    expected: createAuthoredFleetIntentExpected({ mode: "alpha" }),
+    facet: {
+      category: "Zone settings",
+      description: "",
+      key: "shared-setting",
+      label: "Shared setting",
+    },
+    groupId: "alpha-zone",
+    id: "policy-alpha",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  })
+  document = replaceFleetIntentPolicy(document, {
+    expected: null,
+    facet: {
+      category: "Zone settings",
+      description: "",
+      key: "shared-setting",
+      label: "Shared setting",
+    },
+    groupId: "beta-zone",
+    id: "policy-beta",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  })
+
+  await persistFleetIntentDocument(
+    file,
+    "account-one",
+    document.revision,
+    document,
+  )
+  const reread = await readFleetIntentDocument(file, "account-one")
+  const row = { cells: new Map() }
+  const alpha = fleetIntentPolicyGroupSelection(
+    row,
+    [{ unavailable: false, zoneName: "alpha.example" }],
+    reread.policies,
+    "alpha-zone",
+  )
+  const beta = fleetIntentPolicyGroupSelection(
+    row,
+    [{ unavailable: false, zoneName: "beta.example" }],
+    reread.policies,
+    "beta-zone",
+  )
+
+  assert.equal(reread.policies.length, 2)
+  assert.equal(alpha.policy.id, "policy-alpha")
+  assert.equal(
+    alpha.presenceConstraint,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+  )
+  assert.equal(
+    alpha.valueConstraint,
+    FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  )
+  assert.deepEqual(alpha.policy.expected.value, { mode: "alpha" })
+  assert.equal(beta.policy.id, "policy-beta")
+  assert.equal(
+    beta.presenceConstraint,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  )
+  assert.equal(
+    beta.valueConstraint,
+    FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  )
+  assert.equal(beta.policy.expected, null)
 })
 
 test("intent store reads older documents through the schema migration", async (context) => {

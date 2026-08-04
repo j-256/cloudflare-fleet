@@ -12,6 +12,7 @@ import {
 import {
   createEmptyFleetIntentDocument,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
   replaceFleetIntentPolicy,
 } from "../src/fleet-intent.mjs"
@@ -125,6 +126,10 @@ test("guided adoption classifies every ungoverned drift pattern", () => {
     FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
   )
   assert.equal(
+    byKey.get("strong").recommendation.presenceConstraint,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+  )
+  assert.equal(
     byKey.get("tied").classification,
     INTENT_ADOPTION_CLASSIFICATION.TIED_VARIANTS,
   )
@@ -142,6 +147,10 @@ test("guided adoption classifies every ungoverned drift pattern", () => {
   )
   assert.equal(byKey.get("missing").confidence, INTENT_ADOPTION_CONFIDENCE.REVIEW)
   assert.equal(byKey.get("missing").missingCount, 3)
+  assert.equal(
+    byKey.get("missing").recommendation.presenceConstraint,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  )
   assert.equal(
     byKey.get("split").classification,
     INTENT_ADOPTION_CLASSIFICATION.SPLIT_CONSENSUS,
@@ -246,4 +255,24 @@ test("adoption preview reports the policy effect before persistence", () => {
     targetedCells: 8,
     variantCells: 1,
   })
+})
+
+test("optional adoption preserves sparse observed coverage without actionable holes", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidate = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((entry) => entry.key === "missing")
+  const preview = previewIntentAdoption(document, inventory, matrix, [{
+    candidate,
+    selection: {
+      expectedCanonical: candidate.recommendation.expectedCanonical,
+      groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+      policyId: "optional-policy",
+      presenceConstraint: candidate.recommendation.presenceConstraint,
+      valueConstraint: candidate.recommendation.valueConstraint,
+    },
+  }])
+
+  assert.equal(preview.policies[0].presenceConstraint, FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL)
+  assert.equal(preview.summary.actionableCells, 0)
+  assert.equal(preview.summary.matchingCells, 4)
 })

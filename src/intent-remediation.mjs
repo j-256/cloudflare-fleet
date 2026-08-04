@@ -8,17 +8,22 @@ import {
   rowSupportsDnssecIntentCorrection,
 } from "./dnssec-intent.mjs"
 import {
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentExpectedIsAuthored,
 } from "./fleet-intent.mjs"
 
 export const INTENT_REMEDIATION_KIND = Object.freeze({
+  ALLOWANCE: "allowance",
   COMPARE_ONLY: "compare-only",
   MANUAL: "manual",
   REMEDIABLE: "remediable",
 })
 
 export const INTENT_REMEDIATION_PRESENTATION = Object.freeze({
+  [INTENT_REMEDIATION_KIND.ALLOWANCE]: Object.freeze({
+    label: "Allowed variation",
+  }),
   [INTENT_REMEDIATION_KIND.COMPARE_ONLY]: Object.freeze({
     label: "Compare only",
   }),
@@ -45,6 +50,7 @@ export function intentPolicyRemediation(
   row,
   expected,
   valueConstraint = FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  presenceConstraint = FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
 ) {
   if (!row) {
     return {
@@ -57,6 +63,22 @@ export function intentPolicyRemediation(
     (resolution) => resolution?.available,
   )
   const editableWorkspace = rowHasEditableWorkspace(row)
+  if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    if (directEdit || editableWorkspace) {
+      return manualRemediation("Manual remediation: remove present values through the facet editor or editable ruleset workspace. Intent will treat every present value as drift.")
+    }
+    return {
+      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+      text: "Compare only: intent detects unexpected presence, but this facet has no supported removal flow.",
+    }
+  }
+  if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+    && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
+    return {
+      className: INTENT_REMEDIATION_KIND.ALLOWANCE,
+      text: "Allowed variation: covered zones may omit this facet, and any present value is allowed.",
+    }
+  }
   if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
     if (anyFill || directEdit) {
       return {
@@ -76,15 +98,23 @@ export function intentPolicyRemediation(
     if (directEdit) {
       return {
         className: INTENT_REMEDIATION_KIND.REMEDIABLE,
-        text: "Partly remediable: duplicate values can be edited directly. Missing cells need a new value because copying another covered zone would violate uniqueness.",
+        text: presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+          ? "Remediable: duplicate present values can be edited directly. Missing values are allowed."
+          : "Partly remediable: duplicate values can be edited directly. Missing cells need a new value because copying another covered zone would violate uniqueness.",
       }
     }
     if (editableWorkspace) {
-      return manualRemediation("Manual remediation: use the editable ruleset workspace to make covered values distinct. Intent will detect duplicates and missing values, but there is no automatic uniqueness action.")
+      return manualRemediation(
+        presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+          ? "Manual remediation: use the editable ruleset workspace to make present covered values distinct. Missing values are allowed, but there is no automatic uniqueness action."
+          : "Manual remediation: use the editable ruleset workspace to make covered values distinct. Intent will detect duplicates and missing values, but there is no automatic uniqueness action.",
+      )
     }
     return {
       className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
-      text: "Compare only: intent detects missing and duplicate values, but no direct editor can create a distinct replacement.",
+      text: presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+        ? "Compare only: intent detects duplicate present values, but no direct editor can create a distinct replacement. Missing values are allowed."
+        : "Compare only: intent detects missing and duplicate values, but no direct editor can create a distinct replacement.",
     }
   }
   if (!expected) {
@@ -98,6 +128,21 @@ export function intentPolicyRemediation(
     return {
       className: INTENT_REMEDIATION_KIND.REMEDIABLE,
       text: "Remediable: DNSSEC status can be enabled or disabled. Cloudflare-generated key metadata remains inspection-only.",
+    }
+  }
+  if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL) {
+    if (directEdit) {
+      return {
+        className: INTENT_REMEDIATION_KIND.REMEDIABLE,
+        text: "Remediable: present values can be edited directly to match intent. Missing values are allowed.",
+      }
+    }
+    if (editableWorkspace) {
+      return manualRemediation("Manual remediation: use the editable ruleset workspace to reconcile present values. Missing values are allowed, but there is no automatic whole-ruleset alignment action.")
+    }
+    return {
+      className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
+      text: "Compare only: intent detects present values that differ from the expected value, but this facet has no direct editor. Missing values are allowed.",
     }
   }
   const matchingSource = expected.resolutionCanonical !== null

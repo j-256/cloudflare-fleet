@@ -7,6 +7,7 @@ import {
 } from "../src/dnssec-intent.mjs"
 import {
   FLEET_INTENT_CELL_STATUS,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
 } from "../src/fleet-intent.mjs"
 
@@ -125,4 +126,22 @@ test("DNSSEC intent requires a writable expected status", () => {
   assert.equal(dnssecDesiredStatus({ value: { status: "disabled" } }), "disabled")
   assert.equal(dnssecDesiredStatus({ value: { status: "pending" } }), null)
   assert.equal(dnssecDesiredStatus({ value: {} }), null)
+})
+
+test("forbidden DNSSEC presence does not offer a status correction", () => {
+  const forbidden = {
+    ...policy("forbidden-policy", "active"),
+    expected: null,
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }
+  const present = zone("present.example")
+  const row = dnssecRow([
+    [present, "active"],
+  ], [
+    intentCell(present, forbidden, FLEET_INTENT_CELL_STATUS.VARIANT),
+  ])
+
+  assert.equal(dnssecIntentCorrection(row).available, false)
+  assert.deepEqual(dnssecIntentCorrection(row).targets, [])
 })

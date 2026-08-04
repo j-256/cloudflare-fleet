@@ -74,7 +74,7 @@
                 <h3>Define expected state</h3>
               </div>
             </div>
-            <p>Record what should match, what may differ, and what must stay unique. Saving intent evaluates drift but does not itself change Cloudflare.</p>
+            <p>Record where facets are required, optional, or forbidden, then define how present values relate. Saving intent evaluates drift but does not itself change Cloudflare.</p>
             <p class="task-card-detail" id="intent-policy-detail">No facets governed yet</p>
             <div class="task-card-actions">
               <div class="policy-badges">
@@ -540,7 +540,7 @@
         <div>
           <p class="dialog-kicker">Desired state</p>
           <h2 id="intent-title">Fleet intent</h2>
-          <p id="intent-summary">Define expected coverage and exact values without hiding observed differences.</p>
+          <p id="intent-summary">Define where facets may exist and how present values should relate without hiding observed differences.</p>
         </div>
         <div class="intent-metrics" id="intent-metrics" aria-label="Fleet intent summary"></div>
       </header>
@@ -690,22 +690,42 @@
         <label for="intent-policy-group">Applies to zones</label>
         <button class="button button-quiet" id="intent-policy-add-group" type="button">Create zone group</button>
       </div>
-      <select id="intent-policy-group" aria-describedby="intent-policy-scope" required></select>
+      <p class="intent-field-help" id="intent-policy-group-help">Choose the group whose independent policy you want to edit. Configured groups load their saved intent; unconfigured groups start from observed defaults.</p>
+      <select id="intent-policy-group" aria-describedby="intent-policy-group-help intent-policy-scope intent-policy-overlap" required></select>
       <div class="intent-zone-scope intent-policy-scope" id="intent-policy-scope"></div>
-      <fieldset class="intent-value-source intent-value-constraint">
-        <legend>Value relationship</legend>
+      <p class="intent-policy-overlap" id="intent-policy-overlap" role="status" hidden></p>
+      <p class="intent-field-help" id="intent-policy-constraint-help">Choose these independently: Presence decides whether absence is drift. Value when present compares only zones where the facet exists.</p>
+      <fieldset class="intent-value-source intent-value-constraint" aria-describedby="intent-policy-constraint-help">
+        <legend>Presence</legend>
+        <div class="intent-value-source-options intent-value-constraint-options">
+          <label class="intent-value-source-option" for="intent-policy-presence-required">
+            <input id="intent-policy-presence-required" name="intent-policy-presence" type="radio" value="required" aria-controls="intent-policy-value-relationship">
+            <span><strong>Required</strong><small>Every covered zone must have this facet</small></span>
+          </label>
+          <label class="intent-value-source-option" for="intent-policy-presence-optional">
+            <input id="intent-policy-presence-optional" name="intent-policy-presence" type="radio" value="optional" aria-controls="intent-policy-value-relationship">
+            <span><strong>Optional by zone</strong><small>Covered zones may or may not have this facet</small></span>
+          </label>
+          <label class="intent-value-source-option" for="intent-policy-presence-forbidden">
+            <input id="intent-policy-presence-forbidden" name="intent-policy-presence" type="radio" value="forbidden" aria-controls="intent-policy-value-relationship">
+            <span><strong>Forbidden</strong><small>No covered zone may have this facet</small></span>
+          </label>
+        </div>
+      </fieldset>
+      <fieldset class="intent-value-source intent-value-constraint" id="intent-policy-value-relationship" aria-describedby="intent-policy-constraint-help">
+        <legend>Value when present</legend>
         <div class="intent-value-source-options intent-value-constraint-options">
           <label class="intent-value-source-option" for="intent-policy-constraint-exact">
             <input id="intent-policy-constraint-exact" name="intent-policy-constraint" type="radio" value="exact" aria-controls="intent-policy-exact-fields">
-            <span><strong>Exact value</strong><small>Every covered zone must match one normalized value</small></span>
+            <span><strong>Exact value</strong><small>Every present value must match one normalized value</small></span>
           </label>
           <label class="intent-value-source-option" for="intent-policy-constraint-may-differ">
             <input id="intent-policy-constraint-may-differ" name="intent-policy-constraint" type="radio" value="may-differ" aria-controls="intent-policy-exact-fields">
-            <span><strong>May differ</strong><small>Every covered zone must have a value, but values can differ</small></span>
+            <span><strong>May differ</strong><small>Present values can differ</small></span>
           </label>
           <label class="intent-value-source-option" for="intent-policy-constraint-must-differ">
             <input id="intent-policy-constraint-must-differ" name="intent-policy-constraint" type="radio" value="must-differ" aria-controls="intent-policy-exact-fields">
-            <span><strong>Must differ</strong><small>Every covered zone must have a distinct value</small></span>
+            <span><strong>Must differ</strong><small>Every present value must be distinct</small></span>
           </label>
         </div>
       </fieldset>

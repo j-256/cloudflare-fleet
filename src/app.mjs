@@ -51,11 +51,13 @@ import {
   FLEET_INTENT_GROUP_MODE,
   FLEET_INTENT_LABEL_MAX_LENGTH,
   FLEET_INTENT_MISSING_CANONICAL,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_REASON_MAX_LENGTH,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
   fleetIntentCoverageTargetKey,
   fleetIntentExpectedIsAuthored,
+  fleetIntentPolicyPresenceConstraint,
   fleetIntentPolicyValueConstraint,
   isFleetIntentDocument,
   removeFleetIntentAcknowledgement,
@@ -92,6 +94,12 @@ import {
   previewIntentAdoption,
   selectIntentAdoptionGroup,
 } from "./intent-adoption.mjs"
+import {
+  defaultFleetIntentPolicyConstraints,
+  fleetIntentPolicyForGroup,
+  fleetIntentPolicyGroupSelection,
+  firstFleetIntentObservedCanonical,
+} from "./intent-defaults.mjs"
 import {
   INTENT_REMEDIATION_KIND,
   INTENT_REMEDIATION_PRESENTATION,
@@ -306,7 +314,7 @@ const INTENT_ADOPTION_CREATE_GROUP_VALUE = ""
 const INTENT_ADOPTION_CLASSIFICATION_PRESENTATION = Object.freeze({
   [INTENT_ADOPTION_CLASSIFICATION.MISSING_COVERAGE]: Object.freeze({
     label: "Sparse coverage",
-    status: "actionable",
+    status: "allowance",
   }),
   [INTENT_ADOPTION_CLASSIFICATION.SPLIT_CONSENSUS]: Object.freeze({
     label: "Close split",
@@ -330,6 +338,16 @@ const INTENT_ADOPTION_CONSTRAINT_LABEL = Object.freeze({
   [FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER]: "May differ",
   [FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER]: "Must differ",
 })
+const INTENT_ADOPTION_PRESENCE_LABEL = Object.freeze({
+  [FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN]: "Forbidden",
+  [FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL]: "Optional by zone",
+  [FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED]: "Required",
+})
+const INTENT_PRESENCE_OPTIONS = Object.freeze([
+  FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+  FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+])
 const REDIRECT_FROM_VALUE_PATH = Object.freeze([
   "action_parameters",
   "from_value",
@@ -559,14 +577,20 @@ const elements = {
   intentPolicyModeCustom: document.querySelector("#intent-policy-mode-custom"),
   intentPolicyModeObserved: document.querySelector("#intent-policy-mode-observed"),
   intentPolicyObservedFields: document.querySelector("#intent-policy-observed-fields"),
+  intentPolicyOverlap: document.querySelector("#intent-policy-overlap"),
   intentPolicyPreview: document.querySelector("#intent-policy-preview"),
+  intentPolicyPresenceForbidden: document.querySelector("#intent-policy-presence-forbidden"),
+  intentPolicyPresenceOptional: document.querySelector("#intent-policy-presence-optional"),
+  intentPolicyPresenceRequired: document.querySelector("#intent-policy-presence-required"),
   intentPolicyRaw: document.querySelector("#intent-policy-raw"),
   intentPolicyRemediation: document.querySelector("#intent-policy-remediation"),
   intentPolicyReview: document.querySelector("#intent-policy-review"),
+  intentPolicySave: document.querySelector("#intent-policy-save"),
   intentPolicyScope: document.querySelector("#intent-policy-scope"),
   intentPolicyTarget: document.querySelector("#intent-policy-target"),
   intentPolicyTitle: document.querySelector("#intent-policy-title"),
   intentPolicyValue: document.querySelector("#intent-policy-value"),
+  intentPolicyValueRelationship: document.querySelector("#intent-policy-value-relationship"),
   intentReviewUngoverned: document.querySelector("#intent-review-ungoverned"),
   intentSummary: document.querySelector("#intent-summary"),
   loadProgress: document.querySelector("#load-progress"),
@@ -929,11 +953,18 @@ function renderIntentPolicyGroupScope() {
   })
 }
 
-function renderIntentPolicyGroupOptions(selectedGroupId) {
+function renderIntentPolicyGroupOptions(selectedGroupId, policies = []) {
   elements.intentPolicyGroup.replaceChildren(...state.intent.groups.map((group) => {
     const scope = intentGroupScope(group)
+    const policy = fleetIntentPolicyForGroup(policies, group.id)
     const option = createElement("option", {
-      text: `${intentGroupPrimaryText(group, scope)} | Group: ${group.name}`,
+      text: [
+        intentGroupPrimaryText(group, scope),
+        `Group: ${group.name}`,
+        policy
+          ? `Configured: ${intentPolicyConstraintLabel(policy)}`
+          : "Not configured",
+      ].join(" | "),
     })
     option.value = group.id
     return option
@@ -2298,14 +2329,25 @@ function rulesetComparisonIntentText(row, comparison) {
   if (policies.length > 1) {
     return `${policies.length} intent policies overlap this parent summary. Review them in Fleet intent before changing the relationship.`
   }
-  const constraint = fleetIntentPolicyValueConstraint(policies[0])
+  const policy = policies[0]
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
+  const constraint = fleetIntentPolicyValueConstraint(policy)
+  if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    return "Intent requires this parent ruleset to be absent throughout its coverage group. Any present ruleset is drift."
+  }
   if (constraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
-    return "Intent allows any present rule count in its coverage group. To keep only selected outliers, use the common count as exact intent and acknowledge those zones with a reason."
+    return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+      ? "Intent allows this parent ruleset to be absent or to have any rule count in its coverage group. To constrain present rulesets, choose an exact count or distinct values."
+      : "Intent requires this parent ruleset throughout its coverage group but allows any rule count. To keep only selected outliers, use the common count as exact intent and acknowledge those zones with a reason."
   }
   if (constraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
-    return "Intent requires every covered zone to have a different parent summary. Use child-rule intent when uniqueness belongs to specific rules instead."
+    return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+      ? "Intent allows this parent ruleset to be absent, but every present covered value must differ. Use child-rule intent when uniqueness belongs to specific rules instead."
+      : "Intent requires every covered zone to have a different parent summary. Use child-rule intent when uniqueness belongs to specific rules instead."
   }
-  return "Exact intent treats other rule counts as drift. Use Acknowledge beside a different zone below to accept only its current summarized count with a reason. Individual rule definitions still need child-rule intent."
+  return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+    ? "Exact intent allows this parent ruleset to be absent, but treats any other present rule count as drift. Individual rule definitions still need child-rule intent."
+    : "Exact intent treats missing or different rule counts as drift. Use Acknowledge beside a different zone below to accept only its current summarized count with a reason. Individual rule definitions still need child-rule intent."
 }
 
 function renderRulesetComparison() {
@@ -2345,17 +2387,23 @@ function renderRulesetComparison() {
     comparison,
   )
   const policies = row.intentState?.policies || []
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(policies[0])
   const constraint = fleetIntentPolicyValueConstraint(policies[0])
   elements.rulesetComparisonUseBaseline.hidden = !intentMutationSupported()
     || policies.length > 1
   elements.rulesetComparisonUseBaseline.disabled = !intentWritable()
   elements.rulesetComparisonUseBaseline.textContent = policies.length === 1
-    && constraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-    ? "Edit exact count intent"
-    : comparison.baseline
-      ? `Use ${comparison.baseline.label} as intent`
-      : "Choose exact count intent"
+    && presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+    ? "Edit forbidden intent"
+    : policies.length === 1
+      && constraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+      ? "Edit exact count intent"
+      : comparison.baseline
+        ? `Use ${comparison.baseline.label} as intent`
+        : "Choose exact count intent"
   elements.rulesetComparisonAllowDifferences.hidden = !intentMutationSupported()
+    || (policies.length === 1
+      && presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN)
   elements.rulesetComparisonAllowDifferences.disabled = !intentWritable()
   elements.rulesetComparisonAllowDifferences.textContent = policies.length > 1
     ? "Review intent policies"
@@ -3815,6 +3863,13 @@ function intentPolicyRow(policy) {
   ) || null
 }
 
+function intentPoliciesForRow(row) {
+  return state.intent.policies.filter(
+    (policy) => policy.facet.category === row.category
+      && policy.facet.key === row.key,
+  )
+}
+
 function intentPolicyState(policyId) {
   return state.intentEvaluation?.policyStates.find(
     (entry) => entry.policy.id === policyId,
@@ -3827,7 +3882,7 @@ function cellIntentValue(cell) {
     : cell.inspectionValue
 }
 
-function rowIntentVariants(row, policy = null) {
+function rowIntentVariants(row, policies = []) {
   const variants = new Map()
   for (const zone of state.inventory.zones) {
     const cell = row.cells.get(zone.meta.name)
@@ -3855,19 +3910,21 @@ function rowIntentVariants(row, policy = null) {
       variant.value = structuredClone(cellIntentValue(cell))
     }
   }
-  if (policy?.expected
-    && !fleetIntentExpectedIsAuthored(policy.expected)
-    && !variants.has(policy.expected.canonical)) {
-    variants.set(policy.expected.canonical, {
-      canonical: policy.expected.canonical,
-      count: 0,
-      display: policy.expected.display,
-      origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
-      resolutionCanonical: policy.expected.resolutionCanonical,
-      sourceZoneId: policy.expected.sourceZoneId,
-      sourceZoneName: policy.expected.sourceZoneName,
-      value: structuredClone(policy.expected.value),
-    })
+  for (const policy of policies) {
+    if (policy.expected
+      && !fleetIntentExpectedIsAuthored(policy.expected)
+      && !variants.has(policy.expected.canonical)) {
+      variants.set(policy.expected.canonical, {
+        canonical: policy.expected.canonical,
+        count: 0,
+        display: policy.expected.display,
+        origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
+        resolutionCanonical: policy.expected.resolutionCanonical,
+        sourceZoneId: policy.expected.sourceZoneId,
+        sourceZoneName: policy.expected.sourceZoneName,
+        value: structuredClone(policy.expected.value),
+      })
+    }
   }
   return [...variants.values()]
     .sort((left, right) => right.count - left.count
@@ -3900,7 +3957,22 @@ function selectedIntentPolicyValueConstraint() {
   return FLEET_INTENT_VALUE_CONSTRAINT.EXACT
 }
 
-function intentPolicyConstraintLabel(policy) {
+function selectedIntentPolicyPresenceConstraint() {
+  if (elements.intentPolicyPresenceForbidden.checked) {
+    return FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+  }
+  if (elements.intentPolicyPresenceOptional.checked) {
+    return FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+  }
+  return FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
+}
+
+function intentPolicyPresenceLabel(policy) {
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
+  return INTENT_ADOPTION_PRESENCE_LABEL[presenceConstraint]
+}
+
+function intentPolicyValueConstraintLabel(policy) {
   const valueConstraint = fleetIntentPolicyValueConstraint(policy)
   if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
     return "May differ"
@@ -3909,6 +3981,14 @@ function intentPolicyConstraintLabel(policy) {
     return "Must differ"
   }
   return "Exact value"
+}
+
+function intentPolicyConstraintLabel(policy) {
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
+  if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    return "Forbidden"
+  }
+  return `${intentPolicyPresenceLabel(policy)} | ${intentPolicyValueConstraintLabel(policy)}`
 }
 
 function observedIntentExpected(variant) {
@@ -3932,6 +4012,8 @@ function intentExpectedSourceLabel(expected) {
 }
 
 function selectedIntentPolicyExpected() {
+  if (selectedIntentPolicyPresenceConstraint()
+    === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) return null
   if (selectedIntentPolicyValueConstraint() !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
     return null
   }
@@ -3955,6 +4037,7 @@ function renderIntentPolicyRemediation() {
     state.intentPolicyDraft?.row,
     selectedIntentPolicyExpected(),
     selectedIntentPolicyValueConstraint(),
+    selectedIntentPolicyPresenceConstraint(),
   )
   elements.intentPolicyRemediation.className = `intent-remediation-status ${support.className}`
   elements.intentPolicyRemediation.textContent = support.text
@@ -3997,7 +4080,10 @@ function replaceIntentPolicyCustomDraft(value, options = {}) {
   const draft = state.intentPolicyDraft
   if (!draft) return
   draft.customDraft = value
-  if (options.markDirty !== false) draft.customDirty = true
+  if (options.markDirty !== false) {
+    draft.customDirty = true
+    draft.formDirty = true
+  }
   syncIntentPolicyCustomJson()
   if (options.render !== false) renderIntentPolicyCustomEditor()
   renderIntentPolicyRemediation()
@@ -4013,9 +4099,16 @@ function seedIntentPolicyCustomDraft() {
 }
 
 function renderIntentPolicyValueMode() {
-  const exact = selectedIntentPolicyValueConstraint() === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  const valuesApply = selectedIntentPolicyPresenceConstraint()
+    !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+  const exact = valuesApply
+    && selectedIntentPolicyValueConstraint() === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
   const custom = exact
     && selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
+  elements.intentPolicyValueRelationship.hidden = !valuesApply
+  for (const control of elements.intentPolicyValueRelationship.elements) {
+    control.disabled = !valuesApply
+  }
   elements.intentPolicyExactFields.hidden = !exact
   elements.intentPolicyModeObserved.disabled = !exact
     || state.intentPolicyDraft?.variants.length === 0
@@ -4045,6 +4138,7 @@ function syncIntentPolicyCustomFromJson() {
     jsonValueKind(value)
     draft.customDraft = value
     draft.customDirty = true
+    draft.formDirty = true
     draft.customJsonInvalid = false
     elements.intentPolicyCustomRaw.removeAttribute("aria-invalid")
     clearFieldError(elements.intentPolicyCustomRaw, elements.intentPolicyError)
@@ -4068,16 +4162,159 @@ function changeIntentPolicyCustomKind() {
 }
 
 function changeIntentPolicyValueMode() {
+  if (state.intentPolicyDraft) state.intentPolicyDraft.formDirty = true
   renderIntentPolicyValueMode()
   renderIntentPolicyPreview()
 }
 
 function changeIntentPolicyValueConstraint() {
+  if (state.intentPolicyDraft) state.intentPolicyDraft.formDirty = true
   renderIntentPolicyValueMode()
   renderIntentPolicyPreview()
 }
 
+function changeIntentPolicyPresenceConstraint() {
+  if (state.intentPolicyDraft) state.intentPolicyDraft.formDirty = true
+  renderIntentPolicyValueMode()
+  renderIntentPolicyPreview()
+}
+
+function setIntentPolicyConstraintControls(presenceConstraint, valueConstraint) {
+  elements.intentPolicyPresenceRequired.checked = presenceConstraint
+    === FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
+  elements.intentPolicyPresenceOptional.checked = presenceConstraint
+    === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+  elements.intentPolicyPresenceForbidden.checked = presenceConstraint
+    === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+  elements.intentPolicyConstraintExact.checked = valueConstraint
+    === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  elements.intentPolicyConstraintMayDiffer.checked = valueConstraint
+    === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+  elements.intentPolicyConstraintMustDiffer.checked = valueConstraint
+    === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+}
+
+function intentPolicyGroupsOverlap(leftGroup, rightGroup) {
+  const leftZoneIds = new Set(
+    intentGroupScope(leftGroup).applies.map((zone) => zone.zoneId),
+  )
+  return intentGroupScope(rightGroup).applies.some(
+    (zone) => leftZoneIds.has(zone.zoneId),
+  )
+}
+
+function renderIntentPolicyOverlap() {
+  const draft = state.intentPolicyDraft
+  const group = intentGroupById(elements.intentPolicyGroup.value)
+  if (!draft || !group) {
+    elements.intentPolicyOverlap.hidden = true
+    elements.intentPolicyOverlap.textContent = ""
+    return
+  }
+  const selectedPolicy = fleetIntentPolicyForGroup(draft.policies, group.id)
+  const overlaps = draft.policies.filter((policy) => {
+    if (policy.id === selectedPolicy?.id) return false
+    const policyGroup = intentGroupById(policy.groupId)
+    return policyGroup && intentPolicyGroupsOverlap(group, policyGroup)
+  })
+  if (overlaps.length === 0) {
+    elements.intentPolicyOverlap.hidden = true
+    elements.intentPolicyOverlap.textContent = ""
+    return
+  }
+  const groupNames = [...new Set(overlaps.map((policy) => (
+    intentGroupById(policy.groupId)?.name || "a missing group"
+  )))]
+  elements.intentPolicyOverlap.textContent = `Coverage overlaps saved intent in ${groupNames.join(", ")}. Both policies apply to shared zones; incompatible rules are reported as conflicts.`
+  elements.intentPolicyOverlap.hidden = false
+}
+
+function loadIntentPolicyGroupContext(groupId, options = {}) {
+  const draft = state.intentPolicyDraft
+  const group = intentGroupById(groupId)
+  if (!draft || !group) return
+  const scopeZones = intentGroupScope(group).applies
+  const selection = fleetIntentPolicyGroupSelection(
+    draft.row,
+    scopeZones,
+    draft.policies,
+    group.id,
+  )
+  const presenceConstraint = options.presenceConstraint
+    || selection.presenceConstraint
+  const valueConstraint = options.valueConstraint || selection.valueConstraint
+  const valuesApply = presenceConstraint
+    !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+  const exact = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  const policyIsAuthored = valuesApply
+    && exact
+    && fleetIntentExpectedIsAuthored(selection.policy?.expected)
+  const selectedCanonical = options.expectedCanonical
+    || selection.expectedCanonical
+  const selected = selectedCanonical
+    ? draft.variants.find((variant) => variant.canonical === selectedCanonical)
+    : draft.variants[0]
+  const customSeed = policyIsAuthored
+    ? selection.policy.expected.value
+    : selected?.value ?? ""
+
+  draft.activeGroupId = group.id
+  draft.customDirty = policyIsAuthored
+  draft.customDraft = cloneJsonValue(customSeed)
+  draft.customJsonInvalid = false
+  draft.policy = selection.policy
+  elements.intentPolicyGroup.value = group.id
+  renderIntentPolicyGroupScope()
+  elements.intentPolicyTitle.textContent = selection.policy
+    ? "Edit facet intent"
+    : "Set facet intent"
+  elements.intentPolicySave.textContent = selection.policy
+    ? "Save group intent"
+    : "Add group intent"
+  elements.intentPolicyValue.value = selected?.optionValue || ""
+  setIntentPolicyConstraintControls(presenceConstraint, valueConstraint)
+  elements.intentPolicyModeObserved.checked = !policyIsAuthored
+    && draft.variants.length > 0
+  elements.intentPolicyModeCustom.checked = policyIsAuthored
+    || draft.variants.length === 0
+  elements.intentPolicyCustomJson.open = false
+  elements.intentPolicyError.hidden = true
+  elements.intentPolicyError.textContent = ""
+  renderIntentPolicyCustomEditor()
+  syncIntentPolicyCustomJson()
+  renderIntentPolicyValueMode()
+  renderIntentPolicyPreview()
+  renderIntentPolicyOverlap()
+  draft.formDirty = Boolean(
+    options.expectedCanonical
+      || options.presenceConstraint
+      || options.valueConstraint,
+  )
+}
+
+function changeIntentPolicyGroup() {
+  const draft = state.intentPolicyDraft
+  const groupId = elements.intentPolicyGroup.value
+  if (!draft) {
+    renderIntentPolicyGroupScope()
+    return
+  }
+  if (draft.formDirty && groupId !== draft.activeGroupId) {
+    const activeGroup = intentGroupById(draft.activeGroupId)
+    const discard = window.confirm(
+      `Discard unsaved changes for ${activeGroup?.name || "the selected group"}?`,
+    )
+    if (!discard) {
+      elements.intentPolicyGroup.value = draft.activeGroupId
+      renderIntentPolicyGroupScope()
+      return
+    }
+  }
+  loadIntentPolicyGroupContext(groupId)
+}
+
 function changeObservedIntentPolicyValue() {
+  if (state.intentPolicyDraft) state.intentPolicyDraft.formDirty = true
   seedIntentPolicyCustomDraft()
   renderIntentPolicyValueMode()
   renderIntentPolicyPreview()
@@ -4088,34 +4325,27 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
     toast("Fleet intent editing is unavailable in this session", "error")
     return
   }
-  const variants = rowIntentVariants(row, policy)
-  const valueConstraint = options.valueConstraint
-    || fleetIntentPolicyValueConstraint(policy)
-  const exact = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-  const policyIsAuthored = exact && fleetIntentExpectedIsAuthored(policy?.expected)
-  const selected = options.expectedCanonical
-    ? variants.find((variant) => variant.canonical === options.expectedCanonical)
-    : policy?.expected && !policyIsAuthored
-      ? variants.find((variant) => variant.canonical === policy.expected.canonical)
-      : variants[0]
-  const customSeed = policyIsAuthored
-    ? policy.expected.value
-    : selected?.value ?? ""
+  const policies = intentPoliciesForRow(row)
+  const variants = rowIntentVariants(row, policies)
+  const selectedGroupId = policy?.groupId
+    || state.intent.groups.find(
+      (group) => !fleetIntentPolicyForGroup(policies, group.id),
+    )?.id
+    || FLEET_INTENT_ALL_ZONES_GROUP_ID
   state.intentPolicyDraft = {
+    activeGroupId: selectedGroupId,
     baseRevision: state.intent.revision,
-    customDirty: policyIsAuthored,
-    customDraft: cloneJsonValue(customSeed),
+    customDirty: false,
+    customDraft: "",
     customJsonInvalid: false,
-    policy,
+    formDirty: false,
+    policies,
+    policy: null,
     row,
     suggestions: collectValueSuggestions(variants.map((variant) => variant.value)),
     variants,
   }
-  elements.intentPolicyTitle.textContent = policy ? "Edit facet intent" : "Set facet intent"
   elements.intentPolicyTarget.textContent = `${row.category} | ${row.label}`
-  renderIntentPolicyGroupOptions(
-    policy?.groupId || FLEET_INTENT_ALL_ZONES_GROUP_ID,
-  )
   elements.intentPolicyValue.replaceChildren(...variants.map((variant) => {
     const option = createElement("option", {
       text: variant.count > 0
@@ -4132,21 +4362,8 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
     option.value = ""
     elements.intentPolicyValue.append(option)
   }
-  elements.intentPolicyValue.value = selected?.optionValue || ""
-  elements.intentPolicyConstraintExact.checked = exact
-  elements.intentPolicyConstraintMayDiffer.checked = valueConstraint
-    === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
-  elements.intentPolicyConstraintMustDiffer.checked = valueConstraint
-    === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
-  elements.intentPolicyModeObserved.checked = !policyIsAuthored && variants.length > 0
-  elements.intentPolicyModeCustom.checked = policyIsAuthored || variants.length === 0
-  elements.intentPolicyCustomJson.open = false
-  elements.intentPolicyError.hidden = true
-  elements.intentPolicyError.textContent = ""
-  renderIntentPolicyCustomEditor()
-  syncIntentPolicyCustomJson()
-  renderIntentPolicyValueMode()
-  renderIntentPolicyPreview()
+  renderIntentPolicyGroupOptions(selectedGroupId, policies)
+  loadIntentPolicyGroupContext(selectedGroupId, options)
   showDialog(elements.intentPolicyDialog, {
     fallbackFocus: () => matrixIntentReturnFocus(
       row,
@@ -4160,7 +4377,11 @@ async function saveIntentPolicy(event) {
   if (event.submitter?.value === "cancel") return
   event.preventDefault()
   const draft = state.intentPolicyDraft
-  const valueConstraint = selectedIntentPolicyValueConstraint()
+  const presenceConstraint = selectedIntentPolicyPresenceConstraint()
+  const valuesApply = presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+  const valueConstraint = valuesApply
+    ? selectedIntentPolicyValueConstraint()
+    : FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
   const expected = selectedIntentPolicyExpected()
   const group = intentGroupById(elements.intentPolicyGroup.value)
   if (draft && draft.baseRevision !== state.intent.revision) {
@@ -4169,12 +4390,15 @@ async function saveIntentPolicy(event) {
     return
   }
   if (!draft || !group
-    || (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT && !expected)) {
-    elements.intentPolicyError.textContent = "Choose expected coverage and a value relationship"
+    || (valuesApply
+      && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+      && !expected)) {
+    elements.intentPolicyError.textContent = "Choose coverage, presence, and a value relationship"
     elements.intentPolicyError.hidden = false
     return
   }
-  if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  if (valuesApply
+    && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
     && selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
     && draft.customJsonInvalid) {
     showFieldError(
@@ -4195,7 +4419,9 @@ async function saveIntentPolicy(event) {
       label: draft.row.label,
     },
     groupId: group.id,
-    id: draft.policy?.id || intentId("policy"),
+    id: fleetIntentPolicyForGroup(draft.policies, group.id)?.id
+      || intentId("policy"),
+    presenceConstraint,
     valueConstraint,
   }
   let document
@@ -4352,7 +4578,14 @@ async function saveIntentGroup(event) {
   if (saved) {
     if (groupDraft?.returnToPolicy && state.intentPolicyDraft) {
       state.intentPolicyDraft.baseRevision = state.intent.revision
-      renderIntentPolicyGroupOptions(group.id)
+      state.intentPolicyDraft.policies = intentPoliciesForRow(
+        state.intentPolicyDraft.row,
+      )
+      renderIntentPolicyGroupOptions(
+        group.id,
+        state.intentPolicyDraft.policies,
+      )
+      loadIntentPolicyGroupContext(group.id)
     }
     let adoptionGroupSelect = null
     if (groupDraft?.returnToAdoption && state.intentAdoptionDraft) {
@@ -4360,7 +4593,13 @@ async function saveIntentGroup(event) {
       const selection = state.intentAdoptionDraft.selections.get(
         groupDraft.adoptionCandidateId,
       )
-      if (selection) selectIntentAdoptionGroup(selection, group.id)
+      if (selection) {
+        selectIntentAdoptionGroup(selection, group.id)
+        const candidate = state.intentAdoptionDraft.candidates.find(
+          (entry) => entry.id === groupDraft.adoptionCandidateId,
+        )
+        if (candidate) applyIntentAdoptionSelectionDefaults(candidate, selection)
+      }
       renderIntentAdoptionCandidates()
       adoptionGroupSelect = state.intentAdoptionDraft.controls.get(
         groupDraft.adoptionCandidateId,
@@ -4614,7 +4853,7 @@ function renderIntentGroups() {
         }), {
           context: group.name,
           danger: true,
-          title: inUse ? "Remove or retarget policies that use this group first" : "",
+          title: inUse ? "Remove policies that use this group first" : "",
           write: true,
         }),
       )
@@ -4655,11 +4894,13 @@ function renderIntentPolicies() {
     const actionContext = group
       ? `${policy.facet.label} for ${group.name}`
       : policy.facet.label
+    const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
     const valueConstraint = fleetIntentPolicyValueConstraint(policy)
     const remediation = intentPolicyRemediation(
       row,
       policy.expected,
       valueConstraint,
+      presenceConstraint,
     )
     const correction = row
       ? dnssecIntentCorrection(row, { policyId: policy.id })
@@ -4690,20 +4931,30 @@ function renderIntentPolicies() {
             ? `Applies to ${intentGroupPrimaryText(group, groupScope)}`
             : "Missing group",
           group ? `Group: ${group.name}` : "",
-          intentPolicyConstraintLabel(policy),
-          valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+          `Presence: ${intentPolicyPresenceLabel(policy)}`,
+          presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+            ? `Values: ${intentPolicyValueConstraintLabel(policy)}`
+            : "",
+          presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+            && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
             ? intentExpectedSourceLabel(policy.expected)
-            : "comparison policy",
+            : "",
         ].filter(Boolean).join(" | "),
       }),
     )
     const value = createElement("div", { className: "intent-item-value" })
-    if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
+    if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+      value.textContent = "This facet must be absent"
+    } else if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
       value.append(structuredValueElement(policy.expected.value))
     } else {
       value.textContent = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
-        ? "Any present value is allowed"
-        : "Every covered zone must have a distinct value"
+        ? presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+          ? "Presence and present values may vary by zone"
+          : "Every covered zone must have a value; present values may differ"
+        : presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+          ? "Any present values must be distinct"
+          : "Every covered zone must have a distinct value"
     }
     item.append(value)
     const actions = intentItemActions()
@@ -4735,7 +4986,7 @@ function renderIntentPolicies() {
         }),
         intentActionButton("Add coverage", () => openIntentPolicyEditor(row), {
           context: actionContext,
-          title: "Add another zone group and value relationship for this facet",
+          title: "Add another zone group with its own presence and value rules",
           write: true,
         }),
       )
@@ -4996,7 +5247,7 @@ function renderIntentAdoptionImpact() {
         "Actionable",
         summary.actionableCells > 0 ? "actionable" : "aligned",
       ),
-      intentAdoptionMetric(summary.missingCells, "Missing"),
+      intentAdoptionMetric(summary.missingCells, "Required missing"),
       intentAdoptionMetric(summary.variantCells, "Variants"),
       ...(summary.conflictCells > 0
         ? [intentAdoptionMetric(summary.conflictCells, "Conflicts", "actionable")]
@@ -5007,7 +5258,7 @@ function renderIntentAdoptionImpact() {
   } catch (error) {
     draft.preview = null
     elements.intentAdoptionImpactTitle.textContent = "Preview unavailable"
-    elements.intentAdoptionImpactSummary.textContent = "Review the selected scope and value relationship."
+    elements.intentAdoptionImpactSummary.textContent = "Review the selected scope, presence, and value relationship."
     elements.intentAdoptionImpactMetrics.replaceChildren()
     elements.intentAdoptionError.textContent = error instanceof Error ? error.message : String(error)
     elements.intentAdoptionError.hidden = false
@@ -5044,6 +5295,25 @@ function renderIntentAdoptionGroupDetails(container, summary, groupId) {
   })
 }
 
+function applyIntentAdoptionSelectionDefaults(candidate, selection) {
+  if (selection.constraintsDirty) return
+  const row = state.matrix.rows.find(
+    (entry) => entry.category === candidate.category
+      && entry.key === candidate.key,
+  )
+  const group = intentGroupById(selection.groupId)
+  const scopeZones = intentGroupScope(group).applies
+  const defaults = defaultFleetIntentPolicyConstraints(row, scopeZones)
+  selection.presenceConstraint = defaults.presenceConstraint
+  selection.valueConstraint = defaults.valueConstraint
+  if (defaults.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
+    selection.expectedCanonical = firstFleetIntentObservedCanonical(
+      row,
+      scopeZones,
+    ) || candidate.variants[0].canonical
+  }
+}
+
 function intentAdoptionVariantLabel(variant) {
   return `${variant.count} zone${variant.count === 1 ? "" : "s"} | ${variant.sourceZoneName} | ${variant.display}`
 }
@@ -5058,15 +5328,25 @@ function lazyStructuredValueDetails(summaryText, value) {
 }
 
 function renderIntentAdoptionValuePreview(container, candidate, selection) {
+  if (selection.presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    container.replaceChildren(createElement("span", {
+      text: "This facet must be absent from every covered zone.",
+    }))
+    return
+  }
   if (selection.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
     container.replaceChildren(createElement("span", {
-      text: "Every covered zone must have a value; observed values may differ.",
+      text: selection.presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+        ? "Covered zones may omit this facet; any present values may differ."
+        : "Every covered zone must have this facet; present values may differ.",
     }))
     return
   }
   if (selection.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
     container.replaceChildren(createElement("span", {
-      text: "Every covered zone must have a distinct value.",
+      text: selection.presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+        ? "Covered zones may omit this facet; any present values must be distinct."
+        : "Every covered zone must have this facet and a distinct value.",
     }))
     return
   }
@@ -5144,7 +5424,7 @@ function renderIntentAdoptionCandidate(candidate, index) {
   badges.append(intentStatusBadge(presentation.label, presentation.status))
   if (candidate.missingCount > 0
     && candidate.classification !== INTENT_ADOPTION_CLASSIFICATION.MISSING_COVERAGE) {
-    badges.append(intentStatusBadge(`${candidate.missingCount} missing`, "actionable"))
+    badges.append(intentStatusBadge(`${candidate.missingCount} absent`, "allowance"))
   }
   const heading = createElement("div", { className: "intent-adoption-candidate-heading" })
   heading.append(selectionLabel, badges)
@@ -5174,6 +5454,9 @@ function renderIntentAdoptionCandidate(candidate, index) {
   const groupField = createElement("label", { className: "intent-adoption-field" })
   groupField.append(createElement("span", { text: "Applies to zones" }))
   const groupSelect = document.createElement("select")
+  groupSelect.id = `intent-adoption-group-${index}`
+  groupSelect.name = `intent-adoption-group-${index}`
+  groupField.htmlFor = groupSelect.id
   groupSelect.setAttribute(
     "aria-label",
     `Applies to zones for ${candidate.label}`,
@@ -5185,9 +5468,28 @@ function renderIntentAdoptionCandidate(candidate, index) {
   groupSelect.value = selection.groupId
   groupField.append(groupSelect)
 
+  const presenceField = createElement("label", { className: "intent-adoption-field" })
+  presenceField.append(createElement("span", { text: "Presence" }))
+  const presenceSelect = document.createElement("select")
+  presenceSelect.id = `intent-adoption-presence-${index}`
+  presenceSelect.name = `intent-adoption-presence-${index}`
+  presenceField.htmlFor = presenceSelect.id
+  for (const presenceConstraint of INTENT_PRESENCE_OPTIONS) {
+    const option = createElement("option", {
+      text: INTENT_ADOPTION_PRESENCE_LABEL[presenceConstraint],
+    })
+    option.value = presenceConstraint
+    presenceSelect.append(option)
+  }
+  presenceSelect.value = selection.presenceConstraint
+  presenceField.append(presenceSelect)
+
   const constraintField = createElement("label", { className: "intent-adoption-field" })
-  constraintField.append(createElement("span", { text: "Value relationship" }))
+  constraintField.append(createElement("span", { text: "Value when present" }))
   const constraintSelect = document.createElement("select")
+  constraintSelect.id = `intent-adoption-value-constraint-${index}`
+  constraintSelect.name = `intent-adoption-value-constraint-${index}`
+  constraintField.htmlFor = constraintSelect.id
   for (const valueConstraint of Object.values(FLEET_INTENT_VALUE_CONSTRAINT)) {
     const option = createElement("option", {
       text: INTENT_ADOPTION_CONSTRAINT_LABEL[valueConstraint],
@@ -5201,6 +5503,9 @@ function renderIntentAdoptionCandidate(candidate, index) {
   const expectedField = createElement("label", { className: "intent-adoption-field" })
   expectedField.append(createElement("span", { text: "Expected observed value" }))
   const expectedSelect = document.createElement("select")
+  expectedSelect.id = `intent-adoption-expected-${index}`
+  expectedSelect.name = `intent-adoption-expected-${index}`
+  expectedField.htmlFor = expectedSelect.id
   for (const variant of candidate.variants) {
     const option = createElement("option", { text: intentAdoptionVariantLabel(variant) })
     option.value = variant.canonical
@@ -5208,7 +5513,9 @@ function renderIntentAdoptionCandidate(candidate, index) {
   }
   expectedSelect.value = selection.expectedCanonical || candidate.variants[0].canonical
   expectedField.append(expectedSelect)
-  expectedField.hidden = selection.valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+  expectedField.hidden = selection.presenceConstraint
+    === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+    || selection.valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
 
   const groupDetails = document.createElement("details")
   groupDetails.className = "intent-adoption-scope"
@@ -5224,8 +5531,27 @@ function renderIntentAdoptionCandidate(candidate, index) {
     className: "intent-adoption-value-preview",
   })
   renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
-  controls.append(groupField, constraintField, expectedField, groupDetails, valuePreview)
+  controls.append(
+    groupField,
+    presenceField,
+    constraintField,
+    expectedField,
+    groupDetails,
+    valuePreview,
+  )
   card.append(overview, controls)
+
+  const syncValueControls = () => {
+    const valuesApply = selection.presenceConstraint
+      !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+    constraintField.hidden = !valuesApply
+    constraintSelect.disabled = !valuesApply
+    expectedField.hidden = !valuesApply
+      || selection.valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    expectedSelect.disabled = expectedField.hidden
+    renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
+  }
+  syncValueControls()
 
   const selectCandidate = () => {
     selection.selected = true
@@ -5247,25 +5573,39 @@ function renderIntentAdoptionCandidate(candidate, index) {
       return
     }
     selectIntentAdoptionGroup(selection, groupSelect.value)
+    if (!selection.constraintsDirty) {
+      applyIntentAdoptionSelectionDefaults(candidate, selection)
+      presenceSelect.value = selection.presenceConstraint
+      constraintSelect.value = selection.valueConstraint
+      expectedSelect.value = selection.expectedCanonical
+      syncValueControls()
+    }
     renderIntentAdoptionGroupDetails(groupScope, groupSummary, selection.groupId)
     checkbox.checked = true
     card.classList.add("selected")
     renderIntentAdoptionImpact()
   })
+  presenceSelect.addEventListener("change", () => {
+    selection.presenceConstraint = presenceSelect.value
+    selection.constraintsDirty = true
+    syncValueControls()
+    selectCandidate()
+    renderIntentAdoptionImpact()
+  })
   constraintSelect.addEventListener("change", () => {
     selection.valueConstraint = constraintSelect.value
+    selection.constraintsDirty = true
     if (selection.valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
       && !selection.expectedCanonical) {
       selection.expectedCanonical = candidate.variants[0].canonical
     }
-    expectedField.hidden = selection.valueConstraint
-      !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-    renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
+    syncValueControls()
     selectCandidate()
     renderIntentAdoptionImpact()
   })
   expectedSelect.addEventListener("change", () => {
     selection.expectedCanonical = expectedSelect.value
+    selection.constraintsDirty = true
     renderIntentAdoptionValuePreview(valuePreview, candidate, selection)
     selectCandidate()
     renderIntentAdoptionImpact()
@@ -5320,9 +5660,11 @@ function openIntentAdoption() {
     selections: new Map(candidates.map((candidate) => [
       candidate.id,
       {
+        constraintsDirty: false,
         expectedCanonical: candidate.recommendation.expectedCanonical,
         groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
         policyId: intentId("policy"),
+        presenceConstraint: candidate.recommendation.presenceConstraint,
         selected: false,
         valueConstraint: candidate.recommendation.valueConstraint,
       },
@@ -5574,7 +5916,9 @@ function cellIntentStatus(state) {
   if (!state
     || state.status === FLEET_INTENT_CELL_STATUS.UNGOVERNED
     || state.status === FLEET_INTENT_CELL_STATUS.OUT_OF_SCOPE) return null
+  const presenceConstraint = fleetIntentPolicyPresenceConstraint(state.policy)
   const valueConstraint = fleetIntentPolicyValueConstraint(state.policy)
+  const missing = state.observedCanonical === FLEET_INTENT_MISSING_CANONICAL
   const duplicateZones = state.duplicateZoneNames?.join(", ") || "another covered zone"
   const definitions = {
     [FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED]: {
@@ -5587,11 +5931,15 @@ function cellIntentStatus(state) {
     },
     [FLEET_INTENT_CELL_STATUS.MATCH]: {
       label: "Intent match",
-      title: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
-        ? "A value is present; this policy allows covered zones to differ"
-        : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
-          ? "This value is distinct among the covered zones"
-          : "Matches the expected value for this policy",
+      title: presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        ? "This facet is absent as required"
+        : missing
+          ? "This policy allows the facet to be absent on this zone"
+          : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+            ? "A value is present; this policy allows present values to differ"
+            : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+              ? "This value is distinct among the present covered values"
+              : "Matches the expected value for this policy",
     },
     [FLEET_INTENT_CELL_STATUS.MISSING]: {
       label: "Intent drift",
@@ -5600,12 +5948,16 @@ function cellIntentStatus(state) {
         : "This policy requires a value in every covered zone",
     },
     [FLEET_INTENT_CELL_STATUS.VARIANT]: {
-      label: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
-        ? "Duplicate"
-        : "Intent drift",
-      title: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
-        ? `Duplicates ${duplicateZones}; every covered zone must differ`
-        : "The observed value differs from fleet intent",
+      label: presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        ? "Unexpected presence"
+        : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+          ? "Duplicate"
+          : "Intent drift",
+      title: presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        ? "This policy requires the facet to be absent"
+        : valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+          ? `Duplicates ${duplicateZones}; every present covered value must differ`
+          : "The observed value differs from fleet intent",
     },
   }
   const definition = definitions[state.status]
@@ -5696,6 +6048,7 @@ function matrixCell(row, zone) {
     const resolution = row.missingResolutions.get(zone.meta.name)
     const intentPolicy = intentCell?.policy || null
     const intentExpected = intentPolicy?.expected || null
+    const intentPresenceConstraint = fleetIntentPolicyPresenceConstraint(intentPolicy)
     const intentValueConstraint = fleetIntentPolicyValueConstraint(intentPolicy)
     const matchingIntentSource = intentExpected?.resolutionCanonical
       ? resolution?.candidates?.some(
@@ -5703,11 +6056,12 @@ function matrixCell(row, zone) {
         )
       : false
     const intentResolutionAvailable = !intentPolicy
-      || intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
-      || (intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-        && (resolution?.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
-          ? !fleetIntentExpectedIsAuthored(intentExpected)
-          : matchingIntentSource))
+      || (intentPresenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        && (intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
+          || (intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+            && (resolution?.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY
+              ? !fleetIntentExpectedIsAuthored(intentExpected)
+              : matchingIntentSource))))
     if (resolution?.available && intentResolutionAvailable && !readOnly) {
       const action = {
         category: row.category,
@@ -5719,6 +6073,7 @@ function matrixCell(row, zone) {
           intentExpected,
         ),
         intentExpectedCanonical: intentExpected?.resolutionCanonical || null,
+        intentPresenceConstraint,
         intentValueConstraint,
       }
       const label = `Fill ${row.label} on ${zone.meta.name}`
@@ -5736,9 +6091,13 @@ function matrixCell(row, zone) {
       fillButton.disabled = state.busy
       td.append(fillButton)
     } else if (intentPolicy && resolution?.available && !intentResolutionAvailable) {
-      td.title = intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
-        ? "Intent requires a new distinct value; copying an existing fleet value would violate uniqueness"
-        : "Intent detects this missing value, but no matching fleet source or product-specific create flow is available"
+      td.title = intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        ? "Intent requires this facet to remain absent, so fill actions are unavailable"
+        : intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
+          ? intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+            ? "Absence is allowed, but any added value must be distinct; copying an existing fleet value would violate uniqueness"
+            : "Intent requires a new distinct value; copying an existing fleet value would violate uniqueness"
+          : "Intent detects this missing value, but no matching fleet source or product-specific create flow is available"
       td.setAttribute(
         "aria-label",
         `Missing ${row.label} on ${zone.meta.name}. ${td.title}`,
@@ -6038,7 +6397,7 @@ function renderMatrix() {
         ? "Review overlapping policies in Fleet intent"
         : policies.length === 1
           ? `${policyGroup?.name || "Configured coverage"} | ${intentPolicyConstraintLabel(policies[0])}. Click to edit.`
-          : "Choose coverage and an exact, may-differ, or must-differ value relationship"
+          : "Choose coverage, presence, and the relationship between present values"
       intentPolicyRowByButton.set(intentButton, {
         policy: policies.length === 1 ? policies[0] : null,
         row,
@@ -6461,11 +6820,21 @@ function intentCompatibleDnsTargetFillBatch(row) {
       }
     }
     const valueConstraint = fleetIntentPolicyValueConstraint(intentCell.policy)
+    const presenceConstraint = fleetIntentPolicyPresenceConstraint(intentCell.policy)
+    if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+      return {
+        ...batch,
+        available: false,
+        reason: "Forbidden intent requires this facet to remain absent",
+      }
+    }
     if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
       return {
         ...batch,
         available: false,
-        reason: "Must-differ intent requires a new distinct value for each missing zone",
+        reason: presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+          ? "Optional must-differ intent allows absence, but any added value must be distinct"
+          : "Must-differ intent requires a new distinct value for each missing zone",
       }
     }
     if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
@@ -7796,8 +8165,17 @@ function openHoleResolution(cell) {
     toast(action?.resolution?.reason || "This missing value cannot be filled automatically", "error")
     return
   }
+  if (action.intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
+    toast("This policy requires the facet to remain absent. Fill actions are unavailable.", "error")
+    return
+  }
   if (action.intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
-    toast("This policy requires a new distinct value. Copying an existing fleet value would violate uniqueness.", "error")
+    toast(
+      action.intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
+        ? "This policy allows absence, but any added value must be distinct. Copying an existing fleet value would violate uniqueness."
+        : "This policy requires a new distinct value. Copying an existing fleet value would violate uniqueness.",
+      "error",
+    )
     return
   }
   if (action.resolution.kind === HOLE_RESOLUTION_KIND.EMAIL_POLICY) {
@@ -10030,9 +10408,12 @@ elements.intentGroupDialog.addEventListener("close", () => {
 elements.intentPolicyAddGroup.addEventListener("click", () => {
   openIntentGroupEditor(null, { returnToPolicy: true })
 })
-elements.intentPolicyGroup.addEventListener("change", renderIntentPolicyGroupScope)
+elements.intentPolicyGroup.addEventListener("change", changeIntentPolicyGroup)
 elements.intentPolicyModeObserved.addEventListener("change", changeIntentPolicyValueMode)
 elements.intentPolicyModeCustom.addEventListener("change", changeIntentPolicyValueMode)
+elements.intentPolicyPresenceRequired.addEventListener("change", changeIntentPolicyPresenceConstraint)
+elements.intentPolicyPresenceOptional.addEventListener("change", changeIntentPolicyPresenceConstraint)
+elements.intentPolicyPresenceForbidden.addEventListener("change", changeIntentPolicyPresenceConstraint)
 elements.intentPolicyConstraintExact.addEventListener("change", changeIntentPolicyValueConstraint)
 elements.intentPolicyConstraintMayDiffer.addEventListener("change", changeIntentPolicyValueConstraint)
 elements.intentPolicyConstraintMustDiffer.addEventListener("change", changeIntentPolicyValueConstraint)

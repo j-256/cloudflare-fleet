@@ -13,10 +13,12 @@ import {
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
   FLEET_INTENT_MISSING_CANONICAL,
+  FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_SCHEMA_VERSION,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
   fleetIntentExpectedIsAuthored,
+  fleetIntentPolicyPresenceConstraint,
   fleetIntentPolicyValueConstraint,
   isFleetIntentDocument,
   migrateFleetIntentDocument,
@@ -85,6 +87,9 @@ function policy(row, options = {}) {
     id: options.id || "policy-one",
   }
   if (options.valueConstraint) entry.valueConstraint = options.valueConstraint
+  if (options.presenceConstraint) {
+    entry.presenceConstraint = options.presenceConstraint
+  }
   return entry
 }
 
@@ -298,6 +303,27 @@ test("new DNSSEC policies retain only status as exact intent", () => {
   assert.equal(document.policies[0].expected.resolutionCanonical, '{"status":"active"}')
 })
 
+test("version four policies migrate to required presence", () => {
+  const { row } = fixture()
+  const legacy = createEmptyFleetIntentDocument("account-id")
+  legacy.schemaVersion = 4
+  legacy.revision = "d".repeat(64)
+  legacy.policies.push(policy(row, {
+    expected: null,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+
+  assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.equal(migrated.revision, legacy.revision)
+  assert.equal(
+    migrated.policies[0].presenceConstraint,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+  )
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+})
+
 test("coverage expectations are unique per inventory target", () => {
   const timestamp = new Date().toISOString()
   const expectation = {
@@ -407,6 +433,59 @@ test("non-exact constraints are source-free and reject contradictory expectation
   )
 })
 
+test("group policy saves preserve policy targets and identifiers", () => {
+  const { row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "secondary-zones",
+    members: [{ zoneId: "zone-b", zoneName: "b.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Secondary zones",
+  })
+  document = replaceFleetIntentPolicy(document, policy(row))
+
+  assert.throws(
+    () => replaceFleetIntentPolicy(document, policy(row, {
+      groupId: "secondary-zones",
+    })),
+    /cannot be retargeted/,
+  )
+
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    groupId: "secondary-zones",
+    id: "policy-two",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: createAuthoredFleetIntentExpected("updated"),
+  }))
+
+  assert.deepEqual(
+    document.policies.map((entry) => ({
+      groupId: entry.groupId,
+      id: entry.id,
+      presenceConstraint: fleetIntentPolicyPresenceConstraint(entry),
+      valueConstraint: fleetIntentPolicyValueConstraint(entry),
+    })),
+    [
+      {
+        groupId: "secondary-zones",
+        id: "policy-two",
+        presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+        valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+      },
+      {
+        groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+        id: "policy-one",
+        presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+        valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+      },
+    ],
+  )
+})
+
 test("may-differ intent accepts every present value and still requires presence", () => {
   const { inventory, matrix, row } = fixture()
   let document = createEmptyFleetIntentDocument("account-id")
@@ -421,6 +500,70 @@ test("may-differ intent accepts every present value and still requires presence"
   assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
   assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
   assert.equal(evaluation.summary.actionableCells, 1)
+})
+
+test("optional intent accepts missing zones and evaluates values when present", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(evaluation.summary.actionableCells, 1)
+})
+
+test("optional may-differ intent accepts presence, absence, and value variation", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+
+  assert.deepEqual(
+    [...rowState.cells.values()].map((cell) => cell.status),
+    [
+      FLEET_INTENT_CELL_STATUS.MATCH,
+      FLEET_INTENT_CELL_STATUS.MATCH,
+      FLEET_INTENT_CELL_STATUS.MATCH,
+    ],
+  )
+  assert.equal(evaluation.summary.actionableCells, 0)
+})
+
+test("forbidden intent accepts absence and flags every present value", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+  }))
+
+  assert.equal(
+    fleetIntentPolicyPresenceConstraint(document.policies[0]),
+    FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+  )
+  assert.equal(
+    document.policies[0].valueConstraint,
+    FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  )
+  assert.equal(document.policies[0].expected, null)
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(evaluation.summary.actionableCells, 2)
 })
 
 test("must-differ intent flags every duplicate while accepting distinct values", () => {
@@ -547,7 +690,7 @@ test("group and policy mutations preserve references and remove dependent acknow
 
   assert.throws(
     () => removeFleetIntentGroup(document, "mail-zones"),
-    /Remove or retarget policies/,
+    /Remove policies/,
   )
   document = removeFleetIntentPolicy(document, "policy-one")
   assert.equal(document.acknowledgements.length, 0)
