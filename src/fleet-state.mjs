@@ -42,6 +42,23 @@ export function isFleetStateDocument(value, accountId = null) {
 
 export function migrateFleetStateDocument(value, accountId = null) {
   if (isFleetStateDocument(value, accountId)) return structuredClone(value)
+  if (isObject(value)
+    && value.schemaVersion === FLEET_STATE_SCHEMA_VERSION
+    && accountMatches(value.accountId, accountId)
+    && isOperationActivityDocument(value.activity)) {
+    try {
+      const migrated = {
+        ...structuredClone(value),
+        intent: migrateFleetIntentDocument(value.intent, value.accountId),
+      }
+      if (!isFleetStateDocument(migrated, accountId)) {
+        throw new TypeError("Migrated fleet state is invalid")
+      }
+      return migrated
+    } catch {
+      throw new TypeError("Fleet state document cannot be migrated")
+    }
+  }
   let intent
   try {
     intent = migrateFleetIntentDocument(value, accountId)

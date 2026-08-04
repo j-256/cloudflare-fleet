@@ -72,6 +72,95 @@ test("showDialog focuses dialog content and restores its opener", async () => {
   assert.equal(openerFocusCount, 1)
 })
 
+test("showDialog uses a lazy fallback when rerendering removes its opener", async () => {
+  let fallbackFocusCount = 0
+  const opener = {
+    disabled: false,
+    focus: () => {},
+    isConnected: true,
+  }
+  const fallback = {
+    disabled: false,
+    focus: () => {
+      fallbackFocusCount += 1
+    },
+    isConnected: true,
+  }
+  const dialog = new FakeDialog()
+  dialog.ownerDocument = {
+    activeElement: opener,
+    body: {},
+  }
+  installDismissibleDialog(dialog)
+
+  showDialog(dialog, { fallbackFocus: () => fallback })
+  opener.isConnected = false
+  dialog.emit("close", {})
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  assert.equal(fallbackFocusCount, 1)
+})
+
+test("showDialog uses its fallback when another dialog hides the opener", async () => {
+  let fallbackFocusCount = 0
+  const opener = {
+    disabled: false,
+    focus: () => {},
+    getClientRects: () => [],
+    isConnected: true,
+  }
+  const fallback = {
+    disabled: false,
+    focus: () => {
+      fallbackFocusCount += 1
+    },
+    isConnected: true,
+  }
+  const dialog = new FakeDialog()
+  dialog.ownerDocument = {
+    activeElement: opener,
+    body: {},
+  }
+  installDismissibleDialog(dialog)
+
+  showDialog(dialog, { fallbackFocus: () => fallback })
+  dialog.emit("close", {})
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  assert.equal(fallbackFocusCount, 1)
+})
+
+test("showDialog restores focus after the browser finishes closing a dialog", () => {
+  let openerFocusCount = 0
+  let scheduledRestore = null
+  const opener = {
+    disabled: false,
+    focus: () => {
+      openerFocusCount += 1
+    },
+    isConnected: true,
+  }
+  const dialog = new FakeDialog()
+  dialog.ownerDocument = {
+    activeElement: opener,
+    body: {},
+    defaultView: {
+      requestAnimationFrame: (callback) => {
+        scheduledRestore = callback
+      },
+    },
+  }
+  installDismissibleDialog(dialog)
+
+  showDialog(dialog)
+  dialog.emit("close", {})
+
+  assert.equal(openerFocusCount, 0)
+  assert.equal(typeof scheduledRestore, "function")
+  scheduledRestore()
+  assert.equal(openerFocusCount, 1)
+})
+
 test("dialogs dismiss from their close control and backdrop", () => {
   const dialog = new FakeDialog()
   installDismissibleDialog(dialog)

@@ -24,7 +24,7 @@ const ZONE_NAMES = [
 ]
 
 function cell(value, options = {}) {
-  return {
+  const entry = {
     canonical: options.canonical || JSON.stringify(value),
     display: String(value),
     inspectionValue: value,
@@ -32,6 +32,10 @@ function cell(value, options = {}) {
     resolutionCanonical: options.resolutionCanonical || JSON.stringify(value),
     resolutionSource: options.resolutionSource ?? true,
   }
+  if (Object.prototype.hasOwnProperty.call(options, "intentValue")) {
+    entry.intentValue = options.intentValue
+  }
+  return entry
 }
 
 function row(key, values, options = {}) {
@@ -175,10 +179,12 @@ test("exact adoption uses intent-normalized values and a resolution-capable sour
     cellOptions: [
       {
         intentCanonical: '"{zone}"',
+        intentValue: "{zone}",
         resolutionSource: false,
       },
       {
         intentCanonical: '"{zone}"',
+        intentValue: "{zone}",
         resolutionSource: true,
       },
     ],
@@ -199,6 +205,7 @@ test("exact adoption uses intent-normalized values and a resolution-capable sour
   assert.equal(candidate.variants.length, 1)
   assert.equal(candidate.variants[0].count, 2)
   assert.equal(policy.expected.canonical, '"{zone}"')
+  assert.equal(policy.expected.value, "{zone}")
   assert.equal(policy.expected.sourceZoneName, "beta.example")
 })
 

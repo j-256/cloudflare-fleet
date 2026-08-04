@@ -11,7 +11,8 @@
 </head>
 <body>
   <nav class="skip-links" aria-label="Skip links">
-    <a href="#fleet-controls">Skip to fleet controls</a>
+    <a href="#start-here">Skip to start here</a>
+    <a href="#configuration-heading">Skip to configuration explorer</a>
     <a href="#matrix-shell">Skip to comparison matrix</a>
   </nav>
 
@@ -26,7 +27,7 @@
       <div class="hero-heading">
         <div>
           <p class="eyebrow">Cloudflare control plane / live local session</p>
-          <h1>Fleet matrix</h1>
+          <h1>Cloudflare Fleet</h1>
         </div>
         <div class="session-state" role="status" aria-live="polite" aria-atomic="true">
           <span class="status-dot" id="status-dot" aria-hidden="true"></span>
@@ -38,104 +39,208 @@
       <div class="summary-grid" role="list" aria-label="Fleet summary">
         <div class="summary-card" role="listitem"><strong id="zone-count">0</strong><span>Zones</span></div>
         <div class="summary-card" role="listitem"><strong id="facet-count">0</strong><span>Comparable facets</span></div>
-        <div class="summary-card" role="listitem"><strong id="drift-count">0</strong><span>Drift queue</span></div>
+        <div class="summary-card" role="listitem"><strong id="drift-count">0</strong><span>Needs review</span></div>
         <div class="summary-card" role="listitem"><strong id="hole-count">0</strong><span>Missing cells</span></div>
       </div>
       <progress class="load-progress" id="load-progress" max="100" value="0" aria-label="Fleet loading progress" hidden></progress>
     </header>
 
-    <nav class="toolbar" id="fleet-controls" aria-label="Fleet controls" tabindex="-1">
-      <label class="sr-only" for="search">Search facets, values, or zones</label>
-      <input id="search" type="search" placeholder="Search facets, values, or zones" aria-describedby="visible-count" aria-keyshortcuts="/">
-      <div class="toolbar-secondary" id="toolbar-secondary">
-        <label class="sr-only" for="category">Filter by category</label>
-        <select id="category">
-          <option value="">All categories</option>
-        </select>
-        <label class="sr-only" for="scope">Filter by fleet coverage</label>
-        <select id="scope" aria-describedby="visible-count">
-          <option value="fleet-patterns" selected>Fleet patterns</option>
-          <option value="fleet-wide">Fleet-wide</option>
-          <option value="zone-specific">Zone-specific</option>
-          <option value="all">Everything</option>
-        </select>
-        <label class="sr-only" for="dns-type">Filter by DNS record type</label>
-        <select id="dns-type" aria-describedby="visible-count">
-          <option value="">All DNS types</option>
-        </select>
-        <label class="sr-only" for="redirect-type">Filter by redirect target type</label>
-        <select id="redirect-type" aria-describedby="visible-count" hidden>
-          <option value="">All redirect targets</option>
-        </select>
-        <button class="button button-quiet filter-reset" id="filter-reset" type="button" aria-label="Reset matrix filters" disabled hidden>Reset</button>
-      </div>
-      <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Drift only</button>
-      <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters</button>
-      <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
-      <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
-      <button class="button button-quiet activity-button" id="show-activity" type="button" aria-haspopup="dialog" aria-label="Operation history, no entries">Activity <span id="activity-count">0</span></button>
-      <button class="button button-quiet toolbar-refresh" id="refresh" type="button">Refresh full fleet</button>
-    </nav>
-
     <main id="main-content">
-      <section class="write-panel" id="write-panel" hidden>
-        <div class="write-panel-status">
-          <h2>Write controls</h2>
-          <p class="write-readiness" id="write-readiness" role="status" aria-live="polite">Loading live state; writes are locked</p>
+      <section class="task-hub" id="start-here" aria-labelledby="start-here-heading">
+        <div class="section-introduction">
+          <p class="policy-kicker">Start here</p>
+          <h2 id="start-here-heading">What do you want to do?</h2>
+          <p>Review the fleet first, define which differences are acceptable, or browse configuration that this dashboard can change. Every write still receives a fresh live check and a separate confirmation.</p>
         </div>
-        <div class="write-panel-actions">
-          <span id="write-selection-summary" aria-live="polite">No target zones selected</span>
-          <button class="button button-accent" id="choose-targets" type="button" aria-label="Choose target zones">Select targets</button>
-          <button class="button button-primary" id="show-editable-settings" type="button" aria-label="Browse directly editable settings">Edit settings</button>
+        <div class="task-grid">
+          <article class="task-card review-task-card">
+            <div class="task-card-heading">
+              <span class="task-number" aria-hidden="true">1</span>
+              <div>
+                <p class="task-kind">Observe</p>
+                <h3>Review what needs attention</h3>
+              </div>
+            </div>
+            <p>See ungoverned differences and saved expected-state violations. Allowed differences stay out of this queue.</p>
+            <div class="task-card-status"><strong id="review-task-count">0</strong><span id="review-task-label">facets need review</span></div>
+            <button class="button button-primary" id="review-needs-attention" type="button">Open review queue</button>
+          </article>
+
+          <article class="task-card intent-task-card">
+            <div class="task-card-heading">
+              <span class="task-number" aria-hidden="true">2</span>
+              <div>
+                <p class="task-kind">Decide</p>
+                <h3>Define expected state</h3>
+              </div>
+            </div>
+            <p>Record what should match, what may differ, and what must stay unique. Saving intent evaluates drift but does not itself change Cloudflare.</p>
+            <p class="task-card-detail" id="intent-policy-detail">No facets governed yet</p>
+            <div class="task-card-actions">
+              <div class="policy-badges">
+                <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
+                <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
+              </div>
+              <button class="button button-accent" id="manage-intent" type="button">Manage fleet intent</button>
+            </div>
+          </article>
+
+          <article class="task-card change-task-card">
+            <div class="task-card-heading">
+              <span class="task-number" aria-hidden="true">3</span>
+              <div>
+                <p class="task-kind">Change</p>
+                <h3>Make supported changes</h3>
+              </div>
+            </div>
+            <p>Browse facets with a matrix change path: direct edit, editable workspace, Copy or Fill, fleet rename, or DNSSEC intent. The special multi-setting workflows are listed separately below.</p>
+            <div class="task-card-status"><strong id="supported-change-count">0</strong><span id="supported-change-label">facets have a matrix change path</span></div>
+            <div class="change-readiness" id="write-panel">
+              <span>Write readiness</span>
+              <strong id="write-readiness" role="status" aria-live="polite">Loading live state; writes are locked</strong>
+            </div>
+            <button class="button button-primary" id="show-supported-changes" type="button">Browse matrix change paths</button>
+          </article>
         </div>
       </section>
 
-      <section class="policy-grid" aria-label="Fleet policies">
-        <article class="policy-card intent-policy-card">
+      <section class="workflow-section" aria-labelledby="workflow-heading">
+        <div class="section-introduction workflow-introduction">
+          <p class="policy-kicker">Automated fleet workflows</p>
+          <h2 id="workflow-heading">The special multi-setting actions</h2>
+          <p>Email Routing and Shared WAF are shown here because each builds one reviewed plan across related settings. They are not examples of support shared by every category. DNSSEC alignment is available only after exact intent is defined.</p>
+        </div>
+
+        <div class="workflow-targeting" id="workflow-targeting">
           <div>
-            <h2>Fleet intent</h2>
-            <p id="intent-policy-detail">No facets governed yet</p>
+            <strong>Target zones for multi-zone actions</strong>
+            <span id="write-selection-summary" aria-live="polite">No target zones selected</span>
           </div>
-          <div class="policy-actions">
-            <div class="policy-badges">
-              <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
-              <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
-            </div>
-            <button class="button button-accent" id="manage-intent" type="button">Manage fleet intent</button>
-          </div>
-        </article>
-        <article class="policy-card">
-          <div>
-            <h2>Email Routing</h2>
-            <p id="email-policy-detail">Loading forwarding consensus</p>
-          </div>
-          <div class="policy-actions">
-            <div class="policy-badges">
+          <p>Choose targets for these workflows and matrix Copy or Fill actions. A direct Edit button always targets only the cell you opened.</p>
+          <button class="button button-accent" id="choose-targets" type="button" aria-label="Choose zones for automated workflows and matrix copy or fill actions">Choose zones</button>
+        </div>
+
+        <div class="workflow-grid">
+          <article class="workflow-card email-workflow-card">
+            <div class="workflow-card-heading">
+              <div>
+                <span class="workflow-type">Composite workflow</span>
+                <h3>Email Routing</h3>
+              </div>
               <span class="drift-badge" id="email-policy-drift">0 drifted</span>
-              <button class="policy-exception-badge" id="email-policy-exceptions" type="button" hidden>0 policy exceptions</button>
             </div>
-            <button class="button button-accent" id="align-email" type="button" disabled>Align selected</button>
-          </div>
-        </article>
-        <article class="policy-card">
-          <div>
-            <h2>Shared WAF rules</h2>
-            <p id="waf-policy-detail">Loading rule consensus</p>
-          </div>
-          <div class="policy-actions">
-            <span class="drift-badge" id="waf-policy-drift">0 drifted</span>
-            <button class="button button-accent" id="align-waf" type="button" disabled>Align selected</button>
-          </div>
-        </article>
+            <p class="workflow-status" id="email-policy-detail">Loading forwarding consensus</p>
+            <dl class="workflow-scope">
+              <div><dt>Changes</dt><dd>Routing enablement, catch-all forwarding, required Email Routing DNS, SPF, and DMARC</dd></div>
+              <div><dt>Policy source</dt><dd>The unique observed fleet consensus and a verified account destination</dd></div>
+            </dl>
+            <div class="workflow-actions">
+              <button class="policy-exception-badge" id="email-policy-exceptions" type="button" hidden>0 policy exceptions</button>
+              <button class="button button-accent" id="align-email" type="button" disabled>Review Email alignment</button>
+            </div>
+          </article>
+
+          <article class="workflow-card waf-workflow-card">
+            <div class="workflow-card-heading">
+              <div>
+                <span class="workflow-type">Named-rule workflow</span>
+                <h3>Shared WAF rules</h3>
+              </div>
+              <span class="drift-badge" id="waf-policy-drift">0 drifted</span>
+            </div>
+            <p class="workflow-status" id="waf-policy-detail">Loading rule consensus</p>
+            <dl class="workflow-scope">
+              <div><dt>Changes</dt><dd>Exactly the configured named fleet rules in the custom firewall phase</dd></div>
+              <div><dt>Not covered</dt><dd>Managed WAF rules, other custom rules, and unrelated Security or Rulesets facets</dd></div>
+            </dl>
+            <div class="workflow-actions">
+              <button class="button button-accent" id="align-waf" type="button" disabled>Review WAF alignment</button>
+            </div>
+          </article>
+
+          <article class="workflow-card dnssec-workflow-card">
+            <div class="workflow-card-heading">
+              <div>
+                <span class="workflow-type">Intent-driven workflow</span>
+                <h3>DNSSEC status</h3>
+              </div>
+              <span class="workflow-state" id="dnssec-workflow-state">Set intent first</span>
+            </div>
+            <p class="workflow-status" id="dnssec-workflow-detail">Define an exact DNSSEC status in Fleet intent to evaluate correctable zones.</p>
+            <dl class="workflow-scope">
+              <div><dt>Changes</dt><dd>Enable or disable DNSSEC status when exact intent requires it</dd></div>
+              <div><dt>Not covered</dt><dd>Cloudflare-generated keys, digests, and parent registrar DS publication</dd></div>
+            </dl>
+            <div class="workflow-actions">
+              <button class="button button-quiet" id="show-dnssec-workflow" type="button">Open DNSSEC in matrix</button>
+            </div>
+          </article>
+        </div>
       </section>
+
+      <section class="configuration-explorer" aria-labelledby="configuration-heading">
+        <div class="section-introduction explorer-introduction">
+          <p class="policy-kicker">Detailed workspace</p>
+          <h2 id="configuration-heading" tabindex="-1">Explore all configuration</h2>
+          <p>Every readable facet can be compared and can receive expected state when intent editing is available. Matrix change support varies by category and is shown explicitly below; the special multi-setting workflows above are scoped separately.</p>
+        </div>
+
+        <ul class="capability-key" aria-label="Capability types">
+          <li><span class="capability-chip observe">Compare</span><span>Reads and compares Cloudflare state</span></li>
+          <li><span class="capability-chip plan">Expected state</span><span>Evaluates what should be true without changing Cloudflare</span></li>
+          <li><span class="capability-chip change">Supported change</span><span>Builds a fresh, reviewed Cloudflare write plan</span></li>
+        </ul>
+
+        <nav class="toolbar" id="fleet-controls" aria-label="Configuration explorer controls">
+          <label class="sr-only" for="search">Search facets, values, or zones</label>
+          <input id="search" type="search" placeholder="Search facets, values, or zones" aria-describedby="visible-count" aria-keyshortcuts="/">
+          <div class="toolbar-secondary" id="toolbar-secondary">
+            <label class="sr-only" for="category">Filter by category</label>
+            <select id="category">
+              <option value="">All categories</option>
+            </select>
+            <label class="sr-only" for="scope">Filter by fleet coverage</label>
+            <select id="scope" aria-describedby="visible-count">
+              <option value="fleet-patterns" selected>Fleet patterns</option>
+              <option value="fleet-wide">Fleet-wide</option>
+              <option value="zone-specific">Zone-specific</option>
+              <option value="all">Everything</option>
+            </select>
+            <label class="sr-only" for="dns-type">Filter by DNS record type</label>
+            <select id="dns-type" aria-describedby="visible-count">
+              <option value="">All DNS types</option>
+            </select>
+            <label class="sr-only" for="redirect-type">Filter by redirect target type</label>
+            <select id="redirect-type" aria-describedby="visible-count" hidden>
+              <option value="">All redirect targets</option>
+            </select>
+            <button class="button button-quiet filter-reset" id="filter-reset" type="button" aria-label="Reset matrix filters" disabled hidden>Reset</button>
+          </div>
+          <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Needs review</button>
+          <button class="button toggle" id="change-support-toggle" type="button" aria-pressed="false">Supported changes</button>
+          <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters</button>
+          <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
+          <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
+          <button class="button button-quiet activity-button" id="show-activity" type="button" aria-haspopup="dialog" aria-label="Activity 0: operation history, no entries">Activity <span id="activity-count">0</span></button>
+          <button class="button button-quiet toolbar-refresh" id="refresh" type="button">Refresh full fleet</button>
+        </nav>
+
+        <div class="category-capability" id="category-capability">
+          <div>
+            <p class="policy-kicker">Current capability</p>
+            <h3 id="category-capability-title">All categories</h3>
+            <p id="category-capability-detail" role="status" aria-live="polite" aria-atomic="true">Loading category support</p>
+          </div>
+          <div class="category-capability-badges" id="category-capability-badges" aria-label="Available capabilities"></div>
+        </div>
 
       <div class="matrix-tools">
-        <section class="selection-bar" id="selection-bar" aria-label="Zone selection">
-          <span role="status" aria-live="polite" aria-atomic="true"><strong id="selection-count">0</strong> zones selected</span>
+        <section class="selection-bar" id="selection-bar" aria-label="Matrix target zones">
+          <span role="status" aria-live="polite" aria-atomic="true"><strong id="selection-count">0</strong> matrix targets</span>
           <button class="button button-quiet" id="matrix-choose-targets" type="button">Choose zones</button>
           <button class="button button-quiet" id="selected-columns-only" type="button" aria-pressed="false" disabled>Selected zones only</button>
           <button class="button button-quiet" id="target-holes" type="button" aria-pressed="false" disabled>Target holes</button>
-          <button class="button button-quiet" id="select-drifted" type="button">Select policy drift</button>
+          <button class="button button-quiet" id="select-drifted" type="button">Select workflow + intent drift</button>
           <button class="button button-quiet" id="clear-selection" type="button">Clear</button>
         </section>
 
@@ -152,7 +257,7 @@
               <span class="intent-drift">Intent drift</span>
               <span class="acknowledged">Acknowledged</span>
             </aside>
-            <p><kbd>/</kbd> focuses search. Arrow keys move between matrix controls. Outlined cells are editable or copyable; fleet actions use the selected zones.</p>
+            <p><kbd>/</kbd> focuses search. Arrow keys move between matrix controls. Direct Edit targets its own cell; Copy, Fill, and automated workflows use the selected matrix targets.</p>
           </div>
         </details>
         <button class="button button-quiet matrix-focus-toggle" id="matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
@@ -161,18 +266,21 @@
       <p class="matrix-instructions sr-only" id="matrix-instructions">Filter before navigating this large table. Tab enters matrix controls once; use the arrow keys to move between controls and Enter to activate. When the scroll frame is focused, arrow keys pan the matrix.</p>
       <a class="keyboard-skip" href="#coverage-heading">Skip past comparison matrix</a>
       <section class="matrix-shell" id="matrix-shell" aria-label="Cloudflare configuration comparison matrix" aria-describedby="matrix-instructions" tabindex="0">
+        <p class="matrix-empty" id="matrix-empty" role="status" aria-atomic="true" hidden></p>
         <table id="matrix">
           <caption class="sr-only">Cloudflare configuration facets by zone. Category and facet headings remain visible while the table scrolls.</caption>
           <thead id="matrix-head"></thead>
           <tbody id="matrix-body"></tbody>
         </table>
       </section>
+      </section>
 
       <section class="coverage" id="coverage" aria-labelledby="coverage-heading">
         <div class="section-heading">
           <div>
-            <p class="policy-kicker">Audit boundary</p>
-            <h2 id="coverage-heading" tabindex="-1">Inventory coverage</h2>
+            <p class="policy-kicker">Read boundary</p>
+            <h2 id="coverage-heading" tabindex="-1">API read coverage</h2>
+            <p class="coverage-explanation">This reports whether Cloudflare data could be read. It does not indicate whether the dashboard can change that category.</p>
           </div>
           <div class="coverage-heading-meta">
             <p id="coverage-summary">Checking readable surfaces</p>
@@ -181,7 +289,7 @@
         <div class="coverage-groups" id="coverage-groups">
           <section class="coverage-group unexpected" aria-labelledby="coverage-unexpected-toggle">
             <button class="coverage-group-toggle" id="coverage-unexpected-toggle" type="button" data-coverage-section="unexpected" aria-expanded="true" aria-controls="coverage-unexpected-list">
-              <span>Unexpected issues</span>
+              <span>Unexpected read issues</span>
               <small id="coverage-unexpected-count">0 current</small>
               <span class="coverage-disclosure-icon" aria-hidden="true"></span>
             </button>
@@ -189,7 +297,7 @@
           </section>
           <section class="coverage-group expected" aria-labelledby="coverage-expected-toggle">
             <button class="coverage-group-toggle" id="coverage-expected-toggle" type="button" data-coverage-section="expected" aria-expanded="false" aria-controls="coverage-expected-list">
-              <span>Expected gaps</span>
+              <span>Expected read gaps</span>
               <small id="coverage-expected-count">0 saved</small>
               <span class="coverage-disclosure-icon" aria-hidden="true"></span>
             </button>
@@ -197,7 +305,7 @@
           </section>
           <section class="coverage-group healthy" aria-labelledby="coverage-healthy-toggle">
             <button class="coverage-group-toggle" id="coverage-healthy-toggle" type="button" data-coverage-section="healthy" aria-expanded="false" aria-controls="coverage-healthy-list">
-              <span>Healthy surfaces</span>
+              <span>Readable API surfaces</span>
               <small id="coverage-healthy-count">0 readable</small>
               <span class="coverage-disclosure-icon" aria-hidden="true"></span>
             </button>
@@ -373,10 +481,10 @@
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close target selection">&times;</button>
       <p class="dialog-kicker">Matrix selection</p>
       <h2 id="target-title">Choose zones</h2>
-      <p id="target-description">Selected zones can be isolated in the matrix and drive target-hole filtering. In write mode they also drive Email Routing, shared WAF alignment, and rule-copy actions; individual cell edits still target the value you open.</p>
+      <p id="target-description">Selected zones can be isolated in the matrix and drive target-hole filtering. In write mode they also drive Email Routing, shared WAF alignment, and matrix Copy or Fill actions; individual cell edits still target the value you open.</p>
       <div class="target-tools">
         <button class="button button-quiet" id="target-select-all" type="button">Select all</button>
-        <button class="button button-quiet" id="target-select-drifted" type="button">Select policy drift</button>
+        <button class="button button-quiet" id="target-select-drifted" type="button">Select workflow + intent drift</button>
         <button class="button button-quiet" id="target-clear" type="button">Clear</button>
       </div>
       <p class="target-selection-summary" id="target-selection-summary" role="status" aria-live="polite">No target zones selected</p>

@@ -181,6 +181,47 @@ test("matrix intent compares setting values independently of edit capability", (
   assert.equal(editableCell.intentCanonical, unavailableCell.intentCanonical)
 })
 
+test("DNSSEC intent compares writable status while preserving generated configuration", () => {
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      surfaces: {
+        dnssec: ok({
+          algorithm: "13",
+          digest_algorithm: "SHA256",
+          key_type: "ECDSAP256SHA256",
+          status: "active",
+        }),
+      },
+    }),
+    makeZone("beta.example", {
+      surfaces: {
+        dnssec: ok({
+          algorithm: "15",
+          digest_algorithm: "SHA384",
+          key_type: "ED25519",
+          status: "pending",
+        }),
+      },
+    }),
+  ])
+
+  const row = buildMatrix(inventory).rows.find(
+    (entry) => entry.category === "DNSSEC" && entry.key === "configuration",
+  )
+  const alpha = row.cells.get("alpha.example")
+  const beta = row.cells.get("beta.example")
+
+  assert.equal(row.different, true)
+  assert.notEqual(alpha.canonical, beta.canonical)
+  assert.equal(alpha.intentCanonical, '{"status":"active"}')
+  assert.equal(alpha.intentCanonical, beta.intentCanonical)
+  assert.deepEqual(alpha.intentValue, { status: "active" })
+  assert.deepEqual(beta.intentValue, { status: "active" })
+  assert.equal(beta.inspectionValue.status, "pending")
+  assert.equal(alpha.intentDisplay, "active")
+  assert.notDeepEqual(alpha.inspectionValue, beta.inspectionValue)
+})
+
 test("matrix uniqueness preserves literal zone-relative values", () => {
   const inventory = makeInventory([
     makeZone("alpha.example", {

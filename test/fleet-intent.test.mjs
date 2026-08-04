@@ -195,6 +195,109 @@ test("version two documents gain empty coverage intent without changing revision
   assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
 })
 
+test("version three DNSSEC intent migrates generated configuration to writable status", () => {
+  const generatedActive = {
+    algorithm: "13",
+    digest_algorithm: "SHA256",
+    key_type: "ECDSAP256SHA256",
+    status: "active",
+  }
+  const generatedCanonical = JSON.stringify(generatedActive)
+  const statusCanonical = '{"status":"active"}'
+  const row = {
+    category: "DNSSEC",
+    cells: new Map([
+      ["a.example", {
+        canonical: generatedCanonical,
+        intentCanonical: statusCanonical,
+        uniquenessCanonical: statusCanonical,
+      }],
+      ["b.example", {
+        canonical: JSON.stringify({
+          algorithm: "15",
+          digest_algorithm: "SHA384",
+          key_type: "ED25519",
+          status: "active",
+        }),
+        intentCanonical: statusCanonical,
+        uniquenessCanonical: statusCanonical,
+      }],
+    ]),
+    different: true,
+    key: "configuration",
+    label: "DNSSEC configuration",
+  }
+  const legacy = createEmptyFleetIntentDocument("account-id")
+  legacy.schemaVersion = 3
+  legacy.revision = "c".repeat(64)
+  legacy.policies.push(policy(row, {
+    canonical: generatedCanonical,
+    display: "4 fields",
+    resolutionCanonical: generatedCanonical,
+    value: generatedActive,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  }))
+  legacy.acknowledgements.push({
+    createdAt: "2026-08-04T18:00:00.000Z",
+    id: "dnssec-acknowledgement",
+    observedCanonical: generatedCanonical,
+    policyId: "policy-one",
+    reason: "Known generated key variation",
+    updatedAt: "2026-08-04T18:00:00.000Z",
+    zoneId: "zone-a",
+    zoneName: "a.example",
+  })
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+  const evaluation = evaluateFleetIntent(
+    migrated,
+    {
+      account: { id: "account-id" },
+      zones: [
+        { meta: { id: "zone-a", name: "a.example" } },
+        { meta: { id: "zone-b", name: "b.example" } },
+      ],
+    },
+    { rows: [row] },
+  )
+
+  assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.equal(migrated.revision, legacy.revision)
+  assert.deepEqual(migrated.policies[0].expected.value, { status: "active" })
+  assert.equal(migrated.policies[0].expected.canonical, statusCanonical)
+  assert.equal(migrated.policies[0].expected.display, "active")
+  assert.equal(migrated.policies[0].expected.resolutionCanonical, statusCanonical)
+  assert.equal(migrated.acknowledgements[0].observedCanonical, statusCanonical)
+  assert.equal(evaluation.policyStates[0].matchCount, 2)
+  assert.equal(evaluation.summary.actionableCells, 0)
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+})
+
+test("new DNSSEC policies retain only status as exact intent", () => {
+  const row = {
+    category: "DNSSEC",
+    key: "configuration",
+    label: "DNSSEC configuration",
+  }
+  const generated = {
+    algorithm: "13",
+    key_type: "ECDSAP256SHA256",
+    status: "pending",
+  }
+  let document = createEmptyFleetIntentDocument("account-id")
+
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    canonical: JSON.stringify(generated),
+    resolutionCanonical: JSON.stringify(generated),
+    value: generated,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  }))
+
+  assert.deepEqual(document.policies[0].expected.value, { status: "active" })
+  assert.equal(document.policies[0].expected.canonical, '{"status":"active"}')
+  assert.equal(document.policies[0].expected.resolutionCanonical, '{"status":"active"}')
+})
+
 test("coverage expectations are unique per inventory target", () => {
   const timestamp = new Date().toISOString()
   const expectation = {

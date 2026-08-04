@@ -6,9 +6,16 @@ import {
   facetMatchesScope,
   MATRIX_SCOPE,
   matrixColumnIsVisible,
+  matrixEmptyMessage,
   matrixFilterChangeCount,
   matrixRowMatchesFilters,
 } from "../src/matrix-filter.mjs"
+
+test("matrix empty messages distinguish filters from empty inventory", () => {
+  assert.equal(matrixEmptyMessage(251, 61), "")
+  assert.match(matrixEmptyMessage(251, 0), /current filters/)
+  assert.match(matrixEmptyMessage(0, 0), /fleet snapshot/)
+})
 
 test("fleet pattern scope separates shared and zone-specific facets", () => {
   assert.equal(facetMatchesScope(1, 14, MATRIX_SCOPE.FLEET_PATTERNS), false)
@@ -30,10 +37,38 @@ test("matrix filter changes count only deviations from the initial view", () => 
   }), 3)
   assert.equal(matrixFilterChangeCount({
     ...DEFAULT_MATRIX_FILTERS,
+    changeableOnly: true,
     differencesOnly: false,
     recordType: "TXT",
     redirectType: "dynamic",
-  }), 3)
+  }), 4)
+})
+
+test("supported-change filtering excludes comparison-only rows", () => {
+  const filters = {
+    ...DEFAULT_MATRIX_FILTERS,
+    changeableOnly: true,
+    differencesOnly: false,
+    scope: MATRIX_SCOPE.ALL,
+    targetZoneIds: new Set(),
+    zoneCount: 2,
+  }
+  const row = {
+    category: "TLS",
+    changeable: false,
+    different: true,
+    missingZoneIds: [],
+    presentCount: 2,
+    recordType: "",
+    redirectTypes: [],
+    search: "universal ssl",
+  }
+
+  assert.equal(matrixRowMatchesFilters(row, filters), false)
+  assert.equal(matrixRowMatchesFilters({
+    ...row,
+    changeable: true,
+  }, filters), true)
 })
 
 test("selected-only presentation hides unselected columns without changing selection", () => {

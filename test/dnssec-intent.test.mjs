@@ -70,7 +70,7 @@ test("DNSSEC intent correction targets writable drift and separates pending or g
   ], [
     intentCell(matching, desired, FLEET_INTENT_CELL_STATUS.MATCH),
     intentCell(disabled, desired, FLEET_INTENT_CELL_STATUS.VARIANT),
-    intentCell(pending, desired, FLEET_INTENT_CELL_STATUS.VARIANT),
+    intentCell(pending, desired, FLEET_INTENT_CELL_STATUS.MATCH),
     intentCell(generated, desired, FLEET_INTENT_CELL_STATUS.VARIANT),
     intentCell(acknowledged, desired, FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED),
     intentCell(conflicted, desired, FLEET_INTENT_CELL_STATUS.CONFLICT, {

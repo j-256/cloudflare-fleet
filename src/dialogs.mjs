@@ -2,6 +2,7 @@ export const DIALOG_DISMISS_VALUE = "cancel"
 
 const DIALOG_CLOSE_SELECTOR = "[data-dialog-close]"
 const openerByDialog = new WeakMap()
+const fallbackFocusByDialog = new WeakMap()
 
 export function dismissDialog(dialog) {
   if (dialog.open) dialog.close(DIALOG_DISMISS_VALUE)
@@ -12,10 +13,30 @@ function focusElement(element) {
   element.focus({ preventScroll: true })
 }
 
+function availableFocusTarget(target) {
+  const element = typeof target === "function" ? target() : target
+  if (!element?.isConnected || element.disabled) return null
+  if (typeof element.getClientRects === "function"
+    && element.getClientRects().length === 0) return null
+  return element
+}
+
+function scheduleFocusRestoration(dialog, restoreFocus) {
+  const view = dialog.ownerDocument?.defaultView
+  if (typeof view?.requestAnimationFrame === "function") {
+    view.requestAnimationFrame(restoreFocus)
+    return
+  }
+  queueMicrotask(restoreFocus)
+}
+
 export function showDialog(dialog, options = {}) {
   const opener = dialog.ownerDocument?.activeElement
   if (opener && opener !== dialog.ownerDocument?.body) {
     openerByDialog.set(dialog, opener)
+  }
+  if (options.fallbackFocus) {
+    fallbackFocusByDialog.set(dialog, options.fallbackFocus)
   }
   dialog.returnValue = ""
   dialog.showModal()
@@ -36,9 +57,15 @@ export function installDismissibleDialog(dialog) {
   })
   dialog.addEventListener("close", () => {
     const opener = openerByDialog.get(dialog)
+    const fallbackFocus = fallbackFocusByDialog.get(dialog)
     openerByDialog.delete(dialog)
-    if (!opener?.isConnected || opener.disabled) return
-    queueMicrotask(() => focusElement(opener))
+    fallbackFocusByDialog.delete(dialog)
+    scheduleFocusRestoration(dialog, () => {
+      focusElement(
+        availableFocusTarget(opener)
+          || availableFocusTarget(fallbackFocus),
+      )
+    })
   })
 }
 

@@ -63,16 +63,20 @@ export function dnssecIntentCorrection(row, options = {}) {
       conflicts.push(cell.zone.meta.name)
       continue
     }
-    if (!correctableIntentCell(cell)) continue
     if (fleetIntentPolicyValueConstraint(cell.policy)
       !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) continue
     const desiredStatus = dnssecDesiredStatus(cell.policy.expected)
     if (!desiredStatus) continue
     const observed = row.cells.get(cell.zone.meta.name)?.inspectionValue || null
     const currentStatus = observed?.status || null
+    if (DNSSEC_PENDING_STATUS.has(currentStatus)
+      && dnssecStatusRequestSatisfied(currentStatus, desiredStatus)) {
+      waiting.push(cell.zone.meta.name)
+      continue
+    }
+    if (!correctableIntentCell(cell)) continue
     if (dnssecStatusRequestSatisfied(currentStatus, desiredStatus)) {
-      if (DNSSEC_PENDING_STATUS.has(currentStatus)) waiting.push(cell.zone.meta.name)
-      else generatedOnly.push(cell.zone.meta.name)
+      generatedOnly.push(cell.zone.meta.name)
       continue
     }
     if (currentStatus && !dnssecRequestedStatus(currentStatus)) {

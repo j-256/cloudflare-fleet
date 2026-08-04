@@ -11,6 +11,7 @@ import {
 } from "../src/activity-store.mjs"
 import {
   createEmptyFleetIntentDocument,
+  FLEET_INTENT_SCHEMA_VERSION,
 } from "../src/fleet-intent.mjs"
 import {
   FLEET_STATE_SCHEMA_VERSION,
@@ -92,6 +93,19 @@ test("fleet state wraps an existing intent document without losing it", async (c
   assert.deepEqual(state.intent, intent)
   assert.deepEqual(state.activity.entries, [])
   assert.equal(isFleetStateDocument(state, "account-one"), true)
+})
+
+test("fleet state migrates a legacy nested intent document without losing activity", async (context) => {
+  const { stateFile } = await fixture(context)
+  const legacy = await readFleetStateDocument(stateFile, "account-one")
+  legacy.intent.schemaVersion = 3
+  await fs.writeFile(stateFile, `${JSON.stringify(legacy)}\n`)
+
+  const migrated = await readFleetStateDocument(stateFile, "account-one")
+
+  assert.equal(migrated.intent.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.deepEqual(migrated.activity, legacy.activity)
+  assert.equal(isFleetStateDocument(migrated, "account-one"), true)
 })
 
 test("operation activity persists alongside intent in one state file", async (context) => {

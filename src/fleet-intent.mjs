@@ -3,8 +3,9 @@ import {
   stableString,
 } from "./normalize.mjs"
 import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
+import { dnssecRequestedStatus } from "./dnssec.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 3
+export const FLEET_INTENT_SCHEMA_VERSION = 4
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -50,8 +51,11 @@ export const FLEET_INTENT_VALUE_CONSTRAINT = Object.freeze({
 })
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+const DNSSEC_INTENT_CATEGORY = "DNSSEC"
+const DNSSEC_INTENT_CONFIGURATION_KEY = "configuration"
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_ONE = 1
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO = 2
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE = 3
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 
 function isObject(value) {
@@ -148,7 +152,47 @@ export function fleetIntentPolicyValueConstraint(policy) {
     : policy.valueConstraint
 }
 
-function isPolicy(policy) {
+function isDnssecIntentPolicy(policy) {
+  return policy?.facet?.category === DNSSEC_INTENT_CATEGORY
+    && policy.facet.key === DNSSEC_INTENT_CONFIGURATION_KEY
+}
+
+function dnssecStatusExpectedIsNormalized(expected) {
+  if (!isObject(expected?.value)) return false
+  const keys = Object.keys(expected.value)
+  if (keys.length !== 1 || keys[0] !== "status") return false
+  if (typeof expected.value.status !== "string" || expected.value.status.length === 0) {
+    return false
+  }
+  const canonical = stableString(expected.value)
+  return expected.canonical === canonical
+    && (expected.resolutionCanonical === null
+      || expected.resolutionCanonical === canonical)
+}
+
+function normalizeFleetIntentPolicy(policy) {
+  const normalized = structuredClone(policy)
+  if (!isDnssecIntentPolicy(normalized)
+    || fleetIntentPolicyValueConstraint(normalized)
+      !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) return normalized
+  const observedStatus = normalized.expected?.value?.status
+  const status = dnssecRequestedStatus(observedStatus) ?? observedStatus
+  if (typeof status !== "string" || status.length === 0) return normalized
+  const value = { status }
+  const canonical = stableString(value)
+  normalized.expected = {
+    ...normalized.expected,
+    canonical,
+    display: status,
+    resolutionCanonical: normalized.expected.resolutionCanonical === null
+      ? null
+      : canonical,
+    value,
+  }
+  return normalized
+}
+
+function isPolicy(policy, options = {}) {
   const valueConstraint = fleetIntentPolicyValueConstraint(policy)
   const expectedValid = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
     ? isExpected(policy?.expected)
@@ -164,6 +208,10 @@ function isPolicy(policy) {
       || typeof policy.facet.description === "string")
     && Object.values(FLEET_INTENT_VALUE_CONSTRAINT).includes(valueConstraint)
     && expectedValid
+    && (!options.requireNormalizedDnssec
+      || !isDnssecIntentPolicy(policy)
+      || valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+      || dnssecStatusExpectedIsNormalized(policy.expected))
 }
 
 export function createAuthoredFleetIntentExpected(value) {
@@ -229,6 +277,8 @@ export function fleetIntentCoverageTargetKey(target) {
 }
 
 function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
+  const supportsCoverageIntent = schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+    || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE
   if (!isObject(value)) return false
   if (value.schemaVersion !== schemaVersion) return false
   if (!isLabel(value.accountId)) return false
@@ -237,18 +287,22 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
     && (typeof value.revision !== "string" || !REVISION_PATTERN.test(value.revision))) return false
   if (value.updatedAt !== null && !isTimestamp(value.updatedAt)) return false
   if (!Array.isArray(value.groups) || !value.groups.every(isGroup)) return false
-  if (!Array.isArray(value.policies) || !value.policies.every(isPolicy)) return false
+  if (!Array.isArray(value.policies) || !value.policies.every(
+    (policy) => isPolicy(policy, {
+      requireNormalizedDnssec: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+    }),
+  )) return false
   if (!Array.isArray(value.acknowledgements)
     || !value.acknowledgements.every(isAcknowledgement)) return false
-  if (schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+  if (supportsCoverageIntent
     && (!Array.isArray(value.coverageExpectations)
       || !value.coverageExpectations.every(isCoverageExpectation))) return false
   if (!hasUniqueIds(value.groups)
     || !hasUniqueIds(value.policies)
     || !hasUniqueIds(value.acknowledgements)
-    || (schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+    || (supportsCoverageIntent
       && !hasUniqueIds(value.coverageExpectations))) return false
-  if (schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+  if (supportsCoverageIntent
     && new Set(value.coverageExpectations.map(fleetIntentCoverageTargetKey)).size
       !== value.coverageExpectations.length) return false
   if (new Set(value.groups.map((group) => group.name.trim().toLowerCase())).size
@@ -287,18 +341,45 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     accountId,
     LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO,
   )
-  if (!versionOneValid && !versionTwoValid) {
+  const versionThreeValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE,
+  )
+  if (!versionOneValid && !versionTwoValid && !versionThreeValid) {
     throw new TypeError("Fleet intent document cannot be migrated")
   }
+  const legacyPolicies = versionOneValid
+    ? value.policies.map((policy) => ({
+      ...structuredClone(policy),
+      valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+    }))
+    : structuredClone(value.policies)
+  const policies = legacyPolicies.map(normalizeFleetIntentPolicy)
+  const dnssecPolicyIds = new Set(
+    policies.filter(isDnssecIntentPolicy).map((policy) => policy.id),
+  )
+  const acknowledgements = value.acknowledgements.map((acknowledgement) => {
+    const normalized = structuredClone(acknowledgement)
+    if (!dnssecPolicyIds.has(normalized.policyId)) return normalized
+    try {
+      const observed = JSON.parse(normalized.observedCanonical)
+      const status = dnssecRequestedStatus(observed?.status) ?? observed?.status
+      if (typeof status === "string" && status.length > 0) {
+        normalized.observedCanonical = stableString({ status })
+      }
+    } catch {
+      return normalized
+    }
+    return normalized
+  })
   const migrated = {
     ...structuredClone(value),
-    coverageExpectations: [],
-    policies: versionOneValid
-      ? value.policies.map((policy) => ({
-        ...structuredClone(policy),
-        valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
-      }))
-      : structuredClone(value.policies),
+    acknowledgements,
+    coverageExpectations: versionThreeValid
+      ? structuredClone(value.coverageExpectations)
+      : [],
+    policies,
     schemaVersion: FLEET_INTENT_SCHEMA_VERSION,
   }
   if (!isFleetIntentDocument(migrated, accountId)) {
@@ -356,13 +437,16 @@ export function removeFleetIntentGroup(document, groupId) {
 
 export function replaceFleetIntentPolicy(document, policy) {
   const next = cloneFleetIntentDocument(document)
-  if (!isPolicy(policy)) throw new TypeError("Fleet intent policy is invalid")
-  if (!next.groups.some((group) => group.id === policy.groupId)) {
+  const normalizedPolicy = normalizeFleetIntentPolicy(policy)
+  if (!isPolicy(normalizedPolicy, { requireNormalizedDnssec: true })) {
+    throw new TypeError("Fleet intent policy is invalid")
+  }
+  if (!next.groups.some((group) => group.id === normalizedPolicy.groupId)) {
     throw new TypeError("Fleet intent policy group was not found")
   }
   next.policies = [
-    ...next.policies.filter((entry) => entry.id !== policy.id),
-    structuredClone(policy),
+    ...next.policies.filter((entry) => entry.id !== normalizedPolicy.id),
+    normalizedPolicy,
   ]
   if (!isFleetIntentDocument(next)) throw new TypeError("Fleet intent policy produced an invalid document")
   return next

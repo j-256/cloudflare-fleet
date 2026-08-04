@@ -30,6 +30,7 @@ import {
   presentRedirect,
   redirectSemanticIdentity,
 } from "./redirect-presentation.mjs"
+import { dnssecRequestedStatus } from "./dnssec.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
@@ -155,10 +156,11 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
   const resolutionValue = Object.prototype.hasOwnProperty.call(options, "resolutionValue")
     ? options.resolutionValue
     : normalized
-  const intentValue = Object.prototype.hasOwnProperty.call(options, "intentValue")
+  const hasIntentValue = Object.prototype.hasOwnProperty.call(options, "intentValue")
+  const intentValue = hasIntentValue
     ? options.intentValue
     : normalized
-  row.cells.set(zone.meta.name, {
+  const cell = {
     action: options.action || null,
     canonical: stableString(normalized),
     capability: options.capability || null,
@@ -174,7 +176,12 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     search: options.search || "",
     secondaryAction: options.secondaryAction || null,
     workspaceAction: options.workspaceAction || null,
-  })
+  }
+  if (hasIntentValue) cell.intentValue = inspectionValue(intentValue)
+  if (Object.prototype.hasOwnProperty.call(options, "intentDisplay")) {
+    cell.intentDisplay = options.intentDisplay
+  }
+  row.cells.set(zone.meta.name, cell)
 }
 
 function addScalar(rows, inventory, category, key, label, getter, options = {}) {
@@ -250,20 +257,32 @@ function addSettingRows(rows, inventory) {
 }
 
 function addDnssecRows(rows, inventory) {
-  addScalar(
-    rows,
-    inventory,
-    "DNSSEC",
-    "configuration",
-    "DNSSEC configuration",
-    (zone) => {
-      const dnssec = surfaceResult(zone, "dnssec")
-      if (!dnssec) return undefined
-      return normalizeValue(dnssec, zone.meta.name, {
-        omit: ["digest", "dnskey", "ds", "key_tag", "public_key"],
-      })
-    },
-  )
+  for (const zone of inventory.zones) {
+    const dnssec = surfaceResult(zone, "dnssec")
+    if (!dnssec) continue
+    const normalized = normalizeValue(dnssec, zone.meta.name, {
+      omit: ["digest", "dnskey", "ds", "key_tag", "public_key"],
+    })
+    const requestedStatus = dnssecRequestedStatus(normalized.status)
+    const intentValue = typeof normalized.status === "string"
+      ? { status: requestedStatus ?? normalized.status }
+      : normalized
+    addCell(
+      rows,
+      "DNSSEC",
+      "configuration",
+      "DNSSEC configuration",
+      zone,
+      normalized,
+      {
+        intentDisplay: typeof normalized.status === "string"
+          ? requestedStatus ?? normalized.status
+          : shortDisplay(normalized),
+        intentValue,
+        resolutionValue: intentValue,
+      },
+    )
+  }
 }
 
 function emailRoutingRuleCellOptions(rule, zone, options = {}) {
@@ -1158,6 +1177,8 @@ export function matrixRenderKey(inventory, matrix) {
           display: cell.display,
           full: cell.full,
           intentCanonical: cell.intentCanonical,
+          intentDisplay: cell.intentDisplay,
+          intentValue: cell.intentValue,
           uniquenessCanonical: cell.uniquenessCanonical,
           resolutionCanonical: cell.resolutionCanonical,
           resolutionSource: cell.resolutionSource,

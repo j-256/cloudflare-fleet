@@ -44,6 +44,12 @@ function cellCanonical(cell) {
   return cell.intentCanonical ?? cell.canonical
 }
 
+function cellIntentValue(cell) {
+  return Object.prototype.hasOwnProperty.call(cell, "intentValue")
+    ? cell.intentValue
+    : cell.inspectionValue
+}
+
 function observedVariants(row, inventory) {
   const variants = new Map()
   for (const zone of inventory.zones) {
@@ -54,12 +60,12 @@ function observedVariants(row, inventory) {
       variants.set(canonical, {
         canonical,
         count: 0,
-        display: cell.display,
+        display: cell.intentDisplay ?? cell.display,
         origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
         resolutionCanonical: cell.resolutionCanonical || null,
         sourceZoneId: zone.meta.id,
         sourceZoneName: zone.meta.name,
-        value: jsonClone(cell.inspectionValue),
+        value: jsonClone(cellIntentValue(cell)),
       })
     }
     const variant = variants.get(canonical)
@@ -69,7 +75,7 @@ function observedVariants(row, inventory) {
       variant.resolutionCanonical = cell.resolutionCanonical || null
       variant.sourceZoneId = zone.meta.id
       variant.sourceZoneName = zone.meta.name
-      variant.value = jsonClone(cell.inspectionValue)
+      variant.value = jsonClone(cellIntentValue(cell))
     }
   }
   return [...variants.values()].sort(

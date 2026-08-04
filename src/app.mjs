@@ -1,3 +1,11 @@
+import { contextualActionLabel } from "./accessibility.mjs"
+import {
+  MATRIX_CAPABILITY,
+  MATRIX_CAPABILITY_PRESENTATION,
+  matrixCapabilityCounts,
+  matrixCategoryCapabilities,
+  matrixRowSupportsChanges,
+} from "./capabilities.mjs"
 import {
   CloudflareApi,
   FleetIntentApiConflictError,
@@ -106,6 +114,7 @@ import {
   facetMatchesScope,
   MATRIX_SCOPE,
   matrixColumnIsVisible,
+  matrixEmptyMessage,
   matrixFilterChangeCount,
   matrixRowMatchesFilters,
 } from "./matrix-filter.mjs"
@@ -214,6 +223,7 @@ if ((!auth?.apiToken && !auth?.brokerSecret) || !auth?.accountId) {
   throw new Error("Cloudflare session auth is unavailable")
 }
 
+application.dataset.initializing = "true"
 application.hidden = false
 
 const api = new CloudflareApi(auth)
@@ -231,6 +241,13 @@ const DNSSEC_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.DNSSEC_ALI
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
+const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
+  MATRIX_CAPABILITY.DIRECT_EDIT,
+  MATRIX_CAPABILITY.WORKSPACE_EDIT,
+  MATRIX_CAPABILITY.COPY_FILL,
+  MATRIX_CAPABILITY.FLEET_RENAME,
+  MATRIX_CAPABILITY.INTENT_FIX,
+])
 const VALUE_COMPARISON_CONTEXT_LENGTH = 84
 const VALUE_COMPARISON_ELLIPSIS = "..."
 const MATRIX_COMPARISON_STATE = Object.freeze({
@@ -414,6 +431,10 @@ const elements = {
   alignEmail: document.querySelector("#align-email"),
   alignWaf: document.querySelector("#align-waf"),
   category: document.querySelector("#category"),
+  categoryCapabilityBadges: document.querySelector("#category-capability-badges"),
+  categoryCapabilityDetail: document.querySelector("#category-capability-detail"),
+  categoryCapabilityTitle: document.querySelector("#category-capability-title"),
+  changeSupportToggle: document.querySelector("#change-support-toggle"),
   chooseTargets: document.querySelector("#choose-targets"),
   clearSelection: document.querySelector("#clear-selection"),
   confirmApply: document.querySelector("#confirm-apply"),
@@ -423,6 +444,7 @@ const elements = {
   confirmPreview: document.querySelector("#confirm-preview"),
   confirmSummary: document.querySelector("#confirm-summary"),
   confirmTitle: document.querySelector("#confirm-title"),
+  configurationHeading: document.querySelector("#configuration-heading"),
   coverageExpectedCount: document.querySelector("#coverage-expected-count"),
   coverageExpectedList: document.querySelector("#coverage-expected-list"),
   coverageExpectedToggle: document.querySelector("#coverage-expected-toggle"),
@@ -445,6 +467,8 @@ const elements = {
   coverageUnexpectedToggle: document.querySelector("#coverage-unexpected-toggle"),
   differenceToggle: document.querySelector("#difference-toggle"),
   dnsType: document.querySelector("#dns-type"),
+  dnssecWorkflowDetail: document.querySelector("#dnssec-workflow-detail"),
+  dnssecWorkflowState: document.querySelector("#dnssec-workflow-state"),
   driftCount: document.querySelector("#drift-count"),
   emailPolicyDetail: document.querySelector("#email-policy-detail"),
   emailPolicyDrift: document.querySelector("#email-policy-drift"),
@@ -549,8 +573,11 @@ const elements = {
   manageIntent: document.querySelector("#manage-intent"),
   matrixBody: document.querySelector("#matrix-body"),
   matrixChooseTargets: document.querySelector("#matrix-choose-targets"),
+  matrixEmpty: document.querySelector("#matrix-empty"),
   matrixFocus: document.querySelector("#matrix-focus"),
   matrixGuide: document.querySelector(".matrix-guide"),
+  matrixShell: document.querySelector("#matrix-shell"),
+  matrixTable: document.querySelector("#matrix"),
   mobileMatrixFocus: document.querySelector("#mobile-matrix-focus"),
   matrixHead: document.querySelector("#matrix-head"),
   policyExceptionDialog: document.querySelector("#policy-exception-dialog"),
@@ -560,6 +587,9 @@ const elements = {
   refresh: document.querySelector("#refresh"),
   refreshDetail: document.querySelector("#refresh-detail"),
   redirectType: document.querySelector("#redirect-type"),
+  reviewNeedsAttention: document.querySelector("#review-needs-attention"),
+  reviewTaskCount: document.querySelector("#review-task-count"),
+  reviewTaskLabel: document.querySelector("#review-task-label"),
   renameCurrent: document.querySelector("#rename-current"),
   renameDialog: document.querySelector("#rename-dialog"),
   renameError: document.querySelector("#rename-error"),
@@ -603,12 +633,15 @@ const elements = {
   selectedColumnsOnly: document.querySelector("#selected-columns-only"),
   selectionCount: document.querySelector("#selection-count"),
   sessionMode: document.querySelector("#session-mode"),
-  showEditableSettings: document.querySelector("#show-editable-settings"),
+  showDnssecWorkflow: document.querySelector("#show-dnssec-workflow"),
+  showSupportedChanges: document.querySelector("#show-supported-changes"),
   showActivity: document.querySelector("#show-activity"),
   snapshotTime: document.querySelector("#snapshot-time"),
   scope: document.querySelector("#scope"),
   statusDot: document.querySelector("#status-dot"),
   statusText: document.querySelector("#status-text"),
+  supportedChangeCount: document.querySelector("#supported-change-count"),
+  supportedChangeLabel: document.querySelector("#supported-change-label"),
   targetClear: document.querySelector("#target-clear"),
   targetDialog: document.querySelector("#target-dialog"),
   targetHoles: document.querySelector("#target-holes"),
@@ -650,7 +683,10 @@ elements.intentPolicyCustomKind.replaceChildren(...Object.values(JSON_VALUE_KIND
   return option
 }))
 elements.sessionMode.textContent = readOnly ? "Read-only session" : "Read/write session"
-elements.writePanel.hidden = readOnly
+elements.writePanel.classList.toggle("read-only", readOnly)
+elements.writeReadiness.textContent = readOnly
+  ? "Read-only session; relaunch with write access to apply changes"
+  : "Loading live state; writes are locked"
 elements.alignEmail.hidden = readOnly
 elements.alignWaf.hidden = readOnly
 
@@ -921,7 +957,7 @@ function intentRowState(row) {
   ) || null
 }
 
-function policyDriftZoneIds() {
+function workflowOrIntentDriftZoneIds() {
   return JSON.parse(elements.selectDrifted.dataset.zoneIds || "[]")
 }
 
@@ -2865,6 +2901,39 @@ function focusMatrixAction(action) {
   })
 }
 
+function intentManagerReturnFocus() {
+  if (!elements.intentDialog.open) return null
+  return elements.intentDialog.querySelector("[data-dialog-close]")
+}
+
+function matrixIntentReturnFocus(row, selector, zoneId = "") {
+  const managerTarget = intentManagerReturnFocus()
+  if (managerTarget) return managerTarget
+  const tableRow = [...elements.matrixBody.querySelectorAll("tr")].find(
+    (candidate) => candidate.dataset.category === row.category
+      && candidate.dataset.facetKey === row.key,
+  )
+  if (!tableRow || tableRow.classList.contains("hidden-row")) {
+    return elements.matrixShell
+  }
+  const container = zoneId
+    ? tableRow.querySelector(`[data-zone-id="${CSS.escape(zoneId)}"]`)
+    : tableRow
+  const target = container?.querySelector(selector)
+  if (!target || !matrixActionIsAvailable(target)) return elements.matrixShell
+  syncMatrixActionTabStop(target)
+  target.scrollIntoView({
+    behavior: "auto",
+    block: "nearest",
+    inline: "nearest",
+  })
+  return target
+}
+
+function coverageIntentReturnFocus() {
+  return intentManagerReturnFocus() || document.querySelector("#coverage-heading")
+}
+
 function matrixActionDescriptors() {
   return [...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)")]
     .flatMap((row, rowIndex) => [...row.children].flatMap(
@@ -2977,6 +3046,7 @@ function renderSummary() {
   elements.facetCount.textContent = String(summary.facets)
   elements.driftCount.textContent = String(summary.differences)
   elements.holeCount.textContent = String(summary.missingCells)
+  renderTaskSummaries()
   const source = state.inventorySource === INVENTORY_SOURCE.CACHE
     ? "Cached snapshot"
     : "Live snapshot"
@@ -3012,6 +3082,42 @@ function renderIntentPolicyCard() {
     : "Manage fleet intent"
 }
 
+function renderDnssecWorkflowCard() {
+  const row = state.matrix?.rows.find(rowSupportsDnssecIntentCorrection) || null
+  const policies = row?.intentState?.policies || []
+  const correction = row ? dnssecIntentCorrection(row) : null
+  elements.showDnssecWorkflow.disabled = !row
+  elements.dnssecWorkflowState.className = "workflow-state"
+
+  if (!row) {
+    elements.dnssecWorkflowState.textContent = "Unavailable"
+    elements.dnssecWorkflowState.classList.add("inactive")
+    elements.dnssecWorkflowDetail.textContent = "DNSSEC was not available in the loaded fleet snapshot."
+    return
+  }
+  if (correction.available) {
+    const count = correction.targets.length
+    elements.dnssecWorkflowState.textContent = `${count} correctable`
+    elements.dnssecWorkflowState.classList.add("ready")
+    elements.dnssecWorkflowDetail.textContent = `${count} zone${count === 1 ? "" : "s"} can be aligned to exact DNSSEC intent from the matrix row.`
+    return
+  }
+  if (policies.length === 0) {
+    elements.dnssecWorkflowState.textContent = "Set intent first"
+    elements.dnssecWorkflowState.classList.add("inactive")
+    elements.dnssecWorkflowDetail.textContent = "Define an exact DNSSEC status in Fleet intent to evaluate correctable zones."
+    return
+  }
+  if (correction.waiting.length > 0) {
+    elements.dnssecWorkflowState.textContent = "Cloudflare processing"
+    elements.dnssecWorkflowState.classList.add("waiting")
+  } else {
+    elements.dnssecWorkflowState.textContent = "No change ready"
+    elements.dnssecWorkflowState.classList.add("inactive")
+  }
+  elements.dnssecWorkflowDetail.textContent = correction.reason
+}
+
 function renderCategories() {
   const previous = elements.category.value
   const counts = new Map()
@@ -3030,6 +3136,97 @@ function renderCategories() {
     elements.category.append(option)
   }
   if (state.matrix.categories.includes(previous)) elements.category.value = previous
+}
+
+function capabilityBadge(capability) {
+  const presentation = MATRIX_CAPABILITY_PRESENTATION[capability]
+  if (!presentation) return null
+  return createElement("span", {
+    className: `capability-chip ${presentation.kind}`,
+    text: presentation.label,
+  })
+}
+
+function categoryChangeDetail(capabilities) {
+  const available = CATEGORY_CHANGE_CAPABILITY_ORDER.filter(
+    (capability) => capabilities.has(capability),
+  )
+  const labels = available.map(
+    (capability) => MATRIX_CAPABILITY_PRESENTATION[capability].label,
+  )
+  const typeLabel = labels.length === 1 ? "type" : "types"
+  const details = [`Available change ${typeLabel} in this category: ${labels.join(", ")}.`]
+  if (capabilities.has(MATRIX_CAPABILITY.DIRECT_EDIT)) {
+    details.push("A direct edit targets only the opened cell.")
+  }
+  if (capabilities.has(MATRIX_CAPABILITY.COPY_FILL)) {
+    details.push("Copy and fill actions use the selected matrix targets.")
+  }
+  if (capabilities.has(MATRIX_CAPABILITY.INTENT_FIX)) {
+    details.push("An intent-driven fix requires exact expected state before a write can be reviewed.")
+  }
+  details.push("The matrix shows action availability for each cell.")
+  return details.join(" ")
+}
+
+function renderCategoryCapability() {
+  if (!state.matrix) return
+  const selectedCategory = elements.category.value
+  const categories = matrixCategoryCapabilities(state.matrix)
+  const counts = matrixCapabilityCounts(state.matrix)
+  const readOnlyNote = readOnly
+    ? " This read-only session can inspect capabilities and intent, but cannot save expected state or apply Cloudflare writes."
+    : ""
+  let capabilities
+
+  if (!selectedCategory) {
+    elements.categoryCapabilityTitle.textContent = "All categories"
+    elements.categoryCapabilityDetail.textContent = `${counts.rows} facets across ${counts.categories} categories. ${counts.changeableRows} facets in ${counts.changeableCategories} categories have a supported matrix change path; ${counts.compareOnlyCategories} categories are comparison and expected-state only. Capability badges summarize row-level paths; the matrix shows availability for each cell. Multi-setting workflows are scoped separately above.${readOnlyNote}`
+    capabilities = new Set([
+      MATRIX_CAPABILITY.COMPARE,
+      MATRIX_CAPABILITY.EXPECTED_STATE,
+    ])
+    for (const entry of categories) {
+      for (const capability of entry.capabilities) capabilities.add(capability)
+    }
+    if (counts.changeableCategories > 0) {
+      capabilities.delete(MATRIX_CAPABILITY.COMPARE_ONLY)
+    }
+  } else {
+    const entry = categories.find((candidate) => candidate.category === selectedCategory)
+    elements.categoryCapabilityTitle.textContent = selectedCategory
+    if (!entry) {
+      elements.categoryCapabilityDetail.textContent = "This category is not available in the loaded fleet snapshot."
+      capabilities = new Set([MATRIX_CAPABILITY.COMPARE_ONLY])
+    } else if (entry.changeableRows === 0) {
+      elements.categoryCapabilityDetail.textContent = `${entry.rows} facet${entry.rows === 1 ? "" : "s"}. The dashboard can compare these values and evaluate expected state, but it cannot change Cloudflare configuration in this category.${readOnlyNote}`
+      capabilities = new Set(entry.capabilities)
+    } else if (entry.changeableRows === entry.rows) {
+      capabilities = new Set(entry.capabilities)
+      elements.categoryCapabilityDetail.textContent = `${entry.rows} facet${entry.rows === 1 ? "" : "s"}. Every facet has at least one supported matrix change path. ${categoryChangeDetail(capabilities)}${readOnlyNote}`
+    } else {
+      capabilities = new Set(entry.capabilities)
+      const remainingRows = entry.rows - entry.changeableRows
+      elements.categoryCapabilityDetail.textContent = `${entry.rows} facets. ${entry.changeableRows} facet${entry.changeableRows === 1 ? " has" : "s have"} a supported matrix change path; the remaining ${remainingRows} facet${remainingRows === 1 ? "" : "s"} can still be compared and assigned expected state. ${categoryChangeDetail(capabilities)}${readOnlyNote}`
+    }
+  }
+
+  elements.categoryCapabilityBadges.replaceChildren(
+    ...[...capabilities].map(capabilityBadge).filter(Boolean),
+  )
+}
+
+function renderTaskSummaries() {
+  const reviewCount = state.matrix?.summary.differences || 0
+  const capabilityCounts = matrixCapabilityCounts(state.matrix)
+  elements.reviewTaskCount.textContent = String(reviewCount)
+  elements.reviewTaskLabel.textContent = reviewCount === 1
+    ? "facet needs review"
+    : "facets need review"
+  elements.supportedChangeCount.textContent = String(capabilityCounts.changeableRows)
+  elements.supportedChangeLabel.textContent = capabilityCounts.changeableRows === 1
+    ? "facet has a matrix change path"
+    : "facets have a matrix change path"
 }
 
 function renderScopes() {
@@ -3125,6 +3322,7 @@ function syncRedirectTypeAvailability() {
 function currentMatrixFilters() {
   return {
     category: elements.category.value,
+    changeableOnly: elements.changeSupportToggle.getAttribute("aria-pressed") === "true",
     differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
     query: elements.search.value,
     recordType: elements.dnsType.value,
@@ -3168,6 +3366,10 @@ function resetMatrixFilters() {
   elements.scope.value = DEFAULT_MATRIX_FILTERS.scope
   elements.dnsType.value = DEFAULT_MATRIX_FILTERS.recordType
   elements.redirectType.value = DEFAULT_MATRIX_FILTERS.redirectType
+  elements.changeSupportToggle.setAttribute(
+    "aria-pressed",
+    String(DEFAULT_MATRIX_FILTERS.changeableOnly),
+  )
   elements.differenceToggle.setAttribute(
     "aria-pressed",
     String(DEFAULT_MATRIX_FILTERS.differencesOnly),
@@ -3180,6 +3382,7 @@ function resetMatrixFilters() {
   state.filterPanelExpanded = false
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
+  renderCategoryCapability()
   filterRows()
 }
 
@@ -3190,6 +3393,7 @@ function renderMatrixFilters() {
   renderRedirectTypes()
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
+  renderCategoryCapability()
   syncMatrixFilterControls()
 }
 
@@ -3241,14 +3445,18 @@ function renderPolicyCards() {
       || exception.status === POLICY_EXCEPTION_STATUS.VIOLATED,
   ).length
   elements.emailPolicyExceptions.hidden = exceptionCount === 0
-  elements.emailPolicyExceptions.textContent = `${exceptionCount} policy exception${exceptionCount === 1 ? "" : "s"}`
+  const exceptionLabel = `${exceptionCount} policy exception${exceptionCount === 1 ? "" : "s"}`
+  elements.emailPolicyExceptions.textContent = exceptionLabel
   elements.emailPolicyExceptions.classList.toggle(
     "needs-review",
     exceptionReviewCount > 0,
   )
   elements.emailPolicyExceptions.setAttribute(
     "aria-label",
-    `Inspect ${exceptionCount} email policy exception${exceptionCount === 1 ? "" : "s"}. ${activeExceptionCount} active and ${exceptionReviewCount} requiring review.`,
+    contextualActionLabel(
+      exceptionLabel,
+      `Inspect email policy exceptions. ${activeExceptionCount} active and ${exceptionReviewCount} requiring review.`,
+    ),
   )
   elements.emailPolicyExceptions.title = exceptionReviewCount > 0
     ? `${exceptionReviewCount} configured exception${exceptionReviewCount === 1 ? "" : "s"} requires review`
@@ -3269,6 +3477,7 @@ function renderPolicyCards() {
   elements.wafPolicyDrift.textContent = `${wafDrift.length} drifted`
 
   renderIntentPolicyCard()
+  renderDnssecWorkflowCard()
   const intentDriftZoneIds = state.intentEvaluation
     ? [...state.intentEvaluation.rowStates.values()].flatMap(
         (rowState) => rowState.actionableCells.map((cell) => cell.zone.meta.id),
@@ -3499,6 +3708,7 @@ function openCoverageIntentEditor(issue, expectation = null) {
     : "Mark expected"
   clearFieldError(elements.coverageIntentReason, elements.coverageIntentError)
   showDialog(elements.coverageIntentDialog, {
+    fallbackFocus: coverageIntentReturnFocus,
     initialFocus: elements.coverageIntentReason,
   })
   elements.coverageIntentReason.select()
@@ -3514,6 +3724,7 @@ async function saveCoverageIntent(event) {
     if (!expectation) return
     elements.coverageIntentDialog.close()
     requestIntentRemoval({
+      fallbackFocus: coverageIntentReturnFocus,
       remove: (document) => removeFleetIntentCoverageExpectation(
         document,
         expectation.id,
@@ -3610,6 +3821,12 @@ function intentPolicyState(policyId) {
   ) || null
 }
 
+function cellIntentValue(cell) {
+  return Object.prototype.hasOwnProperty.call(cell, "intentValue")
+    ? cell.intentValue
+    : cell.inspectionValue
+}
+
 function rowIntentVariants(row, policy = null) {
   const variants = new Map()
   for (const zone of state.inventory.zones) {
@@ -3620,12 +3837,12 @@ function rowIntentVariants(row, policy = null) {
       variants.set(canonical, {
         canonical,
         count: 0,
-        display: cell.display,
+        display: cell.intentDisplay ?? cell.display,
         origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
         resolutionCanonical: cell.resolutionCanonical || null,
         sourceZoneId: zone.meta.id,
         sourceZoneName: zone.meta.name,
-        value: structuredClone(cell.inspectionValue),
+        value: structuredClone(cellIntentValue(cell)),
       })
     }
     const variant = variants.get(canonical)
@@ -3635,7 +3852,7 @@ function rowIntentVariants(row, policy = null) {
       variant.resolutionCanonical = cell.resolutionCanonical || null
       variant.sourceZoneId = zone.meta.id
       variant.sourceZoneName = zone.meta.name
-      variant.value = structuredClone(cell.inspectionValue)
+      variant.value = structuredClone(cellIntentValue(cell))
     }
   }
   if (policy?.expected
@@ -4021,6 +4238,10 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
   renderIntentPolicyValueMode()
   renderIntentPolicyPreview()
   showDialog(elements.intentPolicyDialog, {
+    fallbackFocus: () => matrixIntentReturnFocus(
+      row,
+      ".intent-set-policy",
+    ),
     initialFocus: elements.intentPolicyGroup,
   })
 }
@@ -4270,6 +4491,11 @@ function openIntentAcknowledgement(action) {
   elements.intentAcknowledgementError.hidden = true
   elements.intentAcknowledgementError.textContent = ""
   showDialog(elements.intentAcknowledgementDialog, {
+    fallbackFocus: () => matrixIntentReturnFocus(
+      action.row,
+      ".remove-acknowledgement, .acknowledge-intent",
+      action.zone.meta.id,
+    ),
     initialFocus: elements.intentAcknowledgementReason,
   })
 }
@@ -4333,6 +4559,7 @@ function requestIntentRemoval(options) {
   elements.intentDeleteTitle.textContent = options.title
   elements.intentDeleteSummary.textContent = options.summary
   showDialog(elements.intentDeleteDialog, {
+    fallbackFocus: options.fallbackFocus || intentManagerReturnFocus,
     initialFocus: elements.intentDeleteDialog.querySelector("[data-dialog-close]"),
   })
 }
@@ -4408,6 +4635,9 @@ function intentActionButton(label, action, options = {}) {
   button.type = "button"
   button.disabled = Boolean(options.write && !intentWritable())
   if (options.write) button.dataset.intentWrite = ""
+  if (options.context) {
+    button.setAttribute("aria-label", contextualActionLabel(label, options.context))
+  }
   if (options.title) button.title = options.title
   button.addEventListener("click", action)
   return button
@@ -4462,13 +4692,17 @@ function renderIntentGroups() {
       const actions = intentItemActions()
       const inUse = state.intent.policies.some((policy) => policy.groupId === group.id)
       actions.append(
-        intentActionButton("Edit", () => openIntentGroupEditor(group), { write: true }),
+        intentActionButton("Edit", () => openIntentGroupEditor(group), {
+          context: group.name,
+          write: true,
+        }),
         intentActionButton("Remove", () => requestIntentRemoval({
           remove: (document) => removeFleetIntentGroup(document, group.id),
           successMessage: `${group.name} group removed`,
           summary: `Remove ${group.name}? Its saved membership will be discarded.`,
           title: "Remove zone group",
         }), {
+          context: group.name,
           danger: true,
           title: inUse ? "Remove or retarget policies that use this group first" : "",
           write: true,
@@ -4508,6 +4742,9 @@ function renderIntentPolicies() {
         : "Aligned"
     const group = intentGroupById(policy.groupId)
     const groupScope = intentGroupScope(group)
+    const actionContext = group
+      ? `${policy.facet.label} for ${group.name}`
+      : policy.facet.label
     const valueConstraint = fleetIntentPolicyValueConstraint(policy)
     const remediation = intentPolicyRemediation(
       row,
@@ -4563,7 +4800,9 @@ function renderIntentPolicies() {
     item.append(value)
     const actions = intentItemActions()
     actions.append(
-      intentActionButton("Show", () => showIntentPolicyInMatrix(policy)),
+      intentActionButton("Show", () => showIntentPolicyInMatrix(policy), {
+        context: actionContext,
+      }),
     )
     if (correction?.available) {
       const correctionCount = correction.targets.length
@@ -4574,6 +4813,7 @@ function renderIntentPolicies() {
           `Align ${policy.facet.label} with fleet intent`,
         ),
         {
+          context: actionContext,
           title: `Live-validate and preview DNSSEC status changes for ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
           write: true,
         },
@@ -4581,8 +4821,12 @@ function renderIntentPolicies() {
     }
     if (row) {
       actions.append(
-        intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), { write: true }),
+        intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), {
+          context: actionContext,
+          write: true,
+        }),
         intentActionButton("Add coverage", () => openIntentPolicyEditor(row), {
+          context: actionContext,
           title: "Add another zone group and value relationship for this facet",
           write: true,
         }),
@@ -4594,7 +4838,7 @@ function renderIntentPolicies() {
         successMessage: `${policy.facet.label} intent removed`,
         summary: `Remove intent for ${policy.facet.label}? Its acknowledgements will also be removed.`,
         title: "Remove facet intent",
-      }), { danger: true, write: true }),
+      }), { context: actionContext, danger: true, write: true }),
     )
     item.append(actions)
     fragment.append(item)
@@ -4636,6 +4880,7 @@ function renderIntentCoverageExpectations() {
     }))
   for (const expectationState of expectationStates) {
     const expectation = expectationState.expectation
+    const actionContext = coverageTargetLabel(expectation)
     const status = expectationState.status
     const presentation = status === FLEET_INTENT_COVERAGE_EXPECTATION_STATUS.ACTIVE
       ? {
@@ -4677,10 +4922,10 @@ function renderIntentCoverageExpectations() {
     actions.append(
       intentActionButton("Show coverage", () => {
         showCoverageExpectation(expectationState)
-      }),
+      }, { context: actionContext }),
       intentActionButton("Edit", () => {
         openCoverageIntentEditor(expectationState.issue, expectation)
-      }, { write: true }),
+      }, { context: actionContext, write: true }),
       intentActionButton("Remove", () => requestIntentRemoval({
         remove: (document) => removeFleetIntentCoverageExpectation(
           document,
@@ -4689,7 +4934,7 @@ function renderIntentCoverageExpectations() {
         successMessage: `Expected coverage removed for ${coverageTargetLabel(expectation)}`,
         summary: `Remove expected coverage for ${coverageTargetLabel(expectation)}? A matching failure will return to unexpected coverage.`,
         title: "Remove expected coverage",
-      }), { danger: true, write: true }),
+      }), { context: actionContext, danger: true, write: true }),
     )
     item.append(actions)
     fragment.append(item)
@@ -4708,6 +4953,7 @@ function renderIntentAcknowledgements() {
   for (const entry of state.intentEvaluation?.acknowledgementStates || []) {
     const acknowledgement = entry.acknowledgement
     const policy = intentPolicyById(acknowledgement.policyId)
+    const actionContext = `${policy?.facet.label || "Unknown facet"} on ${acknowledgement.zoneName}`
     const status = entry.status === FLEET_INTENT_ACKNOWLEDGEMENT_STATUS.ACTIVE
       ? "active"
       : "stale"
@@ -4729,13 +4975,17 @@ function renderIntentAcknowledgements() {
       }),
     )
     const actions = intentItemActions()
-    if (policy) actions.append(intentActionButton("Show", () => showIntentPolicyInMatrix(policy)))
+    if (policy) {
+      actions.append(intentActionButton("Show", () => showIntentPolicyInMatrix(policy), {
+        context: actionContext,
+      }))
+    }
     actions.append(intentActionButton("Remove", () => requestIntentRemoval({
       remove: (document) => removeFleetIntentAcknowledgement(document, acknowledgement.id),
       successMessage: `Acknowledgement removed for ${acknowledgement.zoneName}`,
       summary: `Remove this acknowledgement for ${acknowledgement.zoneName}? The observed difference will return to actionable drift when its policy still applies.`,
       title: "Remove acknowledgement",
-    }), { danger: true, write: true }))
+    }), { context: actionContext, danger: true, write: true }))
     item.append(actions)
     fragment.append(item)
   }
@@ -5308,6 +5558,11 @@ function activateIntentCellAction(button) {
   }
   if (action.type === "remove-acknowledgement") {
     requestIntentRemoval({
+      fallbackFocus: () => matrixIntentReturnFocus(
+        action.row,
+        ".acknowledge-intent, .remove-acknowledgement",
+        action.zone.meta.id,
+      ),
       remove: (document) => removeFleetIntentAcknowledgement(
         document,
         action.acknowledgement.id,
@@ -5494,12 +5749,19 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
     return
   }
   if (intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED) {
+    const actionLabel = "Unacknowledge"
     const button = createElement("button", {
       className: "cell-action remove-acknowledgement",
-      text: "Unacknowledge",
+      text: actionLabel,
     })
     button.type = "button"
-    button.setAttribute("aria-label", `Remove acknowledgement for ${row.label} on ${zone.meta.name}`)
+    button.setAttribute(
+      "aria-label",
+      contextualActionLabel(
+        actionLabel,
+        `Remove acknowledgement for ${row.label} on ${zone.meta.name}`,
+      ),
+    )
     button.title = "Return this exact difference to actionable drift"
     button.disabled = !intentWritable()
     intentCellActionByButton.set(button, {
@@ -5750,6 +6012,7 @@ function renderMatrix() {
     const tr = document.createElement("tr")
     tr.dataset.actionable = String(row.actionable)
     tr.dataset.category = row.category
+    tr.dataset.changeable = String(matrixRowSupportsChanges(row))
     tr.dataset.different = String(
       row.different || Boolean(rulesetComparison?.hasDefinitionDifferences),
     )
@@ -5802,32 +6065,37 @@ function renderMatrix() {
       [...row.cells.values()].map((cell) => cell.secondaryAction?.type).filter(Boolean),
     )
     if (row.variantCount > 1 && !rulesetComparison?.hasDifferences) {
+      const compareLabel = `Compare ${row.variantCount} values`
       const compareButton = createElement("button", {
         className: "cell-action compare-values",
-        text: `Compare ${row.variantCount} values`,
+        text: compareLabel,
       })
       compareButton.type = "button"
       compareButton.setAttribute(
         "aria-label",
-        `Compare ${row.variantCount} observed values for ${row.label}`,
+        contextualActionLabel(compareLabel, `Observed values for ${row.label}`),
       )
       compareButton.title = "See the zones using each value and only the fields that differ"
       valueComparisonRowByButton.set(compareButton, row)
       facetActions.append(compareButton)
     }
     if (rulesetComparison?.hasDifferences) {
+      const reviewLabel = rulesetComparison.baseline && rulesetComparison.outlierCount > 0
+        ? `Review ${rulesetComparison.outlierCount} count outlier${rulesetComparison.outlierCount === 1 ? "" : "s"}`
+        : rulesetComparison.baseline
+          ? "Review rule differences"
+          : "Review count distribution"
       const reviewButton = createElement("button", {
         className: "cell-action review-ruleset-comparison",
-        text: rulesetComparison.baseline && rulesetComparison.outlierCount > 0
-          ? `Review ${rulesetComparison.outlierCount} count outlier${rulesetComparison.outlierCount === 1 ? "" : "s"}`
-          : rulesetComparison.baseline
-            ? "Review rule differences"
-            : "Review count distribution",
+        text: reviewLabel,
       })
       reviewButton.type = "button"
       reviewButton.setAttribute(
         "aria-label",
-        `Review rule-count and ordered-rule differences for ${row.label}`,
+        contextualActionLabel(
+          reviewLabel,
+          `Rule-count and ordered-rule differences for ${row.label}`,
+        ),
       )
       reviewButton.title = "See what differs, open exact rulesets, or define allowed variation"
       rulesetComparisonRowByButton.set(reviewButton, row)
@@ -5838,21 +6106,25 @@ function renderMatrix() {
       const policyGroup = policies.length === 1
         ? intentGroupById(policies[0].groupId)
         : null
+      const intentLabel = policies.length === 0
+        ? "Set intent"
+        : policies.length === 1
+          ? `Intent: ${intentPolicyConstraintLabel(policies[0])}`
+          : `Intent (${policies.length})`
       const intentButton = createElement("button", {
         className: "cell-action intent-set-policy",
-        text: policies.length === 0
-          ? "Set intent"
-          : policies.length === 1
-            ? `Intent: ${intentPolicyConstraintLabel(policies[0])}`
-            : `Intent (${policies.length})`,
+        text: intentLabel,
       })
       intentButton.type = "button"
       intentButton.disabled = !intentWritable()
       intentButton.setAttribute(
         "aria-label",
-        policies.length > 1
-          ? `Manage ${policies.length} intent policies for ${row.label}`
-          : `${policies.length === 1 ? "Edit" : "Set"} intent for ${row.label}`,
+        contextualActionLabel(
+          intentLabel,
+          policies.length > 1
+            ? `Manage ${policies.length} intent policies for ${row.label}`
+            : `${policies.length === 1 ? "Edit" : "Set"} intent for ${row.label}`,
+        ),
       )
       intentButton.title = policies.length > 1
         ? "Review overlapping policies in Fleet intent"
@@ -5869,14 +6141,18 @@ function renderMatrix() {
     const intentCorrection = dnssecIntentCorrection(row)
     if (!readOnly && intentCorrection.available) {
       const correctionCount = intentCorrection.targets.length
+      const correctionLabel = `Align ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`
       const correctionButton = createElement("button", {
         className: "cell-action apply-intent-correction",
-        text: `Align ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+        text: correctionLabel,
       })
       correctionButton.type = "button"
       correctionButton.setAttribute(
         "aria-label",
-        `Align ${row.label} with fleet intent on ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+        contextualActionLabel(
+          correctionLabel,
+          `Align ${row.label} with fleet intent`,
+        ),
       )
       correctionButton.title = "Fresh-read the drifting zones and preview the DNSSEC status writes"
       correctionButton.dataset.actionTitle = correctionButton.title
@@ -5907,12 +6183,16 @@ function renderMatrix() {
       facetActions.append(bulkFillButton)
     }
     if (row.fleetAction?.type === FLEET_ACTION_KIND.RULE_RENAME && !readOnly) {
+      const renameLabel = "Rename fleet"
       const renameButton = createElement("button", {
         className: "cell-action rename-rule",
-        text: "Rename fleet",
+        text: renameLabel,
       })
       renameButton.type = "button"
-      renameButton.setAttribute("aria-label", `Rename ${row.label} across fleet`)
+      renameButton.setAttribute(
+        "aria-label",
+        contextualActionLabel(renameLabel, `Rename ${row.label} across fleet`),
+      )
       renameButton.title = `Rename ${row.fleetAction.rules.length} live rule instance${row.fleetAction.rules.length === 1 ? "" : "s"} after live validation`
       renameButton.dataset.actionTitle = renameButton.title
       renameButton.disabled = state.busy
@@ -5972,15 +6252,20 @@ function coverageIssueGroups(issueStates) {
 
 function coverageIssueAction(issueState) {
   if (!intentMutationSupported()) return null
+  const actionLabel = issueState.expected
+    ? "Edit expectation"
+    : issueState.expectation
+      ? "Update expectation"
+      : "Mark expected"
   const button = createElement("button", {
     className: "button button-quiet",
-    text: issueState.expected
-      ? "Edit expectation"
-      : issueState.expectation
-        ? "Update expectation"
-        : "Mark expected",
+    text: actionLabel,
   })
   button.type = "button"
+  button.setAttribute(
+    "aria-label",
+    contextualActionLabel(actionLabel, coverageTargetLabel(issueState.issue)),
+  )
   button.dataset.intentWrite = ""
   button.disabled = !intentWritable()
   button.addEventListener("click", () => {
@@ -6167,6 +6452,7 @@ function filterRows() {
     const show = matrixRowMatchesFilters({
       actionable: row.dataset.actionable === "true",
       category: row.dataset.category,
+      changeable: row.dataset.changeable === "true",
       different: row.dataset.different === "true",
       missingZoneIds: row.dataset.missingZoneIds.split(" ").filter(Boolean),
       presentCount: Number(row.dataset.presentCount),
@@ -6179,6 +6465,10 @@ function filterRows() {
   }
 
   elements.visibleCount.textContent = `${visible} / ${rows.length} facets`
+  const emptyMessage = matrixEmptyMessage(rows.length, visible)
+  elements.matrixEmpty.textContent = emptyMessage
+  elements.matrixEmpty.hidden = emptyMessage.length === 0
+  elements.matrixTable.hidden = emptyMessage.length > 0
   syncMatrixFilterControls(filters)
   syncMatrixActionTabStop()
 }
@@ -6186,15 +6476,15 @@ function filterRows() {
 function updateSelectionStyles() {
   const count = state.selectedZoneIds.size
   const targetHolesWasActive = elements.targetHoles.getAttribute("aria-pressed") === "true"
-  const driftCount = policyDriftZoneIds().length
+  const driftCount = workflowOrIntentDriftZoneIds().length
   const zoneCount = state.inventory?.zones.length || 0
   const selectionCanNarrow = count > 0 && count < zoneCount
   if (!selectionCanNarrow) state.selectedColumnsOnly = false
   const selectedColumnsOnly = selectionCanNarrow && state.selectedColumnsOnly
   elements.selectionCount.textContent = String(count)
   elements.writeSelectionSummary.textContent = count === 0
-    ? "No target zones selected"
-    : `${count} target zone${count === 1 ? "" : "s"} selected`
+    ? "No target zones chosen"
+    : `${count} target zone${count === 1 ? "" : "s"} chosen`
   for (const element of document.querySelectorAll("[data-zone-id]")) {
     const selected = state.selectedZoneIds.has(element.dataset.zoneId)
     if (element.classList.contains("zone-heading")) element.classList.toggle("selected", selected)
@@ -6297,6 +6587,12 @@ function updateActionButtons() {
         : "Fleet inventory is unavailable"
   elements.alignEmail.disabled = writeLocked || !hasSelection
   elements.alignWaf.disabled = writeLocked || !hasSelection
+  elements.alignEmail.textContent = hasSelection
+    ? `Review Email for ${state.selectedZoneIds.size}`
+    : "Choose zones first"
+  elements.alignWaf.textContent = hasSelection
+    ? `Review WAF for ${state.selectedZoneIds.size}`
+    : "Choose zones first"
   elements.alignEmail.title = !hasSelection && !readOnly
     ? "Choose at least one target zone first"
     : "Live-validates Email Routing and DNS state before confirmation"
@@ -6304,7 +6600,13 @@ function updateActionButtons() {
     ? "Choose at least one target zone first"
     : "Live-validates shared WAF rules before confirmation"
   elements.chooseTargets.disabled = state.busy || !state.inventory
-  elements.showEditableSettings.disabled = !state.matrix
+  elements.reviewNeedsAttention.disabled = !state.matrix
+    || state.matrix.summary.differences === 0
+  elements.showSupportedChanges.disabled = !state.matrix
+    || matrixCapabilityCounts(state.matrix).changeableRows === 0
+  elements.showDnssecWorkflow.disabled = !state.matrix?.rows.some(
+    rowSupportsDnssecIntentCorrection,
+  )
 
   for (const cell of document.querySelectorAll(".editable-cell, .fillable-hole")) {
     cell.classList.toggle("write-locked", writeLocked)
@@ -6390,12 +6692,12 @@ function updateActionButtons() {
 function updateTargetSelectionSummary() {
   const count = state.selectedZoneIds.size
   elements.targetSelectionSummary.textContent = count === 0
-    ? "No target zones selected"
-    : `${count} target zone${count === 1 ? "" : "s"} selected`
+    ? "No target zones chosen"
+    : `${count} target zone${count === 1 ? "" : "s"} chosen`
 }
 
 function renderTargetOptions() {
-  const drifted = new Set(policyDriftZoneIds())
+  const drifted = new Set(workflowOrIntentDriftZoneIds())
   const fragment = document.createDocumentFragment()
 
   for (const zone of state.inventory.zones) {
@@ -6408,7 +6710,9 @@ function renderTargetOptions() {
     const copy = createElement("span")
     copy.append(createElement("strong", { text: zone.meta.name }))
     copy.append(createElement("small", {
-      text: drifted.has(zone.meta.id) ? "Policy drift detected" : "No policy drift",
+      text: drifted.has(zone.meta.id)
+        ? "Workflow or intent drift"
+        : "No workflow or intent drift",
     }))
     label.append(checkbox, copy)
     fragment.append(label)
@@ -6425,24 +6729,57 @@ function showTargetDialog() {
   })
 }
 
-function showEditableSettings() {
+function focusConfigurationExplorer() {
+  elements.configurationHeading.focus({ preventScroll: true })
+  elements.configurationHeading.scrollIntoView({
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+    block: "start",
+  })
+}
+
+function showExplorerView(options = {}) {
   elements.search.value = ""
-  elements.category.value = "Zone settings"
+  elements.category.value = options.category || ""
+  elements.scope.value = options.scope || MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
-  elements.differenceToggle.setAttribute("aria-pressed", "false")
+  elements.differenceToggle.setAttribute(
+    "aria-pressed",
+    String(Boolean(options.differencesOnly)),
+  )
+  elements.changeSupportToggle.setAttribute(
+    "aria-pressed",
+    String(Boolean(options.changeableOnly)),
+  )
+  elements.targetHoles.setAttribute("aria-pressed", "false")
+  elements.targetHoles.textContent = "Target holes"
+  state.filterPanelExpanded = false
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
+  renderCategoryCapability()
   filterRows()
+  focusConfigurationExplorer()
+}
 
-  const firstEdit = [...elements.matrixBody.querySelectorAll(".editable-cell")]
-    .find((cell) => cell.offsetParent !== null)
-  firstEdit?.scrollIntoView({
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-    block: "center",
-    inline: "center",
+function showNeedsAttention() {
+  showExplorerView({
+    differencesOnly: true,
+    scope: MATRIX_SCOPE.ALL,
   })
-  firstEdit?.querySelector(".edit-cell")?.focus({ preventScroll: true })
+}
+
+function showSupportedChanges() {
+  showExplorerView({
+    changeableOnly: true,
+    scope: MATRIX_SCOPE.ALL,
+  })
+}
+
+function showDnssecWorkflow() {
+  showExplorerView({
+    category: "DNSSEC",
+    scope: MATRIX_SCOPE.ALL,
+  })
 }
 
 function activityOperations(entry) {
@@ -6503,9 +6840,13 @@ function activityZoneNames(entry) {
 function updateActivityButton() {
   const count = state.activity.entries.length
   elements.activityCount.textContent = String(count)
+  const activityLabel = `Activity ${count}`
   elements.showActivity.setAttribute(
     "aria-label",
-    `Operation history, ${count === 0 ? "no" : count} entr${count === 1 ? "y" : "ies"}`,
+    contextualActionLabel(
+      activityLabel,
+      `Operation history, ${count === 0 ? "no" : count} entr${count === 1 ? "y" : "ies"}`,
+    ),
   )
 }
 
@@ -6927,6 +7268,7 @@ function confirmPlans(title, planSet, options = {}) {
       resolve(elements.confirmDialog.returnValue === "apply")
     }, { once: true })
     showDialog(elements.confirmDialog, {
+      fallbackFocus: options.fallbackFocus,
       initialFocus: elements.confirmDialog.querySelector("[value='cancel']"),
     })
   })
@@ -8548,8 +8890,16 @@ async function reviewInlineSetting(event) {
     return
   }
   if (state.inlineEditor !== editor) return
+  const fallbackFocus = () => {
+    const target = editor.cell.querySelector(".edit-cell")
+    if (!target || !matrixActionIsAvailable(target)) return elements.matrixShell
+    syncMatrixActionTabStop(target)
+    return target
+  }
   closeInlineEditor({ restoreFocus: false })
-  await applyPlans("Update zone setting", createLivePlanSet([plan]))
+  await applyPlans("Update zone setting", createLivePlanSet([plan]), {
+    fallbackFocus,
+  })
 }
 
 function openInlineSettingEditor(cell, action, zone, setting) {
@@ -9357,24 +9707,28 @@ async function refreshInventory(options = {}) {
 }
 
 async function initialize() {
-  renderOperationActivity()
-  await Promise.all([
-    syncFleetIntent({ silent: true }),
-    loadOperationActivity({ silent: true }),
-  ])
-  if (cachedRecord) {
-    state.startupCacheLoadedAt = cachedRecord.loadedAt
-    renderInventory(cachedRecord.inventory, INVENTORY_SOURCE.CACHE)
-    restoreInventoryStatus()
-    if (!cacheRecordIsFresh(cachedRecord)) {
-      await refreshInventory({
-        preserveSelection: true,
-        staleCache: true,
-      })
+  try {
+    renderOperationActivity()
+    await Promise.all([
+      syncFleetIntent({ silent: true }),
+      loadOperationActivity({ silent: true }),
+    ])
+    if (cachedRecord) {
+      state.startupCacheLoadedAt = cachedRecord.loadedAt
+      renderInventory(cachedRecord.inventory, INVENTORY_SOURCE.CACHE)
+      restoreInventoryStatus()
+      if (!cacheRecordIsFresh(cachedRecord)) {
+        await refreshInventory({
+          preserveSelection: true,
+          staleCache: true,
+        })
+      }
+      return
     }
-    return
+    await refreshInventory()
+  } finally {
+    application.dataset.initializing = "false"
   }
-  await refreshInventory()
 }
 
 api.startSessionMonitor({
@@ -9398,6 +9752,7 @@ elements.search.addEventListener("input", filterRows)
 elements.category.addEventListener("change", () => {
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
+  renderCategoryCapability()
   filterRows()
 })
 elements.scope.addEventListener("change", filterRows)
@@ -9412,6 +9767,11 @@ elements.targetHoles.addEventListener("click", () => {
 elements.differenceToggle.addEventListener("click", () => {
   const next = elements.differenceToggle.getAttribute("aria-pressed") !== "true"
   elements.differenceToggle.setAttribute("aria-pressed", String(next))
+  filterRows()
+})
+elements.changeSupportToggle.addEventListener("click", () => {
+  const next = elements.changeSupportToggle.getAttribute("aria-pressed") !== "true"
+  elements.changeSupportToggle.setAttribute("aria-pressed", String(next))
   filterRows()
 })
 elements.filterPanelToggle.addEventListener("click", () => {
@@ -9529,7 +9889,7 @@ elements.clearSelection.addEventListener("click", () => {
   selectZoneIds([])
 })
 elements.selectDrifted.addEventListener("click", () => {
-  selectZoneIds(policyDriftZoneIds())
+  selectZoneIds(workflowOrIntentDriftZoneIds())
 })
 elements.chooseTargets.addEventListener("click", showTargetDialog)
 elements.matrixChooseTargets.addEventListener("click", showTargetDialog)
@@ -9537,7 +9897,9 @@ elements.selectedColumnsOnly.addEventListener("click", () => {
   state.selectedColumnsOnly = !state.selectedColumnsOnly
   updateSelectionStyles()
 })
-elements.showEditableSettings.addEventListener("click", showEditableSettings)
+elements.reviewNeedsAttention.addEventListener("click", showNeedsAttention)
+elements.showSupportedChanges.addEventListener("click", showSupportedChanges)
+elements.showDnssecWorkflow.addEventListener("click", showDnssecWorkflow)
 elements.showActivity.addEventListener("click", openOperationActivity)
 elements.activityRefresh.addEventListener("click", () => loadOperationActivity())
 elements.activityFilter.addEventListener("change", renderOperationActivity)
@@ -9562,7 +9924,7 @@ elements.targetSelectAll.addEventListener("click", () => {
   selectZoneIds(state.inventory.zones.map((zone) => zone.meta.id))
 })
 elements.targetSelectDrifted.addEventListener("click", () => {
-  selectZoneIds(policyDriftZoneIds())
+  selectZoneIds(workflowOrIntentDriftZoneIds())
 })
 elements.targetClear.addEventListener("click", () => {
   selectZoneIds([])

@@ -9,6 +9,7 @@ export const DEFAULT_MATRIX_SCOPE = MATRIX_SCOPE.FLEET_PATTERNS
 
 export const DEFAULT_MATRIX_FILTERS = Object.freeze({
   category: "",
+  changeableOnly: false,
   differencesOnly: true,
   query: "",
   recordType: "",
@@ -21,6 +22,14 @@ export const DNS_MATRIX_CATEGORIES = Object.freeze([
   "DNS records",
   "Email DNS specification",
 ])
+
+export function matrixEmptyMessage(totalCount, visibleCount) {
+  if (visibleCount > 0) return ""
+  if (totalCount > 0) {
+    return "No facets match the current filters. Reset filters or broaden the search."
+  }
+  return "No comparable facets are available in this fleet snapshot."
+}
 
 export function facetMatchesScope(presentCount, zoneCount, scope) {
   if (scope === MATRIX_SCOPE.ALL) return true
@@ -37,6 +46,7 @@ export function matrixFilterChangeCount(filters) {
     String(filters.scope || "") !== DEFAULT_MATRIX_FILTERS.scope,
     String(filters.recordType || "") !== DEFAULT_MATRIX_FILTERS.recordType,
     String(filters.redirectType || "") !== DEFAULT_MATRIX_FILTERS.redirectType,
+    Boolean(filters.changeableOnly) !== DEFAULT_MATRIX_FILTERS.changeableOnly,
     Boolean(filters.differencesOnly) !== DEFAULT_MATRIX_FILTERS.differencesOnly,
     Boolean(filters.targetHolesOnly) !== DEFAULT_MATRIX_FILTERS.targetHolesOnly,
   ].filter(Boolean).length
@@ -64,6 +74,7 @@ export function matrixRowMatchesFilters(row, filters) {
     || row.missingZoneIds.some((zoneId) => targetZoneIds.has(zoneId))
   return terms.every((term) => search.includes(term))
     && (!filters.category || row.category === filters.category)
+    && (!filters.changeableOnly || row.changeable)
     && (!filters.recordType || row.recordType === filters.recordType)
     && (!filters.redirectType || (row.redirectTypes || []).includes(filters.redirectType))
     && (!filters.differencesOnly || (row.actionable ?? row.different))
