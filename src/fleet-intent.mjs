@@ -56,6 +56,11 @@ export const FLEET_INTENT_PRESENCE_CONSTRAINT = Object.freeze({
   REQUIRED: "required",
 })
 
+export const FLEET_INTENT_POLICY_CONFLICT_KIND = Object.freeze({
+  EXACT_VALUE: "exact-value",
+  PRESENCE: "presence",
+})
+
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const DNSSEC_INTENT_CATEGORY = "DNSSEC"
 const DNSSEC_INTENT_CONFIGURATION_KEY = "configuration"
@@ -64,6 +69,17 @@ const LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO = 2
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE = 3
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR = 4
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
+const COMPOSED_CELL_STATUS_PRIORITY = Object.freeze({
+  [FLEET_INTENT_CELL_STATUS.MATCH]: 0,
+  [FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED]: 1,
+  [FLEET_INTENT_CELL_STATUS.VARIANT]: 2,
+  [FLEET_INTENT_CELL_STATUS.MISSING]: 3,
+})
+const COMPOSED_CELL_UNACKNOWLEDGED_STATUS_PRIORITY = Object.freeze({
+  [FLEET_INTENT_CELL_STATUS.MATCH]: 0,
+  [FLEET_INTENT_CELL_STATUS.VARIANT]: 1,
+  [FLEET_INTENT_CELL_STATUS.MISSING]: 2,
+})
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -768,6 +784,81 @@ function policyEvaluation(policy, group, row, inventory, acknowledgements) {
   }
 }
 
+function applicablePolicyConflictKinds(policyStates) {
+  const presenceConstraints = new Set(policyStates.map(
+    (policyState) => fleetIntentPolicyPresenceConstraint(policyState.policy),
+  ))
+  const conflicts = []
+  if (presenceConstraints.has(FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED)
+    && presenceConstraints.has(FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN)) {
+    conflicts.push(FLEET_INTENT_POLICY_CONFLICT_KIND.PRESENCE)
+  }
+  if (presenceConstraints.has(FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN)) {
+    return conflicts
+  }
+  const exactCanonicals = new Set(policyStates
+    .filter((policyState) => fleetIntentPolicyValueConstraint(policyState.policy)
+      === FLEET_INTENT_VALUE_CONSTRAINT.EXACT)
+    .map((policyState) => policyState.policy.expected.canonical))
+  if (exactCanonicals.size > 1) {
+    conflicts.push(FLEET_INTENT_POLICY_CONFLICT_KIND.EXACT_VALUE)
+  }
+  return conflicts
+}
+
+function composedCellStatus(policyCells, priority) {
+  return policyCells.reduce((selected, cell) => (
+    priority[cell.status] > priority[selected]
+      ? cell.status
+      : selected
+  ), FLEET_INTENT_CELL_STATUS.MATCH)
+}
+
+function composedPolicyCell(policyStates, zone) {
+  const policyCells = policyStates.map(
+    (policyState) => policyState.cells.get(zone.meta.id),
+  )
+  const conflictKinds = applicablePolicyConflictKinds(policyStates)
+  if (conflictKinds.length > 0) {
+    return {
+      acknowledgement: null,
+      conflictKinds,
+      observedCanonical: policyCells[0].observedCanonical,
+      policies: policyStates.map((policyState) => policyState.policy),
+      policyCells,
+      status: FLEET_INTENT_CELL_STATUS.CONFLICT,
+      zone,
+    }
+  }
+  const status = composedCellStatus(policyCells, COMPOSED_CELL_STATUS_PRIORITY)
+  const statusWithoutAcknowledgement = composedCellStatus(
+    policyCells.map((cell) => ({ status: cell.statusWithoutAcknowledgement })),
+    COMPOSED_CELL_UNACKNOWLEDGED_STATUS_PRIORITY,
+  )
+  const representative = [...policyCells].sort((left, right) => (
+    COMPOSED_CELL_STATUS_PRIORITY[right.status]
+      - COMPOSED_CELL_STATUS_PRIORITY[left.status]
+      || left.policy.id.localeCompare(right.policy.id)
+  ))[0]
+  return {
+    ...representative,
+    acknowledgement: status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED
+      ? representative.acknowledgement
+      : null,
+    acknowledgements: policyCells
+      .map((cell) => cell.acknowledgement)
+      .filter(Boolean),
+    conflictKinds: [],
+    duplicateZoneNames: [...new Set(policyCells.flatMap(
+      (cell) => cell.duplicateZoneNames,
+    ))].sort((left, right) => left.localeCompare(right)),
+    policies: policyStates.map((policyState) => policyState.policy),
+    policyCells,
+    status,
+    statusWithoutAcknowledgement,
+  }
+}
+
 function acknowledgementEvaluation(
   acknowledgement,
   policyState,
@@ -853,21 +944,7 @@ export function evaluateFleetIntent(document, inventory, matrix) {
         })
         continue
       }
-      if (targeting.length > 1) {
-        cells.set(zone.meta.id, {
-          acknowledgement: null,
-          observedCanonical: observedCanonical(row, zone.meta.name),
-          policies: targeting.map((policyState) => policyState.policy),
-          status: FLEET_INTENT_CELL_STATUS.CONFLICT,
-          zone,
-        })
-        continue
-      }
-      const policyCell = targeting[0].cells.get(zone.meta.id)
-      cells.set(zone.meta.id, {
-        ...policyCell,
-        policies: [policyCell.policy],
-      })
+      cells.set(zone.meta.id, composedPolicyCell(targeting, zone))
     }
     const actionableCells = [...cells.values()].filter(
       (cell) => cell.status === FLEET_INTENT_CELL_STATUS.CONFLICT
