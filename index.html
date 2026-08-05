@@ -78,6 +78,7 @@
             <p class="task-card-detail" id="intent-policy-detail">No facets governed yet</p>
             <div class="task-card-actions">
               <div class="policy-badges">
+                <span class="intent-save-status unsaved" data-intent-save-status role="status" aria-live="polite" aria-atomic="true">Not saved yet</span>
                 <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
                 <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
               </div>
@@ -542,7 +543,10 @@
           <h2 id="intent-title">Fleet intent</h2>
           <p id="intent-summary">Define where facets may exist and how present values should relate without hiding observed differences.</p>
         </div>
-        <div class="intent-metrics" id="intent-metrics" aria-label="Fleet intent summary"></div>
+        <div class="intent-heading-status">
+          <span class="intent-save-status unsaved" data-intent-save-status role="status" aria-live="polite" aria-atomic="true">Not saved yet</span>
+          <div class="intent-metrics" id="intent-metrics" aria-label="Fleet intent summary"></div>
+        </div>
       </header>
       <section class="intent-section" aria-labelledby="intent-groups-title">
         <div class="intent-section-heading">
@@ -651,7 +655,7 @@
         <button class="button button-danger" id="coverage-intent-remove" value="remove" hidden>Remove expectation</button>
         <span class="dialog-action-spacer"></span>
         <button class="button button-quiet" value="cancel">Cancel</button>
-        <button class="button button-primary" id="coverage-intent-save" value="save">Mark expected</button>
+        <button class="button button-primary" id="coverage-intent-save" value="save" data-intent-write>Mark expected</button>
       </div>
     </form>
   </dialog>
@@ -675,7 +679,7 @@
       <p class="field-error" id="intent-group-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
-        <button class="button button-primary" id="intent-group-save" value="save">Save group</button>
+        <button class="button button-primary" id="intent-group-save" value="save" data-intent-write>Save group</button>
       </div>
     </form>
   </dialog>
@@ -777,7 +781,7 @@
       <p class="field-error" id="intent-policy-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
-        <button class="button button-primary" id="intent-policy-save" value="save">Save intent</button>
+        <button class="button button-primary" id="intent-policy-save" value="save" data-intent-write>Save intent</button>
       </div>
     </form>
   </dialog>
@@ -794,7 +798,7 @@
       <p class="field-error" id="intent-acknowledgement-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
-        <button class="button button-primary" id="intent-acknowledgement-save" value="save">Acknowledge state</button>
+        <button class="button button-primary" id="intent-acknowledgement-save" value="save" data-intent-write>Acknowledge state</button>
       </div>
     </form>
   </dialog>
@@ -807,7 +811,7 @@
       <p id="intent-delete-summary"></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
-        <button class="button button-danger" id="intent-delete-apply" value="remove">Remove</button>
+        <button class="button button-danger" id="intent-delete-apply" value="remove" data-intent-write>Remove</button>
       </div>
     </form>
   </dialog>

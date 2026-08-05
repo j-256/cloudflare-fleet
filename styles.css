@@ -848,6 +848,42 @@ dialog h2 {
   align-items: center;
 }
 
+.intent-save-status {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
+  font: 700 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.intent-save-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.intent-save-status.saved {
+  border-color: rgba(119, 208, 143, 0.44);
+  color: var(--green);
+}
+
+.intent-save-status.saving {
+  border-color: rgba(255, 180, 84, 0.44);
+  color: var(--accent-2);
+}
+
+.intent-save-status.failed {
+  border-color: rgba(255, 107, 120, 0.5);
+  color: var(--danger);
+}
+
 .drift-badge {
   padding: 2px 6px;
   border: 1px solid rgba(255, 180, 84, 0.4);
@@ -2975,6 +3011,12 @@ dialog form {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.intent-heading-status {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
 }
 
 .intent-metrics {
@@ -5228,6 +5270,10 @@ dialog details > summary {
   .rule-card-badges,
   .intent-metrics {
     justify-content: flex-start;
+  }
+
+  .intent-heading-status {
+    justify-items: start;
   }
 
   .ruleset-comparison-group-heading,

@@ -112,6 +112,11 @@ import {
   intentPolicyRemediation,
 } from "./intent-remediation.mjs"
 import {
+  FLEET_INTENT_SAVE_STATUS,
+  intentSaveStatusPresentation,
+  resolveIntentSaveStatus,
+} from "./intent-save-status.mjs"
+import {
   matrixNavigationTarget,
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
@@ -423,6 +428,7 @@ const state = {
   intentEvaluation: null,
   intentGroupDraft: null,
   intentPolicyDraft: null,
+  intentSaveFailure: "",
   intentSaving: false,
   intentSyncing: false,
   filterPanelExpanded: false,
@@ -607,6 +613,7 @@ const elements = {
   intentPolicyValues: document.querySelector("#intent-policy-values"),
   intentPolicyValueRelationship: document.querySelector("#intent-policy-value-relationship"),
   intentReviewUngoverned: document.querySelector("#intent-review-ungoverned"),
+  intentSaveStatuses: [...document.querySelectorAll("[data-intent-save-status]")],
   intentSummary: document.querySelector("#intent-summary"),
   loadProgress: document.querySelector("#load-progress"),
   manageIntent: document.querySelector("#manage-intent"),
@@ -748,6 +755,7 @@ function updateTransportDependentControls() {
   elements.refresh.disabled = state.busy || !state.transportAvailable
   updateActionButtons()
   updateRulesetActionAvailability()
+  renderIntentSaveStatus()
   if (elements.activityDialog.open) renderOperationActivity()
 }
 
@@ -3696,10 +3704,55 @@ function openPolicyExceptionDialog() {
 function setIntentSaving(saving) {
   state.intentSaving = saving
   updateActionButtons()
+  renderIntentSaveStatus()
   if (elements.intentDialog.open) renderIntentManager()
 }
 
-async function persistIntentDocument(document, successMessage) {
+function renderIntentSaveStatus() {
+  const status = resolveIntentSaveStatus({
+    failureMessage: state.intentSaveFailure,
+    readOnly,
+    saving: state.intentSaving,
+    transportAvailable: state.transportAvailable,
+    updatedAt: state.intent.updatedAt,
+    usesBroker: api.usesBroker,
+  })
+  const presentation = intentSaveStatusPresentation(status, {
+    failureMessage: state.intentSaveFailure,
+    savedAtLabel: state.intent.updatedAt
+      ? formatActivityTime(state.intent.updatedAt)
+      : "",
+  })
+  for (const statusElement of elements.intentSaveStatuses) {
+    statusElement.className = `intent-save-status ${presentation.modifier}`
+    statusElement.dataset.saveStatus = status
+    statusElement.textContent = presentation.label
+    statusElement.title = presentation.title
+    statusElement.setAttribute(
+      "aria-live",
+      status === FLEET_INTENT_SAVE_STATUS.FAILED ? "assertive" : "polite",
+    )
+  }
+}
+
+function setIntentSaveButtonSaving(button, saving) {
+  if (!button) return
+  if (saving) {
+    button.dataset.intentIdleLabel = button.textContent
+    button.textContent = intentSaveStatusPresentation(
+      FLEET_INTENT_SAVE_STATUS.SAVING,
+    ).label
+    button.setAttribute("aria-busy", "true")
+    return
+  }
+  if (button.dataset.intentIdleLabel) {
+    button.textContent = button.dataset.intentIdleLabel
+    delete button.dataset.intentIdleLabel
+  }
+  button.removeAttribute("aria-busy")
+}
+
+async function persistIntentDocument(document, successMessage, options = {}) {
   if (!intentWritable()) {
     toast(
       api.usesBroker
@@ -3709,6 +3762,8 @@ async function persistIntentDocument(document, successMessage) {
     )
     return false
   }
+  state.intentSaveFailure = ""
+  setIntentSaveButtonSaving(options.saveButton, true)
   setIntentSaving(true)
   try {
     const saved = await api.persistFleetIntent(document)
@@ -3716,6 +3771,7 @@ async function persistIntentDocument(document, successMessage) {
       throw new Error("The broker returned an invalid fleet intent document")
     }
     state.intent = saved
+    state.intentSaveFailure = ""
     if (state.inventory) renderInventory(state.inventory, state.inventorySource)
     else renderIntentPolicyCard()
     toast(successMessage)
@@ -3723,14 +3779,18 @@ async function persistIntentDocument(document, successMessage) {
   } catch (error) {
     if (error instanceof FleetIntentApiConflictError
       && isFleetIntentDocument(error.currentDocument, auth.accountId)) {
+      const message = "Fleet intent changed in another window. The latest version is loaded; review and retry your edit."
       state.intent = error.currentDocument
+      state.intentSaveFailure = message
       if (state.inventory) renderInventory(state.inventory, state.inventorySource)
-      toast("Fleet intent changed in another window. The latest version is loaded; review and retry your edit.", "error")
+      toast(message, "error")
       return false
     }
-    toast(error instanceof Error ? error.message : String(error), "error")
+    state.intentSaveFailure = error instanceof Error ? error.message : String(error)
+    toast(state.intentSaveFailure, "error")
     return false
   } finally {
+    setIntentSaveButtonSaving(options.saveButton, false)
     setIntentSaving(false)
   }
 }
@@ -3843,6 +3903,7 @@ async function saveCoverageIntent(event) {
   const saved = await persistIntentDocument(
     document,
     `Expected coverage saved for ${coverageTargetLabel(expectation)}`,
+    { saveButton: event.submitter },
   )
   if (saved) elements.coverageIntentDialog.close()
 }
@@ -3857,6 +3918,7 @@ async function syncFleetIntent(options = {}) {
     }
     if (latest.revision === state.intent.revision) return false
     state.intent = latest
+    renderIntentSaveStatus()
     if (state.inventory) renderInventory(state.inventory, state.inventorySource)
     else renderIntentPolicyCard()
     if (!options.silent) toast("Newer fleet intent loaded from another dashboard window")
@@ -4529,6 +4591,7 @@ async function saveIntentPolicy(event) {
   const saved = await persistIntentDocument(
     document,
     `${draft.row.label} intent saved for ${group.name}`,
+    { saveButton: event.submitter },
   )
   if (saved) elements.intentPolicyDialog.close()
 }
@@ -4668,7 +4731,11 @@ async function saveIntentGroup(event) {
     showFieldError(elements.intentGroupName, elements.intentGroupError, error)
     return
   }
-  const saved = await persistIntentDocument(document, `${group.name} group saved`)
+  const saved = await persistIntentDocument(
+    document,
+    `${group.name} group saved`,
+    { saveButton: event.submitter },
+  )
   if (saved) {
     if (groupDraft?.returnToPolicy && state.intentPolicyDraft) {
       state.intentPolicyDraft.baseRevision = state.intent.revision
@@ -4789,6 +4856,7 @@ async function saveIntentAcknowledgement(event) {
   const saved = await persistIntentDocument(
     document,
     `${draft.row.label} acknowledged on ${draft.zone.meta.name}`,
+    { saveButton: event.submitter },
   )
   if (saved) elements.intentAcknowledgementDialog.close()
 }
@@ -4825,7 +4893,11 @@ async function applyIntentRemoval(event) {
     toast(error instanceof Error ? error.message : String(error), "error")
     return
   }
-  const saved = await persistIntentDocument(document, draft.successMessage)
+  const saved = await persistIntentDocument(
+    document,
+    draft.successMessage,
+    { saveButton: event.submitter },
+  )
   if (saved) elements.intentDeleteDialog.close()
 }
 
@@ -5873,6 +5945,7 @@ async function saveIntentAdoption() {
   const saved = await persistIntentDocument(
     draft.preview.document,
     `${policyCount} fleet intent polic${policyCount === 1 ? "y" : "ies"} saved`,
+    { saveButton: elements.intentAdoptionSave },
   )
   if (saved && elements.intentAdoptionDialog.open) {
     elements.intentAdoptionDialog.close()
@@ -10142,6 +10215,7 @@ async function refreshInventory(options = {}) {
 
 async function initialize() {
   try {
+    renderIntentSaveStatus()
     renderOperationActivity()
     await Promise.all([
       syncFleetIntent({ silent: true }),
