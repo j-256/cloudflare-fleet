@@ -74,7 +74,7 @@ test("editable ruleset workspaces describe manual non-exact remediation", () => 
   assert.match(mustDiffer.text, /no automatic uniqueness action/)
 })
 
-test("optional may-differ intent is presented as allowed variation", () => {
+test("optional may-differ intent says that every covered state is accepted", () => {
   const remediation = intentPolicyRemediation(
     row("custom"),
     null,
@@ -85,9 +85,11 @@ test("optional may-differ intent is presented as allowed variation", () => {
   assert.equal(remediation.className, INTENT_REMEDIATION_KIND.ALLOWANCE)
   assert.equal(
     INTENT_REMEDIATION_PRESENTATION[remediation.className].label,
-    "Allowed variation",
+    "Any state accepted",
   )
-  assert.match(remediation.text, /may omit this facet/)
+  assert.match(remediation.text, /facet may be absent/)
+  assert.match(remediation.text, /present value satisfies/)
+  assert.doesNotMatch(remediation.text, /variation/i)
 })
 
 test("optional exact intent does not describe missing values as drift", () => {

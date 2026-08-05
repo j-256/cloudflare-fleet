@@ -103,6 +103,83 @@ function rankedIntentCanonicals(intentCanonicalCounts) {
   )
 }
 
+export function compareFleetValueVariants(values, options = {}) {
+  const variants = values
+    .map((variant) => ({
+      ...variant,
+      count: variant.count ?? variant.zones?.length ?? 0,
+      value: cloneJsonValue(variant.value),
+      zones: [...(variant.zones || [])]
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    }))
+    .sort((left, right) => right.count - left.count
+      || compareCanonical(left.canonical, right.canonical))
+  const hasUniqueConsensus = variants.length > 0
+    && variants[0].count > (variants[1]?.count || 0)
+  const consensusCanonical = hasUniqueConsensus
+    ? variants[0].canonical
+    : null
+  const referenceCanonical = consensusCanonical || variants[0]?.canonical || null
+  const fields = comparisonFields(variants)
+  const missingZones = [...(options.missingZones || [])]
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const presentCount = variants.reduce((sum, variant) => sum + variant.count, 0)
+  return {
+    ...fields,
+    consensusCanonical,
+    consensusCount: hasUniqueConsensus ? variants[0].count : 0,
+    hasUniqueConsensus,
+    missingZones,
+    presentCount,
+    referenceCanonical,
+    variantCount: variants.length,
+    variants,
+    zoneCount: options.zoneCount ?? presentCount + missingZones.length,
+  }
+}
+
+export function groupFleetRowIntentValues(row, zones) {
+  const groups = new Map()
+  for (const zone of zones) {
+    const cell = row.cells.get(zone.meta.name)
+    if (!cell) continue
+    const canonical = cell.intentCanonical ?? cell.canonical
+    const hasIntentValue = Object.prototype.hasOwnProperty.call(cell, "intentValue")
+    const hasInspectionValue = Object.prototype.hasOwnProperty.call(
+      cell,
+      "inspectionValue",
+    )
+    const value = hasIntentValue
+      ? cell.intentValue
+      : hasInspectionValue
+        ? cell.inspectionValue
+        : canonicalValue(canonical)
+    if (!groups.has(canonical)) {
+      groups.set(canonical, {
+        canonical,
+        count: 0,
+        display: cell.intentDisplay ?? cell.display,
+        resolutionCanonical: cell.resolutionCanonical || null,
+        sourceZoneId: zone.meta.id,
+        sourceZoneName: zone.meta.name,
+        value: cloneJsonValue(value),
+        zones: [],
+      })
+    }
+    const group = groups.get(canonical)
+    group.count += 1
+    group.zones.push({ id: zone.meta.id, name: zone.meta.name })
+    const sourceCell = row.cells.get(group.sourceZoneName)
+    if (!sourceCell?.resolutionSource && cell.resolutionSource) {
+      group.resolutionCanonical = cell.resolutionCanonical || null
+      group.sourceZoneId = zone.meta.id
+      group.sourceZoneName = zone.meta.name
+      group.value = cloneJsonValue(value)
+    }
+  }
+  return [...groups.values()]
+}
+
 export function compareFleetRowValues(row, zones) {
   const groups = new Map()
   const missingZones = []
@@ -130,42 +207,23 @@ export function compareFleetRowValues(row, zones) {
     group.zones.push({ id: zone.meta.id, name: zone.meta.name })
   }
 
-  const variants = [...groups.values()]
-    .map((group) => {
-      const intentCanonicals = rankedIntentCanonicals(group.intentCanonicalCounts)
-      return {
-        canonical: group.canonical,
-        count: group.zones.length,
-        display: group.display,
-        intentCanonical: intentCanonicals.length === 1
-          ? intentCanonicals[0][0]
-          : null,
-        value: group.value,
-        zones: group.zones.sort((left, right) => left.name.localeCompare(right.name)),
-      }
-    })
-    .sort((left, right) => right.count - left.count
-      || compareCanonical(left.canonical, right.canonical))
-
-  const hasUniqueConsensus = variants.length > 0
-    && variants[0].count > (variants[1]?.count || 0)
-  const consensusCanonical = hasUniqueConsensus
-    ? variants[0].canonical
-    : null
-  const referenceCanonical = consensusCanonical || variants[0]?.canonical || null
-  const fields = comparisonFields(variants)
-  return {
-    ...fields,
-    consensusCanonical,
-    consensusCount: hasUniqueConsensus ? variants[0].count : 0,
-    hasUniqueConsensus,
-    missingZones: missingZones.sort((left, right) => left.name.localeCompare(right.name)),
-    presentCount: variants.reduce((sum, variant) => sum + variant.count, 0),
-    referenceCanonical,
-    variantCount: variants.length,
-    variants,
+  const variants = [...groups.values()].map((group) => {
+    const intentCanonicals = rankedIntentCanonicals(group.intentCanonicalCounts)
+    return {
+      canonical: group.canonical,
+      count: group.zones.length,
+      display: group.display,
+      intentCanonical: intentCanonicals.length === 1
+        ? intentCanonicals[0][0]
+        : null,
+      value: group.value,
+      zones: group.zones,
+    }
+  })
+  return compareFleetValueVariants(variants, {
+    missingZones,
     zoneCount: zones.length,
-  }
+  })
 }
 
 function appendSegment(segments, kind, text) {

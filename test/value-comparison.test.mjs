@@ -2,8 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  compareFleetValueVariants,
   compareFleetRowValues,
   diffValueText,
+  groupFleetRowIntentValues,
   VALUE_TEXT_DIFF_KIND,
 } from "../src/value-comparison.mjs"
 
@@ -79,6 +81,67 @@ test("fleet value comparison reports only differing leaf fields", () => {
   assert.deepEqual(
     comparison.differences[0].values.map((entry) => entry.value),
     ["one", "two"],
+  )
+})
+
+test("fleet intent value comparison attributes every variant and exposes only differing fields", () => {
+  const zones = [
+    zone("alpha.example"),
+    zone("beta.example"),
+    zone("gamma.example"),
+  ]
+  const common = {
+    action: "block",
+    description: "[fleet] scanner block",
+  }
+  const leadingValue = { ...common, priority: 1000 }
+  const alternateValue = { ...common, priority: 2000 }
+  const row = {
+    cells: new Map([
+      ["alpha.example", {
+        canonical: '"matrix-alpha"',
+        display: "Enabled | block",
+        intentCanonical: JSON.stringify(leadingValue),
+        intentValue: leadingValue,
+      }],
+      ["beta.example", {
+        canonical: '"matrix-beta"',
+        display: "Enabled | block",
+        intentCanonical: JSON.stringify(leadingValue),
+        intentValue: leadingValue,
+        resolutionCanonical: '"resolution-beta"',
+        resolutionSource: { kind: "ruleset-rule" },
+      }],
+      ["gamma.example", {
+        canonical: '"matrix-gamma"',
+        display: "Enabled | block",
+        intentCanonical: JSON.stringify(alternateValue),
+        intentValue: alternateValue,
+      }],
+    ]),
+  }
+
+  const variants = groupFleetRowIntentValues(row, zones)
+  const comparison = compareFleetValueVariants(variants)
+
+  assert.equal(comparison.variantCount, 2)
+  assert.equal(comparison.consensusCount, 2)
+  assert.deepEqual(
+    comparison.variants[0].zones.map((entry) => entry.name),
+    ["alpha.example", "beta.example"],
+  )
+  assert.equal(comparison.variants[0].sourceZoneName, "beta.example")
+  assert.equal(comparison.variants[0].resolutionCanonical, '"resolution-beta"')
+  assert.deepEqual(comparison.variants[1].zones, [{
+    id: "zone-gamma.example",
+    name: "gamma.example",
+  }])
+  assert.deepEqual(comparison.differences.map((entry) => entry.path), [
+    ["priority"],
+  ])
+  assert.deepEqual(
+    comparison.differences[0].values.map((entry) => entry.value),
+    [1000, 2000],
   )
 })
 

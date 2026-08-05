@@ -558,7 +558,7 @@
         <div class="intent-section-heading">
           <div>
             <h3 id="intent-policies-title">Facet policies</h3>
-            <p>Each policy combines one matrix facet, one zone group, and one expected fleet value.</p>
+            <p>Broader groups form baselines; narrower overlapping groups refine them.</p>
           </div>
           <button class="button button-accent" id="intent-review-ungoverned" type="button" data-intent-write>Review ungoverned drift</button>
         </div>
@@ -743,15 +743,20 @@
             </label>
           </div>
         </fieldset>
-        <div id="intent-policy-observed-fields">
-          <label for="intent-policy-value">Observed value</label>
-          <select id="intent-policy-value" required></select>
-          <div class="intent-value-preview" id="intent-policy-preview"></div>
+        <fieldset class="intent-observed-values" id="intent-policy-observed-fields" aria-describedby="intent-policy-observed-help">
+          <legend>Observed value</legend>
+          <p class="intent-field-help" id="intent-policy-observed-help">Choose by the fields that differ and the zones using each value. The representative source records provenance and enables supported remediation.</p>
+          <div class="intent-policy-values" id="intent-policy-values"></div>
+          <section class="intent-policy-differences" id="intent-policy-differences" aria-label="Observed value differences"></section>
+          <details class="intent-policy-complete" id="intent-policy-complete">
+            <summary>Show complete selected value</summary>
+            <div class="intent-value-preview" id="intent-policy-preview"></div>
+          </details>
           <details class="raw-value">
-            <summary>Show normalized value</summary>
+            <summary>Show normalized JSON</summary>
             <pre id="intent-policy-raw"></pre>
           </details>
-        </div>
+        </fieldset>
         <section class="value-editor intent-custom-editor" id="intent-policy-custom-editor" aria-labelledby="intent-policy-custom-heading" hidden>
           <div class="value-editor-heading">
             <h3 id="intent-policy-custom-heading">Custom normalized value</h3>

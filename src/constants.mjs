@@ -14,9 +14,18 @@ export const HTTP_METHOD = Object.freeze({
 export const WAF_PHASE = "http_request_firewall_custom"
 
 export const MATRIX_CATEGORY = Object.freeze({
+  LEGACY_FIREWALL_VIEW: "Legacy firewall view",
   REDIRECTS: "Redirects",
   RULESET_RULES: "Ruleset rules",
 })
+
+const MATRIX_CATEGORY_LABEL = Object.freeze({
+  [MATRIX_CATEGORY.LEGACY_FIREWALL_VIEW]: "Legacy firewall priority projection",
+})
+
+export function matrixCategoryLabel(category) {
+  return MATRIX_CATEGORY_LABEL[category] || category
+}
 
 export const EMAIL_ROUTING_ACTION_KIND = Object.freeze({
   RULE_EDIT: "email-routing-rule",

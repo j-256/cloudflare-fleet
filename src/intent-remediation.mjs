@@ -22,7 +22,7 @@ export const INTENT_REMEDIATION_KIND = Object.freeze({
 
 export const INTENT_REMEDIATION_PRESENTATION = Object.freeze({
   [INTENT_REMEDIATION_KIND.ALLOWANCE]: Object.freeze({
-    label: "Allowed variation",
+    label: "Any state accepted",
   }),
   [INTENT_REMEDIATION_KIND.COMPARE_ONLY]: Object.freeze({
     label: "Compare only",
@@ -76,7 +76,7 @@ export function intentPolicyRemediation(
     && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
     return {
       className: INTENT_REMEDIATION_KIND.ALLOWANCE,
-      text: "Allowed variation: covered zones may omit this facet, and any present value is allowed.",
+      text: "Any state accepted: the facet may be absent, and any present value satisfies this policy.",
     }
   }
   if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {

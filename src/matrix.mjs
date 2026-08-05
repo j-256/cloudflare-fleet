@@ -47,7 +47,7 @@ const CATEGORY_ORDER = [
   "DNSSEC",
   "DNS records",
   "Workers routes",
-  "Legacy firewall view",
+  MATRIX_CATEGORY.LEGACY_FIREWALL_VIEW,
   "Security",
   "TLS",
   "Performance",
@@ -776,7 +776,7 @@ function addRouteAndLegacyRows(rows, inventory) {
       const identity = normalizeText(rule.description || rule.ref || rule.id || "unnamed", zone.meta.name)
       addCell(
         rows,
-        "Legacy firewall view",
+        MATRIX_CATEGORY.LEGACY_FIREWALL_VIEW,
         identity,
         identity,
         zone,
