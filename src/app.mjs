@@ -154,6 +154,7 @@ import {
   matrixRowMatchesFilters,
   sortMatrixRows,
 } from "./matrix-filter.mjs"
+import { encodeViewState } from "./url-state.mjs"
 import {
   buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
@@ -3786,6 +3787,30 @@ function currentMatrixFilters() {
     targetZoneIds: state.selectedZoneIds,
     zoneCount: state.inventory?.zones.length || 0,
   }
+}
+
+function captureViewState() {
+  const filters = currentMatrixFilters()
+  return {
+    query: filters.query,
+    category: filters.category,
+    phase: filters.phase,
+    scope: filters.scope,
+    sort: filters.sort,
+    recordType: filters.recordType,
+    redirectType: filters.redirectType,
+    changeableOnly: filters.changeableOnly,
+    targetHolesOnly: filters.targetHolesOnly,
+    differencesOnly: filters.differencesOnly,
+    selectedZoneIds: [...state.selectedZoneIds],
+    selectedColumnsOnly: state.selectedColumnsOnly,
+  }
+}
+
+function syncUrlState() {
+  const query = encodeViewState(captureViewState())
+  const url = query ? `${window.location.pathname}?${query}` : window.location.pathname
+  window.history.replaceState(null, "", url)
 }
 
 function syncResponsiveFilterPanel() {
@@ -7472,6 +7497,7 @@ function filterRows() {
   elements.matrixTable.hidden = emptyMessage.length > 0
   syncMatrixFilterControls(filters)
   syncMatrixActionTabStop()
+  syncUrlState()
 }
 
 function updateSelectionStyles() {
@@ -7524,6 +7550,7 @@ function updateSelectionStyles() {
   updateActionButtons()
   if (targetHolesWasActive) filterRows()
   syncMatrixActionTabStop()
+  syncUrlState()
 }
 
 function syncSelectionControls() {
