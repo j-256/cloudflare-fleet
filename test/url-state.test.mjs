@@ -6,6 +6,7 @@ import {
   decodeViewState,
   encodeViewState,
 } from "../src/url-state.mjs"
+import { MATRIX_SCOPE, MATRIX_SORT } from "../src/matrix-filter.mjs"
 
 test("a default view encodes to an empty query string", () => {
   assert.equal(encodeViewState(DEFAULT_VIEW_STATE), "")
@@ -78,4 +79,23 @@ test("returns a fresh object each call so callers cannot mutate the default", ()
   const first = decodeViewState("")
   first.selectedZoneIds.push("x")
   assert.deepEqual(decodeViewState("").selectedZoneIds, [])
+})
+
+test("an unrecognized scope or sort falls back to the default", () => {
+  // these selects have no empty option, so a blank value would hide the whole matrix
+  assert.equal(decodeViewState("scope=bogus").scope, DEFAULT_VIEW_STATE.scope)
+  assert.equal(decodeViewState("sort=bogus").sort, DEFAULT_VIEW_STATE.sort)
+})
+
+test("every valid scope and sort value round-trips through decode", () => {
+  for (const value of Object.values(MATRIX_SCOPE)) {
+    assert.equal(decodeViewState("scope=" + value).scope, value)
+  }
+  for (const value of Object.values(MATRIX_SORT)) {
+    assert.equal(decodeViewState("sort=" + value).sort, value)
+  }
+})
+
+test("string enum fields other than scope and sort pass through verbatim", () => {
+  assert.equal(decodeViewState("category=NoSuchCat").category, "NoSuchCat")
 })

@@ -2,6 +2,8 @@ import {
   DEFAULT_MATRIX_FILTERS,
   DEFAULT_MATRIX_SCOPE,
   DEFAULT_MATRIX_SORT,
+  MATRIX_SCOPE,
+  MATRIX_SORT,
 } from "./matrix-filter.mjs"
 
 export const DEFAULT_VIEW_STATE = Object.freeze({
@@ -23,12 +25,14 @@ const TRUE = "1"
 const FALSE = "0"
 
 // Canonical key order; each entry maps a URL param to how it reads and writes
+// (scope and sort carry an allowed set: their selects have no empty option, so
+// an unrecognized value would read back as "" and hide the whole matrix)
 const FIELDS = [
   { key: "q", field: "query", kind: "string" },
   { key: "category", field: "category", kind: "string" },
   { key: "phase", field: "phase", kind: "string" },
-  { key: "scope", field: "scope", kind: "string" },
-  { key: "sort", field: "sort", kind: "string" },
+  { key: "scope", field: "scope", kind: "string", allowed: new Set(Object.values(MATRIX_SCOPE)) },
+  { key: "sort", field: "sort", kind: "string", allowed: new Set(Object.values(MATRIX_SORT)) },
   { key: "type", field: "recordType", kind: "string" },
   { key: "redirect", field: "redirectType", kind: "string" },
   { key: "changeable", field: "changeableOnly", kind: "bool-off" },
@@ -64,11 +68,11 @@ export function encodeViewState(view) {
 export function decodeViewState(search) {
   const params = new URLSearchParams(String(search || ""))
   const view = freshDefault()
-  for (const { key, field, kind } of FIELDS) {
+  for (const { key, field, kind, allowed } of FIELDS) {
     if (!params.has(key)) continue
     const raw = params.get(key)
     if (kind === "string") {
-      view[field] = raw
+      view[field] = allowed && !allowed.has(raw) ? DEFAULT_VIEW_STATE[field] : raw
     } else if (kind === "bool-off") {
       view[field] = raw !== "" && raw !== FALSE
     } else if (kind === "bool-on") {
