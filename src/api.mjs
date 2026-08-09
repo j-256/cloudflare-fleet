@@ -129,6 +129,69 @@ export class CloudflareApi {
     }
   }
 
+  async graphql(query, variables = {}, options = {}) {
+    if (typeof query !== "string" || query.trim() === "") {
+      throw new TypeError("GraphQL query is required")
+    }
+    if (!variables || typeof variables !== "object" || Array.isArray(variables)) {
+      throw new TypeError("GraphQL variables must be an object")
+    }
+    const cloudflareUrl = new URL("graphql", API_BASE_URL)
+    const url = this.usesBroker
+      ? new URL("cloudflare/graphql", this.brokerBaseUrl)
+      : cloudflareUrl
+    const headers = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    }
+    if (this.usesBroker) headers[BROKER_SESSION_HEADER] = this.brokerSecret
+    else headers.Authorization = `Bearer ${this.apiToken}`
+    let response
+    try {
+      response = await this.fetchImpl(url, {
+        body: JSON.stringify({ query, variables }),
+        headers,
+        method: HTTP_METHOD.POST,
+        signal: options.signal,
+      })
+    } catch (error) {
+      throw new CloudflareApiError("Network request failed for POST /client/v4/graphql", {
+        errors: [{ message: error instanceof Error ? error.message : String(error) }],
+        method: HTTP_METHOD.POST,
+        path: cloudflareUrl.pathname,
+      })
+    }
+    let envelope
+    try {
+      envelope = await response.json()
+    } catch {
+      throw new CloudflareApiError("Cloudflare returned non-JSON data for POST /client/v4/graphql", {
+        method: HTTP_METHOD.POST,
+        path: cloudflareUrl.pathname,
+        status: response.status,
+      })
+    }
+    if (!response.ok || (Array.isArray(envelope.errors) && envelope.errors.length > 0)) {
+      const detail = envelope.errors?.[0]?.message
+        || response.statusText
+        || "Unknown Cloudflare GraphQL error"
+      throw new CloudflareApiError(`POST /client/v4/graphql: ${detail}`, {
+        errors: envelope.errors || [],
+        method: HTTP_METHOD.POST,
+        path: cloudflareUrl.pathname,
+        status: response.status,
+      })
+    }
+    if (!envelope.data || typeof envelope.data !== "object") {
+      throw new CloudflareApiError("Cloudflare returned invalid GraphQL data", {
+        method: HTTP_METHOD.POST,
+        path: cloudflareUrl.pathname,
+        status: response.status,
+      })
+    }
+    return envelope.data
+  }
+
   async persistSnapshot(serializedSnapshot, options = {}) {
     if (!this.usesBroker) return
     const response = await this.fetchImpl(new URL("cache", this.brokerBaseUrl), {

@@ -49,6 +49,53 @@ test("listZones paginates and keeps auth out of the URL", async () => {
   assert.equal(calls[0].url.href.includes("secret-token"), false)
 })
 
+test("graphql sends variables securely and returns the data envelope", async () => {
+  let captured
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async (url, request) => {
+      captured = { request, url: new URL(url) }
+      return jsonResponse({
+        data: { viewer: { accounts: [] } },
+        errors: null,
+      })
+    },
+  })
+  const query = "query Audit($accountTag: string) { viewer { accounts { id } } }"
+  const variables = { accountTag: "account-id" }
+
+  const data = await api.graphql(query, variables)
+
+  assert.deepEqual(data, { viewer: { accounts: [] } })
+  assert.equal(captured.url.pathname, "/client/v4/graphql")
+  assert.equal(captured.url.href.includes("secret-token"), false)
+  assert.equal(captured.request.method, "POST")
+  assert.equal(captured.request.headers.Authorization, "Bearer secret-token")
+  assert.deepEqual(JSON.parse(captured.request.body), { query, variables })
+})
+
+test("graphql exposes Cloudflare errors without leaking auth", async () => {
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => jsonResponse({
+      data: null,
+      errors: [{ message: "Analytics permission denied" }],
+    }),
+  })
+
+  await assert.rejects(
+    api.graphql("query Audit { viewer { accounts { id } } }"),
+    (error) => {
+      assert.ok(error instanceof CloudflareApiError)
+      assert.match(error.message, /Analytics permission denied/)
+      assert.equal(error.message.includes("secret-token"), false)
+      return true
+    },
+  )
+})
+
 test("broker transport keeps the Cloudflare token out of browser requests", async () => {
   let captured
   const api = new CloudflareApi({
