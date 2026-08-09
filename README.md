@@ -18,7 +18,7 @@ The address-bar URL reflects the current matrix filters and selected zone column
 
 ## Read-only audit
 
-The audit command reads the complete live inventory and the configured fleet-state file without sending Cloudflare mutations. Its core report covers unexpected read gaps, saved intent, DNSSEC transition age, Email Routing and fleet WAF alignment, editable zone-setting drift, duplicate or conflicting DNS records, empty and disabled rulesets, and TLS health. Findings carry stable identifiers and one of four severities: critical, warning, review, or info. Progress goes to stderr so stdout remains valid Markdown or JSON for piping.
+The audit command reads the complete live inventory and the configured fleet-state file without sending Cloudflare mutations. Its core report covers unexpected read gaps, saved intent, DNSSEC transition age, Email Routing and fleet WAF alignment, editable zone-setting drift, legacy edge TLS, origin certificate validation, HTTP-to-HTTPS enforcement, duplicate or conflicting DNS records, empty and disabled rulesets, and certificate health. Disabled-rule evidence distinguishes explicit archives and long-dormant rules from recently parked rules. Findings carry stable identifiers and one of four severities: critical, warning, review, or info. Progress goes to stderr so stdout remains valid Markdown or JSON for piping.
 
 ```sh
 node src/audit.mjs
@@ -26,7 +26,7 @@ node src/audit.mjs --format json
 node src/audit.mjs --deep
 ```
 
-`--deep` also reads public parent DS records, resolves non-DCV CNAME targets, sends header-only HTTPS probes to proxied hostnames, and correlates Workers scripts with zone routes, Email routes, custom domains, workers.dev, and cron schedules. It can take several minutes when endpoints do not respond. An unresolved CNAME target or unreachable hostname is a review candidate, not deletion proof: Cloudflare for SaaS, validation flows, service bindings, and intentionally offline origins can produce those observations. Use `--state-file PATH` to select another state document and `--format json` for machine processing.
+`--deep` also compares public NS delegation with each full zone, reads parent DS and child CDS/CDNSKEY signals, resolves non-DCV CNAME targets, and sends bounded header-only HTTPS probes to proxied hostnames with recent request counts for failure context. Account reads cover Registrar status, renewal and locks, Pages production deployment health, Worker invocation errors and settings, service and Durable Object bindings, tail consumers, zone and Email routes, custom domains, workers.dev, cron schedules, Queues, Workflows, and Pages references. Invocation errors are correlated with event-only Workers exposed through workers.dev. KV, D1, and R2 resources without a discovered Worker or Pages binding become review candidates only when all dependency reads succeed, and D1 candidates include recent query activity when analytics are readable. Binding secret and plain-text values are never included in findings. Deep mode can take several minutes when endpoints do not respond. An unresolved target, unreachable hostname, unbound resource, or Worker without discovered ingress is not deletion proof: direct API clients, local Wrangler configuration, Cloudflare for SaaS, validation flows, dispatch namespaces, and intentionally offline origins can produce those observations. Use `--state-file PATH` to select another state document and `--format json` for machine processing.
 
 ## Cache and concurrent windows
 

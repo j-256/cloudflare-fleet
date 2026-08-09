@@ -29,7 +29,7 @@ export function fleetAuditUsage() {
     "  node src/audit.mjs [--deep] [--format markdown|json] [--state-file PATH]",
     "",
     "OPTIONS",
-    "  --deep             Add parent DS, CNAME target, endpoint, and Worker ingress checks",
+    "  --deep             Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
     "  --format FORMAT    Render markdown or JSON (default: markdown)",
     "  --state-file PATH  Read fleet intent and coverage expectations from PATH",
     "  -h, --help         Show this help text",

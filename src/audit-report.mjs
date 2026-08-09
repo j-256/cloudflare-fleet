@@ -50,6 +50,10 @@ const AUDIT_SEVERITY_PRIORITY = Object.freeze({
 })
 const DNS_RECORD_TYPE_CNAME = "CNAME"
 const DNS_RECORD_TYPE_TXT = "TXT"
+const DISABLED_RULE_DORMANT_MS = 365 * 24 * 60 * 60 * 1000
+const ARCHIVED_RULE_DESCRIPTION_PATTERN = /^\[ARCHIVED\]\s/i
+const PROXIED_WEB_RECORD_TYPES = new Set(["A", "AAAA", "CNAME"])
+const LEGACY_MINIMUM_TLS_VERSION = new Set(["1.0", "1.1"])
 const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
   RULESET_KIND.ZONE,
@@ -365,6 +369,106 @@ function wafFindings(inventory) {
   return findings
 }
 
+function settingFor(zone, settingId) {
+  const settings = surfaceResult(zone, "settings")
+  if (!Array.isArray(settings)) return null
+  return settings.find((setting) => setting.id === settingId) || null
+}
+
+function hasProxiedWebRecord(zone) {
+  const records = surfaceResult(zone, "dns")
+  return Array.isArray(records) && records.some((record) => (
+    record.proxied === true
+      && PROXIED_WEB_RECORD_TYPES.has(String(record.type || "").toUpperCase())
+  ))
+}
+
+function securityPostureFindings(inventory) {
+  const webZones = inventory.zones.filter(hasProxiedWebRecord)
+  const legacyTls = webZones.flatMap((zone) => {
+    const setting = settingFor(zone, "min_tls_version")
+    if (!setting || !LEGACY_MINIMUM_TLS_VERSION.has(String(setting.value))) {
+      return []
+    }
+    return [{ value: setting.value, zone: zone.meta.name }]
+  })
+  const originModes = webZones.flatMap((zone) => {
+    const setting = settingFor(zone, "ssl")
+    if (!setting || setting.value !== "full") return []
+    return [{ value: setting.value, zone: zone.meta.name }]
+  })
+  const insecureOriginModes = webZones.flatMap((zone) => {
+    const setting = settingFor(zone, "ssl")
+    if (!setting || (setting.value !== "off" && setting.value !== "flexible")) {
+      return []
+    }
+    return [{ value: setting.value, zone: zone.meta.name }]
+  })
+  const httpAllowed = webZones.flatMap((zone) => {
+    const setting = settingFor(zone, "always_use_https")
+    if (!setting || setting.value !== "off") return []
+    return [{ value: setting.value, zone: zone.meta.name }]
+  })
+  const findings = []
+  if (legacyTls.length > 0) {
+    findings.push(finding(
+      "security.legacy-edge-tls",
+      FLEET_AUDIT_SEVERITY.WARNING,
+      "Security posture",
+      "Proxied hostnames accept legacy TLS versions",
+      `${legacyTls.length} ${plural(legacyTls.length, "zone")} allow a minimum TLS version older than 1.2`,
+      {
+        evidence: { settings: legacyTls },
+        recommendation: "Validate legacy client requirements, then raise the minimum edge TLS version to 1.2 or newer",
+        zones: legacyTls.map((entry) => entry.zone),
+      },
+    ))
+  }
+  if (insecureOriginModes.length > 0) {
+    findings.push(finding(
+      "security.insecure-origin-mode",
+      FLEET_AUDIT_SEVERITY.WARNING,
+      "Security posture",
+      "Origin traffic is not consistently encrypted",
+      `${insecureOriginModes.length} ${plural(insecureOriginModes.length, "zone")} use Off or Flexible SSL mode`,
+      {
+        evidence: { settings: insecureOriginModes },
+        recommendation: "Configure origin TLS, then move to Full (strict) after validating certificate coverage",
+        zones: insecureOriginModes.map((entry) => entry.zone),
+      },
+    ))
+  }
+  if (originModes.length > 0) {
+    findings.push(finding(
+      "security.origin-certificate-unverified",
+      FLEET_AUDIT_SEVERITY.REVIEW,
+      "Security posture",
+      "Origin certificates are not validated",
+      `${originModes.length} ${plural(originModes.length, "zone")} use Full rather than Full (strict) SSL mode`,
+      {
+        evidence: { settings: originModes },
+        recommendation: "Confirm each origin presents a valid matching certificate, then prefer Full (strict) when possible",
+        zones: originModes.map((entry) => entry.zone),
+      },
+    ))
+  }
+  if (httpAllowed.length > 0) {
+    findings.push(finding(
+      "security.http-not-redirected",
+      FLEET_AUDIT_SEVERITY.REVIEW,
+      "Security posture",
+      "HTTP requests are not forced to HTTPS at the edge",
+      `${httpAllowed.length} ${plural(httpAllowed.length, "zone")} have Always Use HTTPS disabled despite serving proxied web records`,
+      {
+        evidence: { settings: httpAllowed },
+        recommendation: "Confirm no hostname requires HTTP, account for existing redirects, then enable Always Use HTTPS or define equivalent scoped redirects",
+        zones: httpAllowed.map((entry) => entry.zone),
+      },
+    ))
+  }
+  return findings
+}
+
 function settingDriftFindings(inventory, matrix) {
   const zoneNameById = new Map(
     inventory.zones.map((zone) => [zone.meta.id, zone.meta.name]),
@@ -478,7 +582,7 @@ function dnsRecordFindings(inventory) {
   return findings
 }
 
-function rulesetFindings(inventory) {
+function rulesetFindings(inventory, now) {
   const findings = []
   for (const zone of inventory.zones) {
     for (const detail of zone.ruleDetails || []) {
@@ -486,6 +590,10 @@ function rulesetFindings(inventory) {
       const ruleset = detail.result
       const rules = Array.isArray(ruleset.rules) ? ruleset.rules : []
       if (rules.length === 0) {
+        const lastUpdated = typeof ruleset.last_updated === "string"
+          && Number.isFinite(Date.parse(ruleset.last_updated))
+          ? ruleset.last_updated
+          : null
         findings.push(finding(
           `ruleset.empty:${zone.meta.name}:${ruleset.id}`,
           FLEET_AUDIT_SEVERITY.REVIEW,
@@ -495,6 +603,7 @@ function rulesetFindings(inventory) {
           {
             evidence: {
               kind: ruleset.kind,
+              lastUpdated,
               phase: ruleset.phase,
               rulesetId: ruleset.id,
             },
@@ -505,22 +614,43 @@ function rulesetFindings(inventory) {
       }
       const disabled = rules.filter((rule) => rule.enabled === false)
       if (disabled.length > 0) {
+        const disabledEvidence = disabled.map((rule) => {
+          const lastUpdated = typeof rule.last_updated === "string"
+            && Number.isFinite(Date.parse(rule.last_updated))
+            ? rule.last_updated
+            : null
+          const cleanupReason = ARCHIVED_RULE_DESCRIPTION_PATTERN.test(
+            rule.description || "",
+          )
+            ? "archived-description"
+            : lastUpdated && now - Date.parse(lastUpdated) > DISABLED_RULE_DORMANT_MS
+              ? "unchanged-over-one-year"
+              : null
+          return {
+            cleanupReason,
+            description: rule.description || "",
+            id: rule.id || null,
+            lastUpdated,
+          }
+        })
+        const cleanupCandidates = disabledEvidence.filter(
+          (rule) => rule.cleanupReason !== null,
+        )
         findings.push(finding(
           `ruleset.disabled-rules:${zone.meta.name}:${ruleset.id}`,
           FLEET_AUDIT_SEVERITY.REVIEW,
           "Rulesets",
           "Disabled rules remain in an editable ruleset",
-          `${zone.meta.name}: ${disabled.length} disabled ${plural(disabled.length, "rule")} in ${ruleset.name || ruleset.phase || ruleset.id}`,
+          `${zone.meta.name}: ${disabled.length} disabled ${plural(disabled.length, "rule")} in ${ruleset.name || ruleset.phase || ruleset.id}${cleanupCandidates.length > 0 ? `; ${cleanupCandidates.length} ${cleanupCandidates.length === 1 ? "is" : "are"} explicitly archived or dormant` : ""}`,
           {
             evidence: {
               phase: ruleset.phase,
-              rules: disabled.map((rule) => ({
-                description: rule.description || "",
-                id: rule.id || null,
-              })),
+              rules: disabledEvidence,
               rulesetId: ruleset.id,
             },
-            recommendation: "Confirm whether each rule is intentionally parked, should be re-enabled, or can be removed",
+            recommendation: cleanupCandidates.length > 0
+              ? "Prioritize explicitly archived and long-dormant rules for removal after confirming no rollback workflow still needs them"
+              : "Confirm whether each rule is intentionally parked, should be re-enabled, or can be removed",
             zones: [zone.meta.name],
           },
         ))
@@ -619,9 +749,10 @@ export function buildFleetAudit(inventory, options = {}) {
     ...dnssecFindings(inventory, now),
     ...emailFindings(inventory),
     ...wafFindings(inventory),
+    ...securityPostureFindings(inventory),
     ...settingDriftFindings(inventory, matrix),
     ...dnsRecordFindings(inventory),
-    ...rulesetFindings(inventory),
+    ...rulesetFindings(inventory, now),
     ...tlsFindings(inventory),
     ...(options.deepFindings || []),
   ])

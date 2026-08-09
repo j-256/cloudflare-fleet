@@ -33,7 +33,7 @@ test("fleet audit detects stalled DNSSEC and concrete cleanup candidates", () =>
   const duplicateRecord = {
     content: "192.0.2.1",
     name: "alpha.example",
-    proxied: false,
+    proxied: true,
     ttl: 300,
     type: "A",
   }
@@ -73,13 +73,27 @@ test("fleet audit detects stalled DNSSEC and concrete cleanup candidates", () =>
         name: "Dynamic redirects",
         phase: "http_request_dynamic_redirect",
         rules: [{
-          description: "Archived redirect",
+          description: "[ARCHIVED] Archived redirect",
           enabled: false,
           id: "disabled-rule",
+          last_updated: "2025-01-01T00:00:00.000Z",
+        }, {
+          description: "Dormant redirect",
+          enabled: false,
+          id: "dormant-rule",
+          last_updated: "2025-01-01T00:00:00.000Z",
         }],
       },
     }],
-    settings: [{ editable: true, id: "always_use_https", value: "off" }],
+    settings: [{ editable: true, id: "always_use_https", value: "off" }, {
+      editable: true,
+      id: "min_tls_version",
+      value: "1.0",
+    }, {
+      editable: true,
+      id: "ssl",
+      value: "full",
+    }],
     surfaces: {
       dnssec: ok({
         modified_on: "2026-08-01T00:00:00.000Z",
@@ -119,10 +133,24 @@ test("fleet audit detects stalled DNSSEC and concrete cleanup candidates", () =>
   assert.ok(ids.has("ruleset.empty:alpha.example:empty-ruleset"))
   assert.ok(ids.has("ruleset.disabled-rules:alpha.example:redirect-ruleset"))
   assert.ok(ids.has("settings.editable-drift"))
+  assert.ok(ids.has("security.legacy-edge-tls"))
+  assert.ok(ids.has("security.origin-certificate-unverified"))
+  assert.ok(ids.has("security.http-not-redirected"))
   const settingDrift = report.findings.find(
     (entry) => entry.id === "settings.editable-drift",
   )
   assert.deepEqual(settingDrift.zones, ["alpha.example", "beta.example"])
+  const disabledRules = report.findings.find(
+    (entry) => entry.id === "ruleset.disabled-rules:alpha.example:redirect-ruleset",
+  )
+  assert.equal(
+    disabledRules.evidence.rules[0].cleanupReason,
+    "archived-description",
+  )
+  assert.equal(
+    disabledRules.evidence.rules[1].cleanupReason,
+    "unchanged-over-one-year",
+  )
   assert.ok(ids.has("tls.universal-disabled:alpha.example"))
   assert.ok(ids.has("tls.no-active-certificate-pack:alpha.example"))
   assert.ok(ids.has("coverage.expectations-need-review"))
