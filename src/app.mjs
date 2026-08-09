@@ -154,7 +154,7 @@ import {
   matrixRowMatchesFilters,
   sortMatrixRows,
 } from "./matrix-filter.mjs"
-import { encodeViewState } from "./url-state.mjs"
+import { decodeViewState, encodeViewState } from "./url-state.mjs"
 import {
   buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
@@ -3789,6 +3789,9 @@ function currentMatrixFilters() {
   }
 }
 
+let pendingUrlView = null
+let urlStateReady = false
+
 function captureViewState() {
   const filters = currentMatrixFilters()
   return {
@@ -3808,6 +3811,7 @@ function captureViewState() {
 }
 
 function syncUrlState() {
+  if (!urlStateReady) return
   const query = encodeViewState(captureViewState())
   const url = query ? `${window.location.pathname}?${query}` : window.location.pathname
   window.history.replaceState(null, "", url)
@@ -3867,6 +3871,23 @@ function resetMatrixFilters() {
   syncRedirectTypeAvailability()
   renderCategoryCapability()
   filterRows()
+}
+
+function applyViewFilters(view) {
+  elements.search.value = view.query
+  elements.category.value = view.category
+  elements.phase.value = view.phase
+  elements.scope.value = view.scope
+  elements.dnsType.value = view.recordType
+  elements.redirectType.value = view.redirectType
+  elements.matrixSort.value = view.sort
+  elements.changeSupportToggle.setAttribute("aria-pressed", String(view.changeableOnly))
+  elements.differenceToggle.setAttribute("aria-pressed", String(view.differencesOnly))
+  elements.targetHoles.setAttribute("aria-pressed", String(view.targetHolesOnly))
+  elements.targetHoles.textContent = view.targetHolesOnly ? "Target holes only" : "Target holes"
+  syncDnsTypeAvailability()
+  syncRedirectTypeAvailability()
+  renderCategoryCapability()
 }
 
 function renderMatrixFilters() {
@@ -10668,7 +10689,16 @@ function renderInventory(inventory, source) {
   state.intentEvaluation = evaluation
 
   const liveZoneIds = new Set(inventory.zones.map((zone) => zone.meta.id))
-  state.selectedZoneIds = new Set([...state.selectedZoneIds].filter((zoneId) => liveZoneIds.has(zoneId)))
+  if (pendingUrlView) {
+    state.selectedZoneIds = new Set(
+      pendingUrlView.selectedZoneIds.filter((zoneId) => liveZoneIds.has(zoneId)),
+    )
+    state.selectedColumnsOnly = pendingUrlView.selectedColumnsOnly
+  } else {
+    state.selectedZoneIds = new Set(
+      [...state.selectedZoneIds].filter((zoneId) => liveZoneIds.has(zoneId)),
+    )
+  }
 
   renderSummary()
   renderPolicyCards()
@@ -10676,6 +10706,11 @@ function renderInventory(inventory, source) {
     closeInlineEditor({ restoreFocus: false })
     renderMatrixFilters()
     renderMatrix()
+  }
+  if (pendingUrlView) {
+    applyViewFilters(pendingUrlView)
+    pendingUrlView = null
+    filterRows()
   }
   renderCoverage()
   if (elements.intentDialog.open) renderIntentManager()
@@ -10765,6 +10800,7 @@ async function refreshInventory(options = {}) {
 
 async function initialize() {
   try {
+    pendingUrlView = decodeViewState(window.location.search)
     renderIntentSaveStatus()
     renderOperationActivity()
     await Promise.all([
@@ -10786,6 +10822,8 @@ async function initialize() {
     await refreshInventory()
   } finally {
     application.dataset.initializing = "false"
+    urlStateReady = true
+    syncUrlState()
   }
 }
 
