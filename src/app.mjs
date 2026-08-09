@@ -110,6 +110,10 @@ import {
   firstFleetIntentObservedCanonical,
 } from "./intent-defaults.mjs"
 import {
+  FLEET_INTENT_HEALTH_STATUS,
+  fleetIntentHealth,
+} from "./intent-health.mjs"
+import {
   FLEET_INTENT_POLICY_LAYER_PRESENTATION,
   FLEET_INTENT_POLICY_LAYER_ROLE,
   fleetIntentPolicyLayers,
@@ -298,6 +302,16 @@ const COVERAGE_SECTION = Object.freeze({
   EXPECTED: "expected",
   HEALTHY: "healthy",
   UNEXPECTED: "unexpected",
+})
+const INTENT_POLICY_DISPLAY_STATUS = Object.freeze({
+  ACTIONABLE: "actionable",
+  ALIGNED: "aligned",
+  UNRESOLVED: "unresolved",
+})
+const INTENT_POLICY_STATUS_PRIORITY = Object.freeze({
+  [INTENT_POLICY_DISPLAY_STATUS.ACTIONABLE]: 0,
+  [INTENT_POLICY_DISPLAY_STATUS.UNRESOLVED]: 1,
+  [INTENT_POLICY_DISPLAY_STATUS.ALIGNED]: 2,
 })
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
@@ -516,7 +530,6 @@ const elements = {
   dnsType: document.querySelector("#dns-type"),
   dnssecWorkflowDetail: document.querySelector("#dnssec-workflow-detail"),
   dnssecWorkflowState: document.querySelector("#dnssec-workflow-state"),
-  driftCount: document.querySelector("#drift-count"),
   emailPolicyDetail: document.querySelector("#email-policy-detail"),
   emailPolicyDrift: document.querySelector("#email-policy-drift"),
   emailPolicyExceptions: document.querySelector("#email-policy-exceptions"),
@@ -540,10 +553,8 @@ const elements = {
   facetEquivalenceTitle: document.querySelector("#facet-equivalence-title"),
   facetEquivalenceTitleSource: document.querySelector("#facet-equivalence-title-source"),
   facetEquivalenceZone: document.querySelector("#facet-equivalence-zone"),
-  facetCount: document.querySelector("#facet-count"),
   filterPanelToggle: document.querySelector("#filter-panel-toggle"),
   filterReset: document.querySelector("#filter-reset"),
-  holeCount: document.querySelector("#hole-count"),
   holeDialog: document.querySelector("#hole-dialog"),
   holeForm: document.querySelector("#hole-form"),
   holePreview: document.querySelector("#hole-preview"),
@@ -582,6 +593,9 @@ const elements = {
   intentDeleteSummary: document.querySelector("#intent-delete-summary"),
   intentDeleteTitle: document.querySelector("#intent-delete-title"),
   intentDialog: document.querySelector("#intent-dialog"),
+  intentDialogVerdict: document.querySelector("#intent-dialog-verdict"),
+  intentDialogVerdictDetail: document.querySelector("#intent-dialog-verdict-detail"),
+  intentDialogVerdictTitle: document.querySelector("#intent-dialog-verdict-title"),
   intentGroupClear: document.querySelector("#intent-group-clear"),
   intentGroupDialog: document.querySelector("#intent-group-dialog"),
   intentGroupError: document.querySelector("#intent-group-error"),
@@ -593,6 +607,7 @@ const elements = {
   intentGroupSelectionAnnouncement: document.querySelector("#intent-group-selection-announcement"),
   intentGroupSelectionSummary: document.querySelector("#intent-group-selection-summary"),
   intentGroupTitle: document.querySelector("#intent-group-title"),
+  intentGovernedCount: document.querySelector("#intent-governed-count"),
   intentCoverageList: document.querySelector("#intent-coverage-list"),
   intentMetrics: document.querySelector("#intent-metrics"),
   intentPolicyDetail: document.querySelector("#intent-policy-detail"),
@@ -637,6 +652,11 @@ const elements = {
   intentReviewUngoverned: document.querySelector("#intent-review-ungoverned"),
   intentSaveStatuses: [...document.querySelectorAll("[data-intent-save-status]")],
   intentSummary: document.querySelector("#intent-summary"),
+  intentVerdict: document.querySelector("#intent-verdict"),
+  intentVerdictAction: document.querySelector("#intent-verdict-action"),
+  intentVerdictDetail: document.querySelector("#intent-verdict-detail"),
+  intentVerdictTitle: document.querySelector("#intent-verdict-title"),
+  intentZoneMatchCount: document.querySelector("#intent-zone-match-count"),
   loadProgress: document.querySelector("#load-progress"),
   manageIntent: document.querySelector("#manage-intent"),
   matrixBody: document.querySelector("#matrix-body"),
@@ -658,8 +678,9 @@ const elements = {
   refreshDetail: document.querySelector("#refresh-detail"),
   redirectType: document.querySelector("#redirect-type"),
   reviewNeedsAttention: document.querySelector("#review-needs-attention"),
-  reviewTaskCount: document.querySelector("#review-task-count"),
-  reviewTaskLabel: document.querySelector("#review-task-label"),
+  reviewIntentCount: document.querySelector("#review-intent-count"),
+  reviewIntentLabel: document.querySelector("#review-intent-label"),
+  reviewUngovernedCount: document.querySelector("#review-ungoverned-count"),
   renameCurrent: document.querySelector("#rename-current"),
   renameDialog: document.querySelector("#rename-dialog"),
   renameError: document.querySelector("#rename-error"),
@@ -723,6 +744,7 @@ const elements = {
   toastDismiss: document.querySelector("#toast-dismiss"),
   toastMessage: document.querySelector("#toast-message"),
   toolbarSecondary: document.querySelector("#toolbar-secondary"),
+  ungovernedCount: document.querySelector("#ungoverned-count"),
   valueEditor: document.querySelector("#value-editor"),
   valueEditorContext: document.querySelector("#value-editor-context"),
   valueEditorFields: document.querySelector("#value-editor-fields"),
@@ -3398,12 +3420,38 @@ function handleGlobalShortcut(event) {
   }
 }
 
+function applyIntentHealth(container, title, detail, health) {
+  container.dataset.status = health.status
+  title.textContent = health.title
+  detail.textContent = health.detail
+}
+
+function renderIntentHealth() {
+  const summary = state.intentEvaluation?.summary || {}
+  const health = fleetIntentHealth(summary)
+  applyIntentHealth(
+    elements.intentVerdict,
+    elements.intentVerdictTitle,
+    elements.intentVerdictDetail,
+    health,
+  )
+  applyIntentHealth(
+    elements.intentDialogVerdict,
+    elements.intentDialogVerdictTitle,
+    elements.intentDialogVerdictDetail,
+    health,
+  )
+  elements.intentVerdictAction.textContent = health.actionLabel
+  elements.intentGovernedCount.textContent = String(summary.governedRows || 0)
+  elements.intentZoneMatchCount.textContent = health.matchMetric
+  elements.intentZoneMatchCount.dataset.status = health.status
+  elements.ungovernedCount.textContent = String(summary.ungovernedRows || 0)
+}
+
 function renderSummary() {
   const summary = state.matrix.summary
   elements.zoneCount.textContent = String(summary.zones)
-  elements.facetCount.textContent = String(summary.facets)
-  elements.driftCount.textContent = String(summary.differences)
-  elements.holeCount.textContent = String(summary.missingCells)
+  renderIntentHealth()
   renderTaskSummaries()
   const source = state.inventorySource === INVENTORY_SOURCE.CACHE
     ? "Cached snapshot"
@@ -3431,7 +3479,23 @@ function renderIntentPolicyCard() {
     ? `No facets governed yet | ${customGroupCount} custom group${customGroupCount === 1 ? "" : "s"}`
     : `${summary.governedRows} governed facet${summary.governedRows === 1 ? "" : "s"} | ${summary.acknowledgedCells} acknowledged cell${summary.acknowledgedCells === 1 ? "" : "s"}`
   elements.intentPolicyDetail.title = elements.intentPolicyDetail.textContent
-  elements.intentPolicyDrift.textContent = `${summary.actionableCells} actionable`
+  const health = fleetIntentHealth(summary)
+  elements.intentPolicyDrift.textContent = summary.policies === 0
+    ? "Intent not set"
+    : summary.actionableCells > 0
+      ? `${summary.actionableCells} actionable`
+      : summary.unresolvedPolicies > 0
+        ? `${summary.unresolvedPolicies} need review`
+        : "All zones match"
+  elements.intentPolicyDrift.classList.toggle(
+    "aligned",
+    health.status === FLEET_INTENT_HEALTH_STATUS.ALIGNED,
+  )
+  elements.intentPolicyDrift.classList.toggle(
+    "actionable",
+    health.status === FLEET_INTENT_HEALTH_STATUS.DRIFT
+      || health.status === FLEET_INTENT_HEALTH_STATUS.REVIEW,
+  )
   const reviewCount = summary.staleAcknowledgements + summary.unresolvedPolicies
   elements.intentPolicyReview.hidden = reviewCount === 0
   elements.intentPolicyReview.textContent = `${reviewCount} need review`
@@ -3575,12 +3639,18 @@ function renderCategoryCapability() {
 }
 
 function renderTaskSummaries() {
-  const reviewCount = state.matrix?.summary.differences || 0
+  const intentSummary = state.intentEvaluation?.summary || {}
+  const actionableCells = intentSummary.actionableCells || 0
+  const ungovernedRows = intentSummary.ungovernedRows || 0
   const capabilityCounts = matrixCapabilityCounts(state.matrix)
-  elements.reviewTaskCount.textContent = String(reviewCount)
-  elements.reviewTaskLabel.textContent = reviewCount === 1
-    ? "facet needs review"
-    : "facets need review"
+  elements.reviewIntentCount.textContent = String(actionableCells)
+  elements.reviewIntentCount.dataset.status = actionableCells === 0
+    ? FLEET_INTENT_HEALTH_STATUS.ALIGNED
+    : FLEET_INTENT_HEALTH_STATUS.DRIFT
+  elements.reviewIntentLabel.textContent = actionableCells === 1
+    ? "Intent mismatch"
+    : "Intent mismatches"
+  elements.reviewUngovernedCount.textContent = String(ungovernedRows)
   elements.supportedChangeCount.textContent = String(capabilityCounts.changeableRows)
   elements.supportedChangeLabel.textContent = capabilityCounts.changeableRows === 1
     ? "facet has a matrix change path"
@@ -5417,6 +5487,34 @@ function intentPolicyLayerSummary(layer) {
   return ""
 }
 
+function intentPolicyDisplayState(policy) {
+  const policyState = intentPolicyState(policy.id)
+  const row = intentPolicyRow(policy)
+  const rowState = row ? intentRowState(row) : null
+  const conflicted = rowState
+    ? [...rowState.cells.values()].some(
+        (cell) => cell.status === FLEET_INTENT_CELL_STATUS.CONFLICT
+          && cell.policies.some((entry) => entry.id === policy.id),
+      )
+    : false
+  const actionableCount = policyState?.actionableCount || 0
+  const status = !row || policyState?.unresolved
+    ? INTENT_POLICY_DISPLAY_STATUS.UNRESOLVED
+    : conflicted || actionableCount > 0
+      ? INTENT_POLICY_DISPLAY_STATUS.ACTIONABLE
+      : INTENT_POLICY_DISPLAY_STATUS.ALIGNED
+  const statusLabel = status === INTENT_POLICY_DISPLAY_STATUS.UNRESOLVED
+    ? "Unresolved"
+    : status === INTENT_POLICY_DISPLAY_STATUS.ACTIONABLE
+      ? conflicted ? "Conflict" : `${actionableCount} actionable`
+      : "Aligned"
+  return {
+    row,
+    status,
+    statusLabel,
+  }
+}
+
 function renderIntentPolicies() {
   const fragment = document.createDocumentFragment()
   const layers = fleetIntentPolicyLayers(
@@ -5424,31 +5522,25 @@ function renderIntentPolicies() {
     state.intent.groups,
     (state.inventory?.zones || []).map((zone) => zone.meta.id),
   )
-  for (const policy of orderedIntentPolicies(layers)) {
+  const policyEntries = orderedIntentPolicies(layers)
+    .map((policy, index) => ({
+      display: intentPolicyDisplayState(policy),
+      index,
+      policy,
+    }))
+    .sort((left, right) => (
+      INTENT_POLICY_STATUS_PRIORITY[left.display.status]
+        - INTENT_POLICY_STATUS_PRIORITY[right.display.status]
+      || left.index - right.index
+    ))
+  for (const { display, policy } of policyEntries) {
     const layer = layers.get(policy.id)
     const layerPresentation = FLEET_INTENT_POLICY_LAYER_PRESENTATION[layer.role]
-    const policyState = intentPolicyState(policy.id)
-    const row = intentPolicyRow(policy)
+    const row = display.row
     const facet = row || policy.facet
     const facetDescription = describeFacetEquivalence(facet)
-    const rowState = row ? intentRowState(row) : null
-    const conflicted = rowState
-      ? [...rowState.cells.values()].some(
-          (cell) => cell.status === FLEET_INTENT_CELL_STATUS.CONFLICT
-            && cell.policies.some((entry) => entry.id === policy.id),
-        )
-      : false
-    const actionableCount = policyState?.actionableCount || 0
-    const status = !row || policyState?.unresolved
-      ? "unresolved"
-      : conflicted || actionableCount > 0
-        ? "actionable"
-        : "aligned"
-    const statusLabel = status === "unresolved"
-      ? "Unresolved"
-      : status === "actionable"
-        ? conflicted ? "Conflict" : `${actionableCount} actionable`
-        : "Aligned"
+    const status = display.status
+    const statusLabel = display.statusLabel
     const group = intentGroupById(policy.groupId)
     const groupScope = intentGroupScope(group)
     const actionContext = group
@@ -6352,6 +6444,7 @@ async function saveIntentAdoption() {
 }
 
 function renderIntentManager() {
+  renderIntentHealth()
   const summary = state.intentEvaluation?.summary || {
     acknowledgedCells: 0,
     actionableCells: 0,
@@ -11020,6 +11113,7 @@ elements.renameValue.addEventListener("input", () => {
 })
 elements.renameForm.addEventListener("submit", reviewRuleRename)
 elements.manageIntent.addEventListener("click", openIntentManager)
+elements.intentVerdictAction.addEventListener("click", openIntentManager)
 elements.intentReviewUngoverned.addEventListener("click", openIntentAdoption)
 elements.intentAdoptionAddGroup.addEventListener("click", () => {
   openIntentGroupEditor(null, { returnToAdoption: true })

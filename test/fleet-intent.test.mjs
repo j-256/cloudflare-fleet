@@ -826,6 +826,10 @@ test("custom group limits policy scope while raw ungoverned rows retain drift", 
     nextEvaluation.rowStates.get(fleetIntentFacetId("Zone", "status")).actionable,
     true,
   )
+  assert.equal(nextEvaluation.summary.actionableZones, 1)
+  assert.equal(nextEvaluation.summary.matchingZones, 2)
+  assert.equal(nextEvaluation.summary.ungovernedRows, 1)
+  assert.equal(nextEvaluation.summary.zones, 3)
 })
 
 test("compatible overlapping policies refine optional fleet intent for a required zone", () => {

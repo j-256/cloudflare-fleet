@@ -61,6 +61,14 @@ test("intent manager explains baseline and refinement composition", () => {
   assert.doesNotMatch(appSource, /allowed variation/i)
 })
 
+test("intent health is prominent and policy review precedes group administration", () => {
+  assert.match(html, /id="intent-verdict"/)
+  assert.match(html, /id="intent-dialog-verdict"/)
+  assert.ok(html.indexOf("id=\"intent-verdict\"") < html.indexOf("id=\"start-here\""))
+  assert.ok(html.indexOf("id=\"intent-policies-title\"") < html.indexOf("id=\"intent-groups-title\""))
+  assert.match(appSource, /INTENT_POLICY_STATUS_PRIORITY/)
+})
+
 test("fleet intent exposes persistent save status and locks every save action", () => {
   assert.equal((html.match(/data-intent-save-status/g) || []).length, 2)
   assert.match(

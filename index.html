@@ -38,10 +38,19 @@
       </div>
       <div class="summary-grid" role="list" aria-label="Fleet summary">
         <div class="summary-card" role="listitem"><strong id="zone-count">0</strong><span>Zones</span></div>
-        <div class="summary-card" role="listitem"><strong id="facet-count">0</strong><span>Comparable facets</span></div>
-        <div class="summary-card" role="listitem"><strong id="drift-count">0</strong><span>Needs review</span></div>
-        <div class="summary-card" role="listitem"><strong id="hole-count">0</strong><span>Missing cells</span></div>
+        <div class="summary-card" role="listitem"><strong id="intent-governed-count">0</strong><span>Governed facets</span></div>
+        <div class="summary-card" role="listitem"><strong id="intent-zone-match-count">Waiting</strong><span>Zones match intent</span></div>
+        <div class="summary-card" role="listitem"><strong id="ungoverned-count">0</strong><span>Not governed</span></div>
       </div>
+      <section class="intent-verdict intent-verdict-main" id="intent-verdict" data-status="review" aria-labelledby="intent-verdict-title" aria-describedby="intent-verdict-detail" aria-live="polite" aria-atomic="true">
+        <span class="intent-verdict-mark" aria-hidden="true"></span>
+        <div class="intent-verdict-copy">
+          <span class="intent-verdict-label">Fleet intent status</span>
+          <strong id="intent-verdict-title">Evaluating fleet intent</strong>
+          <span id="intent-verdict-detail">Waiting for fleet inventory.</span>
+        </div>
+        <button class="button button-quiet intent-verdict-action" id="intent-verdict-action" type="button">View intent</button>
+      </section>
       <progress class="load-progress" id="load-progress" max="100" value="0" aria-label="Fleet loading progress" hidden></progress>
     </header>
 
@@ -58,11 +67,14 @@
               <span class="task-number" aria-hidden="true">1</span>
               <div>
                 <p class="task-kind">Observe</p>
-                <h3>Review what needs attention</h3>
+                <h3>Review fleet differences</h3>
               </div>
             </div>
-            <p>See ungoverned differences and saved expected-state violations. Allowed differences stay out of this queue.</p>
-            <div class="task-card-status"><strong id="review-task-count">0</strong><span id="review-task-label">facets need review</span></div>
+            <p>Intent mismatches need action. Ungoverned differences need a decision about whether they should become policy. Allowed differences stay out of this queue.</p>
+            <div class="task-card-status-grid" aria-label="Review queue summary">
+              <span class="task-card-status-metric intent"><strong id="review-intent-count">0</strong><span id="review-intent-label">Intent mismatches</span></span>
+              <span class="task-card-status-metric"><strong id="review-ungoverned-count">0</strong><span>Not governed</span></span>
+            </div>
             <button class="button button-primary" id="review-needs-attention" type="button">Open review queue</button>
           </article>
 
@@ -581,15 +593,13 @@
           <div class="intent-metrics" id="intent-metrics" aria-label="Fleet intent summary"></div>
         </div>
       </header>
-      <section class="intent-section" aria-labelledby="intent-groups-title">
-        <div class="intent-section-heading">
-          <div>
-            <h3 id="intent-groups-title">Zone groups</h3>
-            <p>Saved membership defines where a policy applies; the group label is secondary.</p>
-          </div>
-          <button class="button button-quiet" id="intent-add-group" type="button">Create zone group</button>
+      <section class="intent-verdict intent-verdict-dialog" id="intent-dialog-verdict" data-status="review" aria-labelledby="intent-dialog-verdict-title" aria-describedby="intent-dialog-verdict-detail">
+        <span class="intent-verdict-mark" aria-hidden="true"></span>
+        <div class="intent-verdict-copy">
+          <span class="intent-verdict-label">Evaluation result</span>
+          <strong id="intent-dialog-verdict-title">Evaluating fleet intent</strong>
+          <span id="intent-dialog-verdict-detail">Waiting for fleet inventory.</span>
         </div>
-        <div class="intent-list" id="intent-group-list"></div>
       </section>
       <section class="intent-section" aria-labelledby="intent-policies-title">
         <div class="intent-section-heading">
@@ -600,6 +610,16 @@
           <button class="button button-accent" id="intent-review-ungoverned" type="button" data-intent-write>Review ungoverned drift</button>
         </div>
         <div class="intent-list" id="intent-policy-list"></div>
+      </section>
+      <section class="intent-section" aria-labelledby="intent-groups-title">
+        <div class="intent-section-heading">
+          <div>
+            <h3 id="intent-groups-title">Zone groups</h3>
+            <p>Saved membership defines where a policy applies; the group label is secondary.</p>
+          </div>
+          <button class="button button-quiet" id="intent-add-group" type="button">Create zone group</button>
+        </div>
+        <div class="intent-list" id="intent-group-list"></div>
       </section>
       <section class="intent-section" aria-labelledby="intent-coverage-title">
         <div class="intent-section-heading">

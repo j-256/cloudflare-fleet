@@ -989,6 +989,15 @@ export function evaluateFleetIntent(document, inventory, matrix) {
   const actionableCells = [...rowStates.values()].flatMap(
     (rowState) => rowState.actionableCells,
   )
+  const actionableZoneIds = new Set(
+    actionableCells.map((cell) => cell.zone.meta.id),
+  )
+  const actionableRows = [...rowStates.values()].filter(
+    (rowState) => rowState.actionable,
+  )
+  const ungovernedRows = actionableRows.filter(
+    (rowState) => !rowState.governed,
+  )
   return {
     acknowledgementStates,
     activeAcknowledgements,
@@ -998,11 +1007,15 @@ export function evaluateFleetIntent(document, inventory, matrix) {
     summary: {
       acknowledgedCells: activeAcknowledgements.length,
       actionableCells: actionableCells.length,
-      actionableRows: [...rowStates.values()].filter((rowState) => rowState.actionable).length,
+      actionableRows: actionableRows.length,
+      actionableZones: actionableZoneIds.size,
       governedRows: [...rowStates.values()].filter((rowState) => rowState.governed).length,
+      matchingZones: inventory.zones.length - actionableZoneIds.size,
       policies: policyStates.length,
       staleAcknowledgements: staleAcknowledgements.length,
+      ungovernedRows: ungovernedRows.length,
       unresolvedPolicies: policyStates.filter((policyState) => policyState.unresolved).length,
+      zones: inventory.zones.length,
     },
   }
 }

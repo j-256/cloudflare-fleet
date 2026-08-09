@@ -266,8 +266,141 @@ h1 {
   text-transform: uppercase;
 }
 
+.summary-card strong[data-status="aligned"] {
+  color: var(--green);
+}
+
+.summary-card strong[data-status="drift"] {
+  color: var(--danger);
+}
+
+.summary-card strong[data-status="empty"],
+.summary-card strong[data-status="review"] {
+  color: var(--accent-2);
+}
+
+.intent-verdict {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 180, 84, 0.44);
+  border-radius: 10px;
+  background: linear-gradient(100deg, rgba(255, 180, 84, 0.13), rgba(17, 25, 35, 0.9));
+}
+
+.intent-verdict-main {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.intent-verdict[data-status="aligned"] {
+  border-color: rgba(119, 208, 143, 0.72);
+  background: linear-gradient(100deg, rgba(119, 208, 143, 0.22), rgba(17, 25, 35, 0.92));
+  box-shadow: inset 0 0 30px rgba(119, 208, 143, 0.07), 0 0 24px rgba(119, 208, 143, 0.08);
+}
+
+.intent-verdict[data-status="drift"] {
+  border-color: rgba(255, 107, 120, 0.7);
+  background: linear-gradient(100deg, rgba(255, 107, 120, 0.2), rgba(17, 25, 35, 0.92));
+}
+
+.intent-verdict[data-status="empty"] {
+  border-color: rgba(180, 151, 255, 0.52);
+  background: linear-gradient(100deg, rgba(180, 151, 255, 0.16), rgba(17, 25, 35, 0.92));
+}
+
+.intent-verdict-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--accent-2);
+  background: rgba(10, 17, 24, 0.48);
+  place-items: center;
+  font: 800 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.intent-verdict-mark::before {
+  content: "!";
+}
+
+.intent-verdict[data-status="aligned"] .intent-verdict-mark {
+  color: var(--green);
+}
+
+.intent-verdict[data-status="aligned"] .intent-verdict-mark::before {
+  content: "\2713";
+}
+
+.intent-verdict[data-status="drift"] .intent-verdict-mark {
+  color: var(--danger);
+}
+
+.intent-verdict[data-status="empty"] .intent-verdict-mark {
+  color: var(--purple);
+}
+
+.intent-verdict[data-status="empty"] .intent-verdict-mark::before {
+  content: "?";
+}
+
+.intent-verdict-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.intent-verdict-label {
+  color: var(--muted);
+  font: 700 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.intent-verdict-copy strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.intent-verdict[data-status="aligned"] .intent-verdict-copy strong {
+  color: var(--green);
+}
+
+.intent-verdict[data-status="drift"] .intent-verdict-copy strong {
+  color: var(--danger);
+}
+
+.intent-verdict-copy > span:last-child {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.intent-verdict-action {
+  min-height: 32px;
+  padding: 5px 10px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.intent-verdict[data-status="aligned"] .intent-verdict-action {
+  border-color: rgba(119, 208, 143, 0.52);
+  color: var(--green);
+}
+
+.intent-verdict-dialog {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
 .load-progress {
   grid-column: 1 / -1;
+  grid-row: 3;
   display: block;
   width: 100%;
   height: 3px;
@@ -575,6 +708,42 @@ dialog h2 {
 .task-card-status span {
   color: var(--muted);
   font-size: 10px;
+}
+
+.task-card-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: auto;
+  padding: 12px 0 9px;
+}
+
+.task-card-status-metric {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(10, 17, 24, 0.44);
+}
+
+.task-card-status-metric strong {
+  font-size: 20px;
+  letter-spacing: -0.04em;
+}
+
+.task-card-status-metric > span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.task-card-status-metric.intent strong {
+  color: var(--danger);
+}
+
+.task-card-status-metric.intent strong[data-status="aligned"] {
+  color: var(--green);
 }
 
 .task-card > .button,
@@ -900,6 +1069,18 @@ dialog h2 {
   background: rgba(255, 180, 84, 0.08);
   font-size: 10px;
   font-weight: 700;
+}
+
+.drift-badge.actionable {
+  border-color: rgba(255, 107, 120, 0.5);
+  color: var(--danger);
+  background: rgba(255, 107, 120, 0.08);
+}
+
+.drift-badge.aligned {
+  border-color: rgba(119, 208, 143, 0.5);
+  color: var(--green);
+  background: rgba(119, 208, 143, 0.08);
 }
 
 .intent-review-badge {
@@ -5227,8 +5408,12 @@ dialog details > summary {
     max-width: none;
   }
 
-  .load-progress {
+  .intent-verdict-main {
     grid-row: 3;
+  }
+
+  .load-progress {
+    grid-row: 4;
   }
 
   .intent-adoption-candidate {
@@ -5356,6 +5541,21 @@ dialog details > summary {
 
   .summary-card span {
     font-size: 8px;
+  }
+
+  .intent-verdict-main {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    padding: 9px;
+  }
+
+  .intent-verdict-main .intent-verdict-action {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .intent-verdict-copy strong {
+    font-size: 15px;
   }
 
   .matrix-shell {
