@@ -61,10 +61,11 @@ test("ruleset comparison makes the dominant rule-count distribution explicit", (
     ["c.example", cell("c.example", [rule("Fleet"), rule("Local")])],
   ]), zones)
 
-  assert.equal(compared.badgeText, "1 rule on 2/3")
+  assert.equal(compared.badgeText, "Exact value on 2/3")
   assert.equal(compared.distributionText, "1 rule: 2 | 2 rules: 1")
   assert.equal(compared.outlierCount, 1)
-  assert.equal(compared.groups[0].baseline, true)
+  assert.equal(compared.groups[0].countBaseline, true)
+  assert.equal(compared.baseline.zoneCount, 2)
   assert.deepEqual(compared.groups.map((group) => group.ruleCount), [1, 2])
 })
 
@@ -75,7 +76,7 @@ test("ruleset comparison reveals different definitions with the same rule count"
     ["b.example", cell("b.example", [rule("Host rule", "http.host eq \"b.example\"")])],
   ]), zones)
 
-  assert.equal(compared.badgeText, "1 rule on 2/2")
+  assert.equal(compared.badgeText, "Exact value on 2/2")
   assert.equal(compared.configurationCount, 1)
   assert.equal(compared.hasDefinitionDifferences, false)
   assert.equal(compared.groups[0].configurations[0].zones.length, 2)
@@ -87,6 +88,8 @@ test("ruleset comparison reveals different definitions with the same rule count"
   assert.equal(changed.groups[0].configurations.length, 2)
   assert.equal(changed.hasDefinitionDifferences, true)
   assert.equal(changed.hasDifferences, true)
+  assert.equal(changed.baseline, null)
+  assert.equal(changed.countBaseline.zoneCount, 2)
 })
 
 test("ruleset comparison retains missing zones and rejects summary-only rows", () => {
@@ -98,8 +101,8 @@ test("ruleset comparison retains missing zones and rejects summary-only rows", (
 
   assert.equal(rulesetParentRowIsReviewable(detailed), true)
   assert.equal(rulesetRowPhase(detailed), "http_request_firewall_custom")
-  assert.equal(compared.badgeText, "1 rule on 1/2")
-  assert.equal(compared.groups[0].baseline, true)
+  assert.equal(compared.badgeText, "Exact value on 1/2")
+  assert.equal(compared.groups[0].countBaseline, true)
   assert.equal(compared.groups[1].ruleCount, null)
   assert.equal(compared.groups[1].zones[0].name, "b.example")
   assert.equal(rulesetParentRowIsReviewable({
@@ -116,7 +119,8 @@ test("ruleset comparison does not call every zone an outlier when counts tie", (
   ]), zones)
 
   assert.equal(compared.baseline, null)
-  assert.equal(compared.badgeText, "2 rule counts")
+  assert.equal(compared.countBaseline, null)
+  assert.equal(compared.badgeText, "2 exact values")
   assert.equal(compared.outlierCount, 0)
   assert.equal(compared.hasDifferences, true)
 })

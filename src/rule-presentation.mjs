@@ -37,6 +37,37 @@ const RULE_PHASE_LABELS = Object.freeze({
   http_response_headers_transform: "Response header transforms",
 })
 
+// Cloudflare Ruleset Engine phase order: https://developers.cloudflare.com/ruleset-engine/reference/phases-list/
+export const RULE_PHASE_EXECUTION_ORDER = Object.freeze([
+  "ddos_l4",
+  "magic_transit",
+  "magic_transit_managed",
+  "magic_transit_ratelimit",
+  "magic_transit_ids_managed",
+  "http_request_dynamic_redirect",
+  "http_request_sanitize",
+  "http_request_transform",
+  "http_request_api_gateway_early",
+  "http_config_settings",
+  "http_request_origin",
+  "ddos_l7",
+  "http_request_firewall_custom",
+  "http_ratelimit",
+  "http_request_api_gateway_late",
+  "http_request_firewall_managed",
+  "http_request_sbfm",
+  "http_request_redirect",
+  "http_request_late_transform",
+  "http_request_cache_settings",
+  "http_request_snippets",
+  "http_request_cloud_connector",
+  "http_custom_errors",
+  "http_response_headers_transform",
+  "http_response_compression",
+  "http_response_firewall_managed",
+  "http_log_custom_fields",
+])
+
 const PRIMARY_RULE_FIELDS = new Set([
   "action",
   "description",

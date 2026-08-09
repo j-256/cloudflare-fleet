@@ -5,10 +5,12 @@ import {
   DEFAULT_MATRIX_FILTERS,
   facetMatchesScope,
   MATRIX_SCOPE,
+  MATRIX_SORT,
   matrixColumnIsVisible,
   matrixEmptyMessage,
   matrixFilterChangeCount,
   matrixRowMatchesFilters,
+  sortMatrixRows,
 } from "../src/matrix-filter.mjs"
 
 test("matrix empty messages distinguish filters from empty inventory", () => {
@@ -39,9 +41,49 @@ test("matrix filter changes count only deviations from the initial view", () => 
     ...DEFAULT_MATRIX_FILTERS,
     changeableOnly: true,
     differencesOnly: false,
+    phase: "http_config_settings",
     recordType: "TXT",
     redirectType: "dynamic",
-  }), 4)
+  }), 5)
+  assert.equal(matrixFilterChangeCount({
+    ...DEFAULT_MATRIX_FILTERS,
+    sort: MATRIX_SORT.CATEGORY,
+  }), 1)
+})
+
+test("matrix sort defaults to phase execution order and offers category A-Z order", () => {
+  const rows = [
+    { category: "DNS records", defaultOrder: 0, id: "dns", label: "A @", phase: "" },
+    { category: "Ruleset rules", defaultOrder: 1, id: "custom", label: "Firewall custom", phase: "http_request_firewall_custom" },
+    { category: "Ruleset rules", defaultOrder: 2, id: "config", label: "Configuration settings", phase: "http_config_settings" },
+    { category: "Redirects", defaultOrder: 3, id: "redirect", label: "A redirect", phase: "http_request_dynamic_redirect" },
+    { category: "Ruleset rules", defaultOrder: 4, id: "response", label: "Response headers", phase: "http_response_headers_transform" },
+    { category: "Ruleset rules", defaultOrder: 5, id: "unknown", label: "Future phase", phase: "future_phase" },
+    { category: "Redirects", defaultOrder: 6, id: "redirect-child", label: "Z redirect", phase: "http_request_dynamic_redirect" },
+  ]
+
+  const phaseOrdered = sortMatrixRows(rows)
+  assert.deepEqual(phaseOrdered.map((row) => row.id), [
+    "redirect",
+    "redirect-child",
+    "config",
+    "custom",
+    "response",
+    "unknown",
+    "dns",
+  ])
+  assert.deepEqual(
+    sortMatrixRows(phaseOrdered, MATRIX_SORT.CATEGORY).map((row) => row.id),
+    [
+      "dns",
+      "redirect",
+      "redirect-child",
+      "config",
+      "custom",
+      "unknown",
+      "response",
+    ],
+  )
 })
 
 test("supported-change filtering excludes comparison-only rows", () => {
@@ -146,6 +188,33 @@ test("matrix filters redirects by destination type", () => {
   assert.equal(matrixRowMatchesFilters(row, {
     ...filters,
     redirectType: "static",
+  }), false)
+})
+
+test("matrix filters ruleset facets by exact phase", () => {
+  const row = {
+    category: "Rulesets",
+    different: true,
+    missingZoneIds: [],
+    phase: "http_config_settings",
+    presentCount: 4,
+    recordType: "",
+    redirectTypes: [],
+    search: "configuration settings entrypoint",
+  }
+  const filters = {
+    ...DEFAULT_MATRIX_FILTERS,
+    differencesOnly: false,
+    phase: "http_config_settings",
+    scope: MATRIX_SCOPE.ALL,
+    targetZoneIds: new Set(),
+    zoneCount: 4,
+  }
+
+  assert.equal(matrixRowMatchesFilters(row, filters), true)
+  assert.equal(matrixRowMatchesFilters(row, {
+    ...filters,
+    phase: "http_request_dynamic_redirect",
   }), false)
 })
 

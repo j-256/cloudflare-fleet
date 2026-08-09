@@ -1,4 +1,5 @@
 import { stableString } from "./normalize.mjs"
+import { facetCellComparisonValue } from "./facet-equivalence.mjs"
 
 const MAX_TOKEN_DIFF_MATRIX_CELLS = 250_000
 const TOKEN_PATTERN = /\s+|[A-Za-z0-9_$./:{}-]+|./gu
@@ -108,6 +109,12 @@ export function compareFleetValueVariants(values, options = {}) {
     .map((variant) => ({
       ...variant,
       count: variant.count ?? variant.zones?.length ?? 0,
+      inspectionValue: Object.prototype.hasOwnProperty.call(
+        variant,
+        "inspectionValue",
+      )
+        ? cloneJsonValue(variant.inspectionValue)
+        : null,
       value: cloneJsonValue(variant.value),
       zones: [...(variant.zones || [])]
         .sort((left, right) => left.name.localeCompare(right.name)),
@@ -144,21 +151,13 @@ export function groupFleetRowIntentValues(row, zones) {
     const cell = row.cells.get(zone.meta.name)
     if (!cell) continue
     const canonical = cell.intentCanonical ?? cell.canonical
-    const hasIntentValue = Object.prototype.hasOwnProperty.call(cell, "intentValue")
-    const hasInspectionValue = Object.prototype.hasOwnProperty.call(
-      cell,
-      "inspectionValue",
-    )
-    const value = hasIntentValue
-      ? cell.intentValue
-      : hasInspectionValue
-        ? cell.inspectionValue
-        : canonicalValue(canonical)
+    const value = facetCellComparisonValue(cell)
     if (!groups.has(canonical)) {
       groups.set(canonical, {
         canonical,
         count: 0,
         display: cell.intentDisplay ?? cell.display,
+        inspectionValue: cloneJsonValue(cell.inspectionValue),
         resolutionCanonical: cell.resolutionCanonical || null,
         sourceZoneId: zone.meta.id,
         sourceZoneName: zone.meta.name,
@@ -174,6 +173,7 @@ export function groupFleetRowIntentValues(row, zones) {
       group.resolutionCanonical = cell.resolutionCanonical || null
       group.sourceZoneId = zone.meta.id
       group.sourceZoneName = zone.meta.name
+      group.inspectionValue = cloneJsonValue(cell.inspectionValue)
       group.value = cloneJsonValue(value)
     }
   }

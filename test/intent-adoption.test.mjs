@@ -52,6 +52,7 @@ function row(key, values, options = {}) {
     different: options.different ?? true,
     key,
     label: options.label || key,
+    phase: options.phase || "",
   }
 }
 
@@ -216,6 +217,75 @@ test("exact adoption uses intent-normalized values and a resolution-capable sour
   assert.equal(policy.expected.canonical, '"{zone}"')
   assert.equal(policy.expected.value, "{zone}")
   assert.equal(policy.expected.sourceZoneName, "beta.example")
+})
+
+test("exact adoption persists the editable parent projection without inspection metadata", () => {
+  const { document, inventory } = fixture()
+  const leading = {
+    description: "",
+    rules: [{
+      action: "set_config",
+      action_parameters: { security_level: "essentially_off" },
+      enabled: true,
+      expression: "true",
+    }],
+  }
+  const alternate = {
+    description: "",
+    rules: [{
+      action: "set_config",
+      action_parameters: { security_level: "low" },
+      enabled: true,
+      expression: "true",
+    }],
+  }
+  const inspectionValue = {
+    id: "ruleset-id",
+    kind: "zone",
+    name: "default",
+    phase: "http_config_settings",
+    rules: [{
+      ...leading.rules[0],
+      id: "rule-id",
+    }],
+  }
+  const parentRow = row(
+    "zone:http_config_settings",
+    [inspectionValue, inspectionValue, inspectionValue, {
+      ...inspectionValue,
+      rules: [{
+        ...alternate.rules[0],
+        id: "alternate-rule-id",
+      }],
+    }],
+    {
+      category: "Rulesets",
+      cellOptions: [
+        { canonical: JSON.stringify(leading), intentCanonical: JSON.stringify(leading) },
+        { canonical: JSON.stringify(leading), intentCanonical: JSON.stringify(leading) },
+        { canonical: JSON.stringify(leading), intentCanonical: JSON.stringify(leading) },
+        { canonical: JSON.stringify(alternate), intentCanonical: JSON.stringify(alternate) },
+      ],
+      label: "Configuration settings entrypoint",
+      phase: "http_config_settings",
+    },
+  )
+  const candidate = buildIntentAdoptionCandidates(
+    document,
+    inventory,
+    { rows: [parentRow] },
+  )[0]
+  const policy = createIntentAdoptionPolicy(candidate, {
+    expectedCanonical: candidate.recommendation.expectedCanonical,
+    groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+    policyId: "ruleset-policy",
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+  })
+
+  assert.deepEqual(candidate.variants[0].value, leading)
+  assert.deepEqual(candidate.variants[0].inspectionValue, inspectionValue)
+  assert.deepEqual(policy.expected.value, leading)
+  assert.equal(policy.facet.phase, "http_config_settings")
 })
 
 test("adoption preview reports the policy effect before persistence", () => {

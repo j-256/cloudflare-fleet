@@ -278,6 +278,8 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   )
   const cell = row.cells.get("alpha.example")
 
+  assert.equal(row.phase, "http_request_dynamic_redirect")
+  assert.equal(row.labelSource, "Rule description")
   assert.equal(row.description, "When http.host eq \"{zone}\"")
   assert.deepEqual(row.redirectTypes, ["static"])
   assert.deepEqual(cell.action, {
@@ -307,7 +309,9 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   assert.equal(cell.presentation.redirect.targetKind, "static")
   assert.equal(cell.presentation.redirect.position, 1)
   assert.equal(cell.display, "https://{zone}/docs")
-  assert.deepEqual(cell.inspectionValue, cell.presentation.rule)
+  assert.equal(cell.inspectionValue.id, "id-Redirect docs")
+  assert.equal(cell.inspectionValue.expression, "http.host eq \"alpha.example\"")
+  assert.equal(cell.presentation.rule.expression, "http.host eq \"{zone}\"")
   assert.deepEqual(cell.parentAction, {
     kind: "zone",
     name: "default",
@@ -318,13 +322,72 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   })
   const parentRow = matrix.rows.find(
     (entry) => entry.category === "Rulesets"
-      && entry.label === "Dynamic redirects entrypoint",
+      && entry.label === "Zone entrypoint",
   )
+  assert.equal(parentRow.phase, "http_request_dynamic_redirect")
+  assert.equal(parentRow.labelSource, "Ruleset kind")
   assert.deepEqual(
     parentRow.cells.get("alpha.example").workspaceAction,
     cell.parentAction,
   )
   assert.match(row.search, /dynamic redirects entrypoint/)
+})
+
+test("ruleset parent exact values include ordered editable rule fields", () => {
+  const ruleset = (zoneName, securityLevel) => ({
+    description: "",
+    id: `config-entrypoint-${zoneName}`,
+    kind: "zone",
+    name: "default",
+    phase: "http_config_settings",
+    rules: [makeRule("exclude service", {
+      action: "set_config",
+      action_parameters: {
+        security_level: securityLevel,
+      },
+      expression: `(http.host eq \"s.${zoneName}\")`,
+      last_updated: "2024-03-11T23:35:27Z",
+      ref: `rule-${zoneName}`,
+      version: "1",
+    })],
+    version: "1",
+  })
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      ruleDetails: [ok(ruleset("alpha.example", "essentially_off"))],
+    }),
+    makeZone("beta.example", {
+      ruleDetails: [ok(ruleset("beta.example", "essentially_off"))],
+    }),
+    makeZone("gamma.example", {
+      ruleDetails: [ok(ruleset("gamma.example", "low"))],
+    }),
+  ]))
+  const parent = matrix.rows.find(
+    (entry) => entry.category === "Rulesets"
+      && entry.key === "zone:http_config_settings",
+  )
+  const alpha = parent.cells.get("alpha.example")
+  const beta = parent.cells.get("beta.example")
+  const gamma = parent.cells.get("gamma.example")
+  const compared = JSON.parse(alpha.intentCanonical)
+
+  assert.equal(parent.phase, "http_config_settings")
+  assert.equal(parent.variantCount, 2)
+  assert.equal(parent.consensusCount, 2)
+  assert.equal(parent.different, true)
+  assert.equal(alpha.intentCanonical, beta.intentCanonical)
+  assert.notEqual(alpha.intentCanonical, gamma.intentCanonical)
+  assert.equal(Object.hasOwn(compared, "kind"), false)
+  assert.equal(Object.hasOwn(compared, "name"), false)
+  assert.equal(compared.description, "")
+  assert.equal(compared.rules.length, 1)
+  assert.equal(compared.rules[0].expression, "(http.host eq \"s.{zone}\")")
+  assert.equal(compared.rules[0].action_parameters.security_level, "essentially_off")
+  assert.equal(Object.hasOwn(compared, "rule_count"), false)
+  assert.equal(Object.hasOwn(compared.rules[0], "id"), false)
+  assert.equal(compared.rules[0].ref, "rule-{zone}")
+  assert.equal(Object.hasOwn(compared.rules[0], "version"), false)
 })
 
 test("matrix aligns redirects by normalized match behavior despite name differences", () => {
@@ -501,6 +564,7 @@ test("matrix exposes managed rulesets as individual workspaces", () => {
     managedRows[0].cells.get("alpha.example").workspaceAction.type,
     "ruleset-open",
   )
+  assert.equal(managedRows[0].labelSource, "Ruleset name")
 })
 
 test("matrix exposes dependency-backed rules for editing but not copying", () => {
@@ -562,7 +626,8 @@ test("matrix replaces an auto-generated rule reference with a readable fallback"
   )
 
   assert.equal(row.label, "execute rule 1 | true")
-  assert.equal(row.description, "execute | http_request_sanitize")
+  assert.equal(row.labelSource, "Generated fallback")
+  assert.equal(row.description, "Action: execute")
 })
 
 test("matrix reports every action when a named rule differs across zones", () => {
@@ -592,7 +657,7 @@ test("matrix reports every action when a named rule differs across zones", () =>
 
   assert.equal(
     row.description,
-    "block | http_request_firewall_custom / skip | http_request_firewall_custom",
+    "Action: block / Action: skip",
   )
 })
 

@@ -39,6 +39,14 @@ import {
   emailPolicyExceptionsForZone,
 } from "./fleet-policy.mjs"
 import {
+  describeFacetEquivalence,
+  describeFacetComparisonAccess,
+  FACET_COMPARISON_ACCESS_KIND,
+  facetCellComparisonValue,
+  facetExpectedComparisonValue,
+  facetValuesDiffer,
+} from "./facet-equivalence.mjs"
+import {
   createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   evaluateFleetIntent,
@@ -140,6 +148,7 @@ import {
   matrixEmptyMessage,
   matrixFilterChangeCount,
   matrixRowMatchesFilters,
+  sortMatrixRows,
 } from "./matrix-filter.mjs"
 import {
   buildDnssecStatusPlan,
@@ -415,6 +424,7 @@ const state = {
   emailDestination: null,
   emailDnsPolicy: null,
   emailPolicyExceptionStatuses: [],
+  facetEquivalence: null,
   inventory: null,
   inventorySource: null,
   matrix: null,
@@ -522,6 +532,14 @@ const elements = {
   editorTitle: document.querySelector("#editor-title"),
   editorValue: document.querySelector("#editor-value"),
   editorValueLabel: document.querySelector("#editor-value-label"),
+  facetEquivalenceCompared: document.querySelector("#facet-equivalence-compared"),
+  facetEquivalenceAccess: document.querySelector("#facet-equivalence-access"),
+  facetEquivalenceDialog: document.querySelector("#facet-equivalence-dialog"),
+  facetEquivalenceIdentity: document.querySelector("#facet-equivalence-identity"),
+  facetEquivalenceObserved: document.querySelector("#facet-equivalence-observed"),
+  facetEquivalenceTitle: document.querySelector("#facet-equivalence-title"),
+  facetEquivalenceTitleSource: document.querySelector("#facet-equivalence-title-source"),
+  facetEquivalenceZone: document.querySelector("#facet-equivalence-zone"),
   facetCount: document.querySelector("#facet-count"),
   filterPanelToggle: document.querySelector("#filter-panel-toggle"),
   filterReset: document.querySelector("#filter-reset"),
@@ -536,6 +554,7 @@ const elements = {
   holeTarget: document.querySelector("#hole-target"),
   holeTitle: document.querySelector("#hole-title"),
   intentAcknowledgementDialog: document.querySelector("#intent-acknowledgement-dialog"),
+  intentAcknowledgementEquivalence: document.querySelector("#intent-acknowledgement-equivalence"),
   intentAcknowledgementError: document.querySelector("#intent-acknowledgement-error"),
   intentAcknowledgementForm: document.querySelector("#intent-acknowledgement-form"),
   intentAcknowledgementPreview: document.querySelector("#intent-acknowledgement-preview"),
@@ -587,6 +606,7 @@ const elements = {
   intentPolicyConstraintMayDiffer: document.querySelector("#intent-policy-constraint-may-differ"),
   intentPolicyConstraintMustDiffer: document.querySelector("#intent-policy-constraint-must-differ"),
   intentPolicyDrift: document.querySelector("#intent-policy-drift"),
+  intentPolicyEquivalence: document.querySelector("#intent-policy-equivalence"),
   intentPolicyError: document.querySelector("#intent-policy-error"),
   intentPolicyExactFields: document.querySelector("#intent-policy-exact-fields"),
   intentPolicyForm: document.querySelector("#intent-policy-form"),
@@ -608,6 +628,8 @@ const elements = {
   intentPolicyReview: document.querySelector("#intent-policy-review"),
   intentPolicySave: document.querySelector("#intent-policy-save"),
   intentPolicyScope: document.querySelector("#intent-policy-scope"),
+  intentPolicySourcePreview: document.querySelector("#intent-policy-source-preview"),
+  intentPolicySourceValue: document.querySelector("#intent-policy-source-value"),
   intentPolicyTarget: document.querySelector("#intent-policy-target"),
   intentPolicyTitle: document.querySelector("#intent-policy-title"),
   intentPolicyValues: document.querySelector("#intent-policy-values"),
@@ -623,9 +645,11 @@ const elements = {
   matrixFocus: document.querySelector("#matrix-focus"),
   matrixGuide: document.querySelector(".matrix-guide"),
   matrixShell: document.querySelector("#matrix-shell"),
+  matrixSort: document.querySelector("#matrix-sort"),
   matrixTable: document.querySelector("#matrix"),
   mobileMatrixFocus: document.querySelector("#mobile-matrix-focus"),
   matrixHead: document.querySelector("#matrix-head"),
+  phase: document.querySelector("#phase"),
   policyExceptionDialog: document.querySelector("#policy-exception-dialog"),
   policyExceptionList: document.querySelector("#policy-exception-list"),
   policyExceptionRaw: document.querySelector("#policy-exception-raw"),
@@ -1085,6 +1109,90 @@ function createGenericValueInspection(value) {
   return inspection
 }
 
+function createFacetPhaseElement(facet, className = "") {
+  const description = describeFacetEquivalence(facet)
+  if (!description.phase) return null
+  const phase = createElement("div", {
+    className: `facet-phase${className ? ` ${className}` : ""}`,
+  })
+  phase.dataset.phase = description.phase
+  phase.setAttribute(
+    "aria-label",
+    `Phase: ${description.phaseLabel}, ${description.phase}`,
+  )
+  const friendly = createElement("span", {
+    className: "facet-phase-friendly",
+  })
+  friendly.append(
+    createElement("span", { className: "facet-phase-prefix", text: "Phase:" }),
+    createElement("strong", { text: description.phaseLabel }),
+  )
+  phase.append(
+    friendly,
+    createElement("code", { text: description.phase }),
+  )
+  return phase
+}
+
+function createFacetEquivalencePanel(facet, options = {}) {
+  const description = describeFacetEquivalence(facet)
+  const panel = createElement("div", {
+    className: `facet-equivalence${options.compact ? " compact" : ""}`,
+  })
+  const facts = createElement("dl", { className: "facet-equivalence-facts" })
+  const identityValue = document.createElement("dd")
+  identityValue.append(createElement("span", {
+    text: description.identitySummary,
+  }))
+  if (description.phase) {
+    identityValue.className = "facet-equivalence-phase"
+    identityValue.dataset.phase = description.phase
+    identityValue.setAttribute(
+      "aria-label",
+      `${description.identitySummary}, ${description.phase}`,
+    )
+    identityValue.append(createElement("code", { text: description.phase }))
+  }
+  facts.append(
+    createElement("dt", { text: "Same facet" }),
+    identityValue,
+    createElement("dt", { text: "Exact match" }),
+    createElement("dd", {
+      className: "facet-equivalence-exact",
+      text: description.equivalenceSummary,
+    }),
+    createElement("dt", { text: "Normalized" }),
+    createElement("dd", {
+      className: "facet-equivalence-normalized",
+      text: description.normalizationSummary,
+    }),
+    createElement("dt", { text: "Not compared" }),
+    createElement("dd", {
+      className: "facet-equivalence-ignored",
+      text: description.ignoredSummary,
+    }),
+  )
+  panel.append(facts)
+  return panel
+}
+
+function createComparedValueInspection(facet, value) {
+  const comparison = createElement("section", {
+    className: "facet-compared-value",
+  })
+  comparison.append(
+    createElement("h4", { text: "Compared value" }),
+    createElement("p", {
+      text: "Only this normalized value is compared",
+    }),
+    structuredValueElement(value),
+    createRawValueDetails(value, "Show compared JSON"),
+  )
+  const description = describeFacetEquivalence(facet)
+  comparison.setAttribute("aria-label", `${description.categoryLabel} compared value`)
+  return comparison
+}
+
 function createRedirectBadge(text, className = "", title = "") {
   const badge = createElement("span", {
     className: `redirect-badge${className ? ` ${className}` : ""}`,
@@ -1152,28 +1260,6 @@ function createRedirectFlow(redirect, options = {}) {
   )
   root.append(route, createRedirectBadges(redirect, options))
   return root
-}
-
-function createRedirectCellSummary(redirect, ruleName = "", rowName = "") {
-  const summary = document.createElement("summary")
-  summary.className = "redirect-cell-summary"
-  const target = createElement("span", { className: "redirect-cell-target" })
-  target.append(
-    createElement("span", { text: "To" }),
-    createElement("code", { text: redirect.target }),
-  )
-  target.lastElementChild.title = redirect.target
-  summary.append(target)
-  if (ruleName && ruleName !== rowName) {
-    const name = createElement("span", { className: "redirect-cell-name" })
-    name.append(
-      createElement("span", { text: "Rule name" }),
-      createElement("strong", { text: ruleName }),
-    )
-    summary.append(name)
-  }
-  summary.append(createRedirectBadges(redirect, { compact: true }))
-  return summary
 }
 
 function createRuleSummary(rule, phase = "", options = {}) {
@@ -2178,6 +2264,7 @@ function showWorkspaceRuleInMatrix(ruleId) {
   elements.category.value = presentRule(rule, ruleset.phase).redirect
     ? MATRIX_CATEGORY.REDIRECTS
     : MATRIX_CATEGORY.RULESET_RULES
+  elements.phase.value = ruleset.phase
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -2283,12 +2370,17 @@ function rulesetComparisonZoneList(zones, options = {}) {
 }
 
 function rulesetComparisonConfiguration(configuration, index, total, options = {}) {
-  const article = createElement("article", { className: "ruleset-comparison-configuration" })
+  const article = createElement("article", {
+    className: `ruleset-comparison-configuration ${configuration.baseline ? "exact-baseline" : "exact-outlier"}`,
+  })
   const heading = createElement("div", { className: "ruleset-comparison-configuration-heading" })
   heading.append(
     createElement("h4", {
       text: total === 1 ? "Ordered rules" : `Definition ${index + 1}`,
     }),
+    ...(configuration.baseline
+      ? [rulesetBadge("Exact fleet consensus", "baseline")]
+      : []),
     rulesetBadge(
       `${configuration.zoneCount} zone${configuration.zoneCount === 1 ? "" : "s"}`,
     ),
@@ -2303,18 +2395,19 @@ function rulesetComparisonConfiguration(configuration, index, total, options = {
 
 function rulesetComparisonGroup(group, row) {
   const section = createElement("section", {
-    className: `ruleset-comparison-group${group.baseline ? " baseline" : " outlier"}${group.ruleCount === null ? " missing" : ""}`,
+    className: `ruleset-comparison-group ${group.countBaseline ? "count-leading" : "count-alternate"}${group.ruleCount === null ? " missing" : ""}`,
   })
   const heading = createElement("div", { className: "ruleset-comparison-group-heading" })
   const badges = createElement("div", { className: "ruleset-comparison-group-badges" })
-  if (group.baseline) badges.append(rulesetBadge("Most common", "baseline"))
-  else badges.append(rulesetBadge("Different", "outlier"))
+  if (group.ruleCount === null) badges.append(rulesetBadge("Missing", "outlier"))
+  else if (group.countBaseline) badges.append(rulesetBadge("Most common count", "baseline"))
+  else badges.append(rulesetBadge("Different count", "outlier"))
   badges.append(rulesetBadge(`${group.zoneCount} zone${group.zoneCount === 1 ? "" : "s"}`))
   heading.append(createElement("h3", { text: group.label }), badges)
   section.append(heading)
   if (group.ruleCount === null) {
     section.append(rulesetComparisonZoneList(group.zones, {
-      intentActions: !group.baseline,
+      intentActions: true,
       missing: true,
       row,
     }))
@@ -2330,7 +2423,7 @@ function rulesetComparisonGroup(group, row) {
   for (const [index, configuration] of group.configurations.entries()) {
     configurations.append(
       rulesetComparisonConfiguration(configuration, index, group.configurations.length, {
-        intentActions: !group.baseline,
+        intentActions: !configuration.baseline,
         row,
       }),
     )
@@ -2341,13 +2434,13 @@ function rulesetComparisonGroup(group, row) {
 
 function rulesetComparisonIntentText(row, comparison) {
   if (!intentMutationSupported()) {
-    return "This read-only review can inspect counts and ordered rules. Open a read/write session to define count intent or acknowledge an intentional count exception."
+    return "This read-only review can inspect counts and ordered rules. Open a read/write session to define intent for an exact ordered ruleset or acknowledge an intentional definition exception."
   }
   const policies = row.intentState?.policies || []
   if (policies.length === 0) {
     return comparison.baseline
-      ? `No count intent is set. Use ${comparison.baseline.label} as exact intent, then acknowledge only the zones that should stay different. Allow any rule count if an entire coverage group may vary.`
-      : "No count intent is set. The counts are tied, so choose an exact count or allow any rule count for the appropriate coverage group."
+      ? "No ruleset intent is set. Use the exact fleet consensus as intent, then acknowledge only the zones whose complete ordered definitions should stay different."
+      : "No exact ruleset definition has a unique fleet lead. Choose a specific observed definition as exact intent or allow complete ruleset values to differ for the appropriate coverage group."
   }
   if (policies.length > 1) {
     return `${policies.length} intent policies overlap this parent summary. Review them in Fleet intent before changing the relationship.`
@@ -2360,17 +2453,17 @@ function rulesetComparisonIntentText(row, comparison) {
   }
   if (constraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER) {
     return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
-      ? "Intent allows this parent ruleset to be absent or to have any rule count in its coverage group. To constrain present rulesets, choose an exact count or distinct values."
-      : "Intent requires this parent ruleset throughout its coverage group but allows any rule count. To keep only selected outliers, use the common count as exact intent and acknowledge those zones with a reason."
+      ? "Intent allows this parent ruleset to be absent or to have any ordered definition in its coverage group. To constrain present rulesets, choose an exact value or distinct values."
+      : "Intent requires this parent ruleset throughout its coverage group but allows any ordered definition. To keep only selected outliers, use an exact definition as intent and acknowledge those zones with a reason."
   }
   if (constraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER) {
     return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
-      ? "Intent allows this parent ruleset to be absent, but every present covered value must differ. Use child-rule intent when uniqueness belongs to specific rules instead."
-      : "Intent requires every covered zone to have a different parent summary. Use child-rule intent when uniqueness belongs to specific rules instead."
+      ? "Intent allows this parent ruleset to be absent, but every present covered ordered definition must differ."
+      : "Intent requires every covered zone to have a different complete ordered ruleset definition."
   }
   return presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
-    ? "Exact intent allows this parent ruleset to be absent, but treats any other present rule count as drift. Individual rule definitions still need child-rule intent."
-    : "Exact intent treats missing or different rule counts as drift. Use Acknowledge beside a different zone below to accept only its current summarized count with a reason. Individual rule definitions still need child-rule intent."
+    ? "Exact intent allows this parent ruleset to be absent, but treats any other complete ordered definition as drift."
+    : "Exact intent treats a missing ruleset or any difference in its complete ordered normalized definition as drift. Use Acknowledge beside a different zone below to accept only its present definition with a reason."
 }
 
 function renderRulesetComparison() {
@@ -2383,21 +2476,18 @@ function renderRulesetComparison() {
     return
   }
   const baselineSummary = comparison.baseline
-    ? `The most common count is ${comparison.baseline.label}, present on ${comparison.baseline.zoneCount} of ${comparison.totalZones} zones.`
-    : `No single rule count dominates the ${comparison.totalZones} zones.`
-  const definitionSummary = comparison.hasDefinitionDifferences
-    ? " At least one count contains multiple ordered rule definitions."
-    : ""
+    ? `The most common exact ordered definition is present on ${comparison.baseline.zoneCount} of ${comparison.totalZones} zones.`
+    : `No exact ordered definition has a unique lead across the ${comparison.totalZones} zones.`
   elements.rulesetComparisonTitle.textContent = row.label
-  elements.rulesetComparisonSummary.textContent = `${baselineSummary}${definitionSummary}`
+  elements.rulesetComparisonSummary.textContent = `${baselineSummary} Rule count is shown only as a review aid and never controls exact equivalence.`
   elements.rulesetComparisonMetrics.replaceChildren(
     rulesetBadge(`${comparison.totalZones} zones`),
     comparison.baseline
       ? rulesetBadge(
-          `${comparison.outlierCount} count outlier${comparison.outlierCount === 1 ? "" : "s"}`,
+          `${comparison.outlierCount} exact outlier${comparison.outlierCount === 1 ? "" : "s"}`,
           comparison.outlierCount > 0 ? "outlier" : "baseline",
         )
-      : rulesetBadge("No dominant count", "outlier"),
+      : rulesetBadge("No exact consensus", "outlier"),
     rulesetBadge(
       `${comparison.configurationCount} ordered definition${comparison.configurationCount === 1 ? "" : "s"}`,
     ),
@@ -2420,10 +2510,10 @@ function renderRulesetComparison() {
     ? "Edit forbidden intent"
     : policies.length === 1
       && constraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-      ? "Edit exact count intent"
+      ? "Edit exact ruleset intent"
       : comparison.baseline
-        ? `Use ${comparison.baseline.label} as intent`
-        : "Choose exact count intent"
+        ? "Use exact fleet consensus as intent"
+        : "Choose exact ruleset intent"
   elements.rulesetComparisonAllowDifferences.hidden = !intentMutationSupported()
     || (policies.length === 1
       && presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN)
@@ -2431,15 +2521,15 @@ function renderRulesetComparison() {
   elements.rulesetComparisonAllowDifferences.textContent = policies.length > 1
     ? "Review intent policies"
     : constraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
-      ? "Edit allowed counts"
-      : "Allow any rule count"
+      ? "Edit allowed ruleset values"
+      : "Allow any ruleset value"
 }
 
 function showRulesetComparison(row) {
   state.rulesetComparisonRowKey = row.key
   renderRulesetComparison()
   const initialFocus = elements.rulesetComparisonGroups.querySelector(
-    ".ruleset-comparison-group.outlier .open-ruleset",
+    ".ruleset-comparison-configuration.exact-outlier .open-ruleset, .ruleset-comparison-group.missing .open-ruleset",
   ) || elements.rulesetComparisonShowRules
   showDialog(elements.rulesetComparisonDialog, { initialFocus })
 }
@@ -2454,6 +2544,7 @@ function showRulesetChildRows() {
   elements.rulesetComparisonDialog.close()
   elements.search.value = row.label
   elements.category.value = category
+  elements.phase.value = phase
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -2486,7 +2577,7 @@ function showRulesetChildRows() {
   )
 }
 
-function editRulesetExactCountIntent() {
+function editRulesetExactIntent() {
   const row = currentRulesetComparisonRow()
   if (!row || !intentWritable()) return
   const policies = row.intentState?.policies || []
@@ -2512,7 +2603,7 @@ function editRulesetExactCountIntent() {
   openIntentPolicyEditor(row, policies[0] || null, options)
 }
 
-function allowRulesetCountDifferences() {
+function allowRulesetValueDifferences() {
   const row = currentRulesetComparisonRow()
   if (!row || !intentWritable()) return
   const policies = row.intentState?.policies || []
@@ -2894,6 +2985,202 @@ function showValueComparison(row) {
   renderValueComparison()
   showDialog(elements.valueComparisonDialog, {
     initialFocus: elements.valueComparisonDialog.querySelector("[data-dialog-close]"),
+  })
+}
+
+function currentFacetEquivalenceRow() {
+  const selection = state.facetEquivalence
+  if (!selection) return null
+  return state.matrix?.rows.find((row) => (
+    row.category === selection.category && row.key === selection.key
+  )) || null
+}
+
+function facetEquivalenceValueCard(container, options) {
+  const value = createElement("div", {
+    className: "value-comparison-complete-value",
+  })
+  if (options.missing) {
+    value.append(createElement("p", {
+      className: "facet-equivalence-missing",
+      text: "Missing",
+    }))
+  } else if (options.rule) {
+    value.append(createRuleSummary(options.rule, options.phase))
+  } else {
+    value.append(structuredValueElement(options.value))
+  }
+  container.replaceChildren(
+    createElement("h3", { text: options.heading }),
+    createElement("p", {
+      className: "facet-equivalence-value-help",
+      text: options.help,
+    }),
+    value,
+    ...(options.missing
+      ? []
+      : [createRawValueDetails(options.value, options.rawLabel)]),
+  )
+}
+
+function facetEquivalenceActionButton(label, className, activate, options = {}) {
+  const button = createElement("button", {
+    className,
+    text: label,
+  })
+  button.type = "button"
+  button.disabled = Boolean(options.disabled)
+  if (options.title) button.title = options.title
+  button.addEventListener("click", activate)
+  return button
+}
+
+function renderFacetEquivalenceAccess(row, zone, cell) {
+  const access = describeFacetComparisonAccess(row, cell)
+  const writeLocked = state.busy || readOnly || !state.transportAvailable
+  const status = createElement("p", {
+    className: `facet-equivalence-access-status ${access.kind}`,
+    text: access.reason,
+  })
+  if (writeLocked && [
+    FACET_COMPARISON_ACCESS_KIND.DIRECT,
+    FACET_COMPARISON_ACCESS_KIND.WORKSPACE,
+  ].includes(access.kind)) {
+    status.append(createElement("span", {
+      className: "facet-equivalence-access-lock",
+      text: readOnly
+        ? " This session is read-only."
+        : !state.transportAvailable
+          ? " Live access is unavailable."
+          : " Another operation is in progress.",
+    }))
+  }
+
+  const actions = createElement("div", {
+    className: "facet-equivalence-access-actions",
+  })
+  if (access.kind === FACET_COMPARISON_ACCESS_KIND.DIRECT) {
+    actions.append(facetEquivalenceActionButton(
+      "Edit compared fields",
+      "button button-primary",
+      () => {
+        if (!cell?.action || !zone) return
+        elements.facetEquivalenceDialog.close()
+        openActionEditor(cell.action, zone, row.label)
+      },
+      {
+        disabled: writeLocked,
+        title: "Open the editor for the fields used by exact matching",
+      },
+    ))
+  }
+
+  const workspaceAction = cell?.workspaceAction || cell?.parentAction
+  const showWorkspace = access.kind === FACET_COMPARISON_ACCESS_KIND.WORKSPACE
+    || access.kind === FACET_COMPARISON_ACCESS_KIND.INSPECT
+    || access.secondaryKind === FACET_COMPARISON_ACCESS_KIND.WORKSPACE
+  if (showWorkspace && workspaceAction) {
+    const workspaceIsPrimary = access.kind === FACET_COMPARISON_ACCESS_KIND.WORKSPACE
+    const label = access.kind === FACET_COMPARISON_ACCESS_KIND.INSPECT || readOnly
+      ? "Open read-only workspace"
+      : access.secondaryKind === FACET_COMPARISON_ACCESS_KIND.WORKSPACE
+        ? "Edit order in ruleset"
+        : "Edit in ruleset workspace"
+    actions.append(facetEquivalenceActionButton(
+      label,
+      workspaceIsPrimary ? "button button-primary" : "button button-quiet",
+      () => {
+        elements.facetEquivalenceDialog.close()
+        openRulesetWorkspace(workspaceAction)
+      },
+      {
+        disabled: state.busy && access.kind !== FACET_COMPARISON_ACCESS_KIND.INSPECT,
+        title: access.kind === FACET_COMPARISON_ACCESS_KIND.INSPECT
+          ? "Inspect the complete ruleset definition"
+          : "Open the editor for ruleset description, rules, and order",
+      },
+    ))
+  }
+
+  elements.facetEquivalenceAccess.replaceChildren(
+    status,
+    ...(actions.children.length > 0 ? [actions] : []),
+  )
+}
+
+function renderFacetEquivalenceDialog() {
+  const row = currentFacetEquivalenceRow()
+  if (!row || !state.inventory) {
+    if (elements.facetEquivalenceDialog.open) {
+      elements.facetEquivalenceDialog.close()
+    }
+    return
+  }
+
+  const zones = state.inventory.zones || []
+  const selectedZoneName = zones.some(
+    (zone) => zone.meta.name === state.facetEquivalence.zoneName,
+  )
+    ? state.facetEquivalence.zoneName
+    : zones.find((zone) => row.cells.has(zone.meta.name))?.meta.name
+      || zones[0]?.meta.name
+      || ""
+  state.facetEquivalence.zoneName = selectedZoneName
+  elements.facetEquivalenceZone.replaceChildren(
+    ...zones.map((zone) => {
+      const present = row.cells.has(zone.meta.name)
+      const option = createElement("option", {
+        text: `${zone.meta.name}${present ? "" : " (missing)"}`,
+      })
+      option.value = zone.meta.name
+      return option
+    }),
+  )
+  elements.facetEquivalenceZone.value = selectedZoneName
+
+  const description = describeFacetEquivalence(row)
+  const cell = row.cells.get(selectedZoneName)
+  const comparedValue = cell ? facetCellComparisonValue(cell) : null
+  const observedValue = cell?.inspectionValue ?? null
+  elements.facetEquivalenceTitle.textContent = row.label
+  elements.facetEquivalenceTitleSource.textContent = `Matrix title source: ${description.titleSource}`
+  elements.facetEquivalenceIdentity.replaceChildren(
+    createFacetEquivalencePanel(row),
+  )
+  renderFacetEquivalenceAccess(
+    row,
+    zones.find((zone) => zone.meta.name === selectedZoneName) || null,
+    cell,
+  )
+  facetEquivalenceValueCard(elements.facetEquivalenceCompared, {
+    heading: "Compared value",
+    help: "The normalized value used for matching",
+    missing: !cell,
+    rawLabel: "Show compared JSON",
+    value: comparedValue,
+  })
+  facetEquivalenceValueCard(elements.facetEquivalenceObserved, {
+    heading: "Current source value",
+    help: "The inventory value before the exact-match projection",
+    missing: !cell,
+    phase: cell?.presentation?.phase || description.phase,
+    rawLabel: "Show source JSON",
+    rule: cell?.presentation?.kind === "rule"
+      ? cell.presentation.rule
+      : null,
+    value: observedValue,
+  })
+}
+
+function openFacetEquivalence(row, zoneName = "") {
+  state.facetEquivalence = {
+    category: row.category,
+    key: row.key,
+    zoneName,
+  }
+  renderFacetEquivalenceDialog()
+  showDialog(elements.facetEquivalenceDialog, {
+    initialFocus: elements.facetEquivalenceZone,
   })
 }
 
@@ -3325,6 +3612,30 @@ function renderScopes() {
     : DEFAULT_MATRIX_SCOPE
 }
 
+function renderPhases() {
+  const previous = elements.phase.value
+  const counts = new Map()
+  for (const row of state.matrix.rows) {
+    if (!row.phase) continue
+    counts.set(row.phase, (counts.get(row.phase) || 0) + 1)
+  }
+  elements.phase.replaceChildren(createElement("option", {
+    text: "All phases",
+  }))
+  elements.phase.firstElementChild.value = ""
+  for (const [phase, count] of [...counts].sort((left, right) => (
+    rulePhaseLabel(left[0]).localeCompare(rulePhaseLabel(right[0]))
+  ))) {
+    const option = createElement("option", {
+      text: `${rulePhaseLabel(phase)} | ${phase} (${count})`,
+    })
+    option.value = phase
+    option.title = phase
+    elements.phase.append(option)
+  }
+  if (counts.has(previous)) elements.phase.value = previous
+}
+
 function renderDnsTypes() {
   const previous = elements.dnsType.value
   const counts = new Map()
@@ -3395,10 +3706,12 @@ function currentMatrixFilters() {
     category: elements.category.value,
     changeableOnly: elements.changeSupportToggle.getAttribute("aria-pressed") === "true",
     differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
+    phase: elements.phase.value,
     query: elements.search.value,
     recordType: elements.dnsType.value,
     redirectType: elements.redirectType.value,
     scope: elements.scope.value,
+    sort: elements.matrixSort.value,
     targetHolesOnly: elements.targetHoles.getAttribute("aria-pressed") === "true",
     targetZoneIds: state.selectedZoneIds,
     zoneCount: state.inventory?.zones.length || 0,
@@ -3417,15 +3730,17 @@ function syncResponsiveFilterPanel() {
 
 function syncMatrixFilterControls(filters = currentMatrixFilters()) {
   const changeCount = matrixFilterChangeCount(filters)
-  const label = changeCount === 0 ? "Filters" : `Filters (${changeCount})`
+  const label = changeCount === 0
+    ? "Filters & sort"
+    : `Filters & sort (${changeCount})`
   elements.filterReset.hidden = changeCount === 0
   elements.filterReset.disabled = changeCount === 0
   elements.filterPanelToggle.textContent = state.filterPanelExpanded
-    ? "Hide filters"
+    ? "Hide filters & sort"
     : label
   elements.filterPanelToggle.setAttribute(
     "aria-label",
-    `${state.filterPanelExpanded ? "Hide" : "Show"} secondary filters. ${changeCount} non-default filter${changeCount === 1 ? "" : "s"}.`,
+    `${state.filterPanelExpanded ? "Hide" : "Show"} secondary filters and sort. ${changeCount} non-default control${changeCount === 1 ? "" : "s"}.`,
   )
   elements.filterPanelToggle.classList.toggle("active", changeCount > 0)
   syncResponsiveFilterPanel()
@@ -3434,9 +3749,11 @@ function syncMatrixFilterControls(filters = currentMatrixFilters()) {
 function resetMatrixFilters() {
   elements.search.value = DEFAULT_MATRIX_FILTERS.query
   elements.category.value = DEFAULT_MATRIX_FILTERS.category
+  elements.phase.value = DEFAULT_MATRIX_FILTERS.phase
   elements.scope.value = DEFAULT_MATRIX_FILTERS.scope
   elements.dnsType.value = DEFAULT_MATRIX_FILTERS.recordType
   elements.redirectType.value = DEFAULT_MATRIX_FILTERS.redirectType
+  elements.matrixSort.value = DEFAULT_MATRIX_FILTERS.sort
   elements.changeSupportToggle.setAttribute(
     "aria-pressed",
     String(DEFAULT_MATRIX_FILTERS.changeableOnly),
@@ -3459,6 +3776,7 @@ function resetMatrixFilters() {
 
 function renderMatrixFilters() {
   renderCategories()
+  renderPhases()
   renderScopes()
   renderDnsTypes()
   renderRedirectTypes()
@@ -3593,6 +3911,7 @@ function showPolicyExceptionInMatrix(exception) {
       ? `${exception.zoneName} v=spf1 @`
       : `${exception.zoneName} ${exception.component}`
     elements.category.value = "DNS records"
+    elements.phase.value = ""
     elements.scope.value = MATRIX_SCOPE.ALL
     elements.dnsType.value = "TXT"
     elements.redirectType.value = ""
@@ -4216,6 +4535,14 @@ function renderIntentPolicyPreview() {
   elements.intentPolicyRaw.textContent = variant
     ? formattedJson(variant.value)
     : ""
+  const sourceDiffers = Boolean(variant)
+    && facetValuesDiffer(variant.value, variant.inspectionValue)
+  elements.intentPolicySourceValue.hidden = !sourceDiffers
+  elements.intentPolicySourcePreview.replaceChildren(
+    sourceDiffers
+      ? structuredValueElement(variant.inspectionValue)
+      : createElement("span", { text: "The observed source and compared value are identical" }),
+  )
   renderIntentPolicyRemediation()
 }
 
@@ -4445,7 +4772,8 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
   elements.intentPolicyModeCustom.checked = policyIsAuthored
     || draft.variants.length === 0
   elements.intentPolicyCustomJson.open = false
-  elements.intentPolicyComplete.open = false
+  elements.intentPolicyComplete.open = true
+  elements.intentPolicySourceValue.open = false
   elements.intentPolicyRaw.closest("details").open = false
   elements.intentPolicyError.hidden = true
   elements.intentPolicyError.textContent = ""
@@ -4517,6 +4845,9 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
     variants,
   }
   elements.intentPolicyTarget.textContent = `${matrixCategoryLabel(row.category)} | ${row.label}`
+  elements.intentPolicyEquivalence.replaceChildren(
+    createFacetEquivalencePanel(row),
+  )
   renderIntentPolicyValueChoices()
   renderIntentPolicyGroupOptions(selectedGroupId, policies)
   loadIntentPolicyGroupContext(selectedGroupId, options)
@@ -4573,6 +4904,7 @@ async function saveIntentPolicy(event) {
       description: draft.row.description || "",
       key: draft.row.key,
       label: draft.row.label,
+      ...(draft.row.phase ? { phase: draft.row.phase } : {}),
     },
     groupId: group.id,
     id: fleetIntentPolicyForGroup(draft.policies, group.id)?.id
@@ -4792,11 +5124,30 @@ function openIntentAcknowledgement(action) {
     policy,
   }
   elements.intentAcknowledgementTarget.textContent = `${action.zone.meta.name} | ${matrixCategoryLabel(action.row.category)} | ${action.row.label}. Only the exact state shown below will be accepted.`
-  elements.intentAcknowledgementPreview.replaceChildren(
-    action.intentCell.observedCanonical === FLEET_INTENT_MISSING_CANONICAL
-      ? createElement("strong", { text: "Missing" })
-      : structuredValueElement(observedIntentValue(action.row, action.zone)),
+  elements.intentAcknowledgementEquivalence.replaceChildren(
+    createFacetEquivalencePanel(action.row),
   )
+  const observedValue = observedIntentValue(action.row, action.zone)
+  const cell = action.row.cells.get(action.zone.meta.name)
+  const comparedValue = cell ? facetCellComparisonValue(cell) : null
+  if (action.intentCell.observedCanonical === FLEET_INTENT_MISSING_CANONICAL) {
+    elements.intentAcknowledgementPreview.replaceChildren(
+      createElement("strong", { text: "Compared state: Missing" }),
+    )
+  } else {
+    const preview = createElement("div", { className: "facet-value-contract" })
+    preview.append(createComparedValueInspection(action.row, comparedValue))
+    if (facetValuesDiffer(comparedValue, observedValue)) {
+      const source = document.createElement("details")
+      source.className = "facet-observed-value"
+      source.append(
+        createElement("summary", { text: "Current observed source value" }),
+        createGenericValueInspection(observedValue),
+      )
+      preview.append(source)
+    }
+    elements.intentAcknowledgementPreview.replaceChildren(preview)
+  }
   elements.intentAcknowledgementReason.value = existing?.reason || ""
   elements.intentAcknowledgementError.hidden = true
   elements.intentAcknowledgementError.textContent = ""
@@ -4910,6 +5261,7 @@ function showIntentPolicyInMatrix(policy) {
   elements.intentDialog.close()
   elements.search.value = ""
   elements.category.value = row.category
+  elements.phase.value = row.phase || ""
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -5077,6 +5429,8 @@ function renderIntentPolicies() {
     const layerPresentation = FLEET_INTENT_POLICY_LAYER_PRESENTATION[layer.role]
     const policyState = intentPolicyState(policy.id)
     const row = intentPolicyRow(policy)
+    const facet = row || policy.facet
+    const facetDescription = describeFacetEquivalence(facet)
     const rowState = row ? intentRowState(row) : null
     const conflicted = rowState
       ? [...rowState.cells.values()].some(
@@ -5141,6 +5495,9 @@ function renderIntentPolicies() {
         className: "intent-item-summary",
         text: [
           matrixCategoryLabel(policy.facet.category),
+          facetDescription.phase
+            ? `Phase: ${facetDescription.phaseLabel} (${facetDescription.phase})`
+            : "",
           group
             ? `Applies to ${intentGroupPrimaryText(group, groupScope)}`
             : "Missing group",
@@ -5156,12 +5513,32 @@ function renderIntentPolicies() {
             : "",
         ].filter(Boolean).join(" | "),
       }),
+      createFacetEquivalencePanel(facet, {
+        compact: true,
+        includeKey: false,
+      }),
     )
     const value = createElement("div", { className: "intent-item-value" })
     if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
       value.textContent = "This facet must be absent"
     } else if (valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
-      value.append(structuredValueElement(policy.expected.value))
+      const comparedValue = facetExpectedComparisonValue(policy.expected)
+      value.append(
+        createElement("strong", {
+          className: "intent-item-value-heading",
+          text: "Compared value",
+        }),
+        structuredValueElement(comparedValue),
+      )
+      if (facetValuesDiffer(comparedValue, policy.expected.value)) {
+        const source = document.createElement("details")
+        source.className = "facet-observed-value"
+        source.append(
+          createElement("summary", { text: "Saved representative source value" }),
+          structuredValueElement(policy.expected.value),
+        )
+        value.append(source)
+      }
     } else {
       value.textContent = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
         ? presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
@@ -5576,22 +5953,25 @@ function renderIntentAdoptionValuePreview(container, candidate, selection) {
     }))
     return
   }
-  if (variant.value === null || typeof variant.value !== "object") {
-    container.replaceChildren(structuredValueElement(variant.value))
-    return
-  }
   const summary = createElement("div", {
     className: "intent-adoption-compact-value",
   })
   summary.append(
-    createElement("strong", { text: variant.display }),
+    createElement("strong", { text: `Compared value: ${variant.display}` }),
     createElement("span", { text: `Observed source: ${variant.sourceZoneName}` }),
   )
-  const details = lazyStructuredValueDetails(
-    "Inspect selected value",
+  const compared = lazyStructuredValueDetails(
+    "Inspect compared value that controls equivalence",
     variant.value,
   )
-  container.replaceChildren(summary, details)
+  const children = [summary, compared]
+  if (facetValuesDiffer(variant.value, variant.inspectionValue)) {
+    children.push(lazyStructuredValueDetails(
+      "Inspect complete observed source value",
+      variant.inspectionValue,
+    ))
+  }
+  container.replaceChildren(...children)
 }
 
 function intentAdoptionVariantList(candidate) {
@@ -5606,7 +5986,16 @@ function intentAdoptionVariantList(candidate) {
       createElement("span", { text: `Source: ${variant.sourceZoneName}` }),
     )
     const value = createElement("div", { className: "intent-adoption-variant-value" })
-    value.append(structuredValueElement(variant.value))
+    value.append(
+      createElement("strong", { text: "Compared value" }),
+      structuredValueElement(variant.value),
+    )
+    if (facetValuesDiffer(variant.value, variant.inspectionValue)) {
+      value.append(lazyStructuredValueDetails(
+        "Complete observed source value",
+        variant.inspectionValue,
+      ))
+    }
     item.append(heading, value)
     list.append(item)
   }
@@ -5628,9 +6017,15 @@ function renderIntentAdoptionCandidate(candidate, index) {
   checkbox.id = `intent-adoption-candidate-${index}`
   checkbox.checked = selection.selected
   const title = createElement("span")
+  const facetDescription = describeFacetEquivalence(candidate)
   title.append(
     createElement("strong", { text: candidate.label }),
     createElement("small", { text: candidate.category }),
+    ...(facetDescription.phase
+      ? [createElement("small", {
+          text: `Phase: ${facetDescription.phaseLabel} (${facetDescription.phase})`,
+        })]
+      : []),
   )
   selectionLabel.htmlFor = checkbox.id
   selectionLabel.append(checkbox, title)
@@ -5655,6 +6050,10 @@ function renderIntentAdoptionCandidate(candidate, index) {
     createElement("p", {
       className: "intent-adoption-recommendation",
       text: `Suggestion: ${candidate.recommendation.reason}`,
+    }),
+    createFacetEquivalencePanel(candidate, {
+      compact: true,
+      includeKey: false,
     }),
   )
   const variants = document.createElement("details")
@@ -6345,45 +6744,10 @@ function matrixCell(row, zone) {
   const directlyEditable = Boolean(cell.action && !readOnly)
   const structuredValue = cell.inspectionValue !== null
     && typeof cell.inspectionValue === "object"
-  if (cell.presentation?.kind === "rule") {
-    const details = document.createElement("details")
-    details.className = "cell-value-details"
-    const redirect = cell.presentation.redirect
-    details.append(
-      redirect
-        ? createRedirectCellSummary(
-            redirect,
-            cell.presentation.rule.description,
-            row.label,
-          )
-        : createElement("summary", { text: cell.display }),
-      createRuleSummary(
-        cell.presentation.rule,
-        cell.presentation.phase,
-        {
-          compact: true,
-          omitFields: redirect
-            ? ["enabled", "action", "phase"]
-            : ["description", "enabled"],
-        },
-      ),
-      createRawValueDetails(cell.inspectionValue),
-    )
-    td.append(details)
-  } else if (structuredValue) {
-    const details = document.createElement("details")
-    details.className = "cell-value-details"
-    details.append(
-      createElement("summary", { text: cell.display }),
-      createGenericValueInspection(cell.inspectionValue),
-    )
-    td.append(details)
-  } else {
-    td.append(createElement("span", {
-      className: directlyEditable ? "cell-display" : "",
-      text: cell.display,
-    }))
-  }
+  td.append(createElement("span", {
+    className: directlyEditable ? "cell-display" : "",
+    text: cell.display,
+  }))
 
   if (directlyEditable) {
     const label = editActionLabel(cell.action, row, zone)
@@ -6398,8 +6762,24 @@ function matrixCell(row, zone) {
     && (intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
       || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT
       || intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED)
-  if (directlyEditable || hasWriteSecondaryAction || hasWorkspaceAction || hasIntentAction) {
+  if (structuredValue || directlyEditable || hasWriteSecondaryAction || hasWorkspaceAction || hasIntentAction) {
     const actions = createElement("div", { className: "cell-actions" })
+    if (structuredValue) {
+      const inspectButton = createElement("button", {
+        className: "cell-action inspect-facet-value",
+        text: "Inspect",
+      })
+      inspectButton.type = "button"
+      inspectButton.setAttribute(
+        "aria-label",
+        `Inspect compared and source values for ${row.label} on ${zone.meta.name}`,
+      )
+      inspectButton.title = "See the exact compared value beside its source value"
+      inspectButton.addEventListener("click", () => {
+        openFacetEquivalence(row, zone.meta.name)
+      })
+      actions.append(inspectButton)
+    }
     if (cell.workspaceAction) {
       const openButton = createElement("button", {
         className: "cell-action open-ruleset",
@@ -6481,7 +6861,7 @@ function matrixCell(row, zone) {
 function renderMatrix() {
   const headerRow = document.createElement("tr")
   const categoryHeading = createElement("th", { className: "category-heading", text: "Category" })
-  const facetHeading = createElement("th", { className: "facet-heading", text: "Facet" })
+  const facetHeading = createElement("th", { className: "facet-heading", text: "Facet identity" })
   categoryHeading.scope = "col"
   facetHeading.scope = "col"
   headerRow.append(categoryHeading, facetHeading)
@@ -6489,7 +6869,7 @@ function renderMatrix() {
   elements.matrixHead.replaceChildren(headerRow)
 
   const fragment = document.createDocumentFragment()
-  for (const row of state.matrix.rows) {
+  for (const [defaultOrder, row] of state.matrix.rows.entries()) {
     const rulesetComparison = compareDetailedRulesetRow(
       row,
       state.inventory.zones,
@@ -6501,8 +6881,11 @@ function renderMatrix() {
     tr.dataset.different = String(
       row.different || Boolean(rulesetComparison?.hasDefinitionDifferences),
     )
+    tr.dataset.defaultOrder = String(defaultOrder)
     tr.dataset.facetKey = row.key
+    tr.dataset.facetLabel = row.label
     tr.dataset.missingZoneIds = row.missingZoneIds.join(" ")
+    tr.dataset.phase = row.phase
     tr.dataset.presentCount = String(row.presentCount)
     tr.dataset.recordType = row.recordType
     tr.dataset.redirectTypes = row.redirectTypes.join(" ")
@@ -6519,26 +6902,52 @@ function renderMatrix() {
       className: "facet-category",
       text: matrixCategoryLabel(row.category),
     }))
-    const hasConsensus = rulesetComparison
-      ? Boolean(rulesetComparison.baseline)
-      : row.consensusCanonical !== null
+    const hasConsensus = row.consensusCanonical !== null
     const consensusBadge = createElement("small", {
       className: `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}${rulesetComparison ? " ruleset-count" : ""}`,
-      text: rulesetComparison?.badgeText || (hasConsensus
+      text: hasConsensus
         ? `Consensus ${row.consensusCount}/${state.inventory.zones.length}`
-        : "No consensus"),
+        : "No consensus",
     })
-    consensusBadge.title = rulesetComparison?.title || (hasConsensus
+    consensusBadge.title = hasConsensus
       ? `${row.consensusCount} of ${state.inventory.zones.length} zones match the unique row consensus`
-      : `${row.variantCount} present variants; the most common values are tied`)
+      : `${row.variantCount} present variants; the most common values are tied`
     consensusBadge.setAttribute("aria-label", consensusBadge.title)
     const facetTitle = createElement("div", { className: "facet-title" })
+    const facetTitleCopy = createElement("span", {
+      className: "facet-title-copy",
+    })
+    facetTitleCopy.append(
+      createElement("small", {
+        className: "facet-label-source",
+        text: row.labelSource,
+      }),
+      createElement("span", {
+        className: "facet-title-value",
+        text: row.label,
+      }),
+    )
     facetTitle.append(
-      createElement("span", { text: row.label }),
+      facetTitleCopy,
       consensusBadge,
     )
     facetCell.append(facetTitle)
     if (row.description) facetCell.append(createElement("small", { text: row.description }))
+    const phase = createFacetPhaseElement(row, "matrix-facet-phase")
+    if (phase) facetCell.append(phase)
+    const equivalenceButton = createElement("button", {
+      className: "cell-action facet-equivalence-open",
+      text: "How matching works",
+    })
+    equivalenceButton.type = "button"
+    equivalenceButton.setAttribute(
+      "aria-label",
+      `Show facet identity and exact equivalence for ${row.label}`,
+    )
+    equivalenceButton.addEventListener("click", () => {
+      openFacetEquivalence(row)
+    })
+    facetCell.append(equivalenceButton)
     if (rulesetComparison?.hasDifferences) {
       facetCell.append(createElement("small", {
         className: "ruleset-count-distribution",
@@ -6569,10 +6978,10 @@ function renderMatrix() {
     }
     if (rulesetComparison?.hasDifferences) {
       const reviewLabel = rulesetComparison.baseline && rulesetComparison.outlierCount > 0
-        ? `Review ${rulesetComparison.outlierCount} count outlier${rulesetComparison.outlierCount === 1 ? "" : "s"}`
+        ? `Review ${rulesetComparison.outlierCount} exact outlier${rulesetComparison.outlierCount === 1 ? "" : "s"}`
         : rulesetComparison.baseline
-          ? "Review rule differences"
-          : "Review count distribution"
+          ? "Review ruleset definitions"
+          : "Review exact definitions"
       const reviewButton = createElement("button", {
         className: "cell-action review-ruleset-comparison",
         text: reviewLabel,
@@ -6931,8 +7340,18 @@ function renderCoverage() {
 }
 
 function filterRows() {
-  const rows = [...elements.matrixBody.querySelectorAll("tr")]
   const filters = currentMatrixFilters()
+  const currentRows = [...elements.matrixBody.querySelectorAll("tr")]
+  const rows = sortMatrixRows(currentRows.map((row) => ({
+    category: row.dataset.category,
+    defaultOrder: Number(row.dataset.defaultOrder),
+    label: row.dataset.facetLabel,
+    phase: row.dataset.phase,
+    row,
+  })), filters.sort).map((entry) => entry.row)
+  if (rows.some((row, index) => row !== currentRows[index])) {
+    elements.matrixBody.append(...rows)
+  }
   let visible = 0
 
   for (const row of rows) {
@@ -6943,6 +7362,7 @@ function filterRows() {
       changeable: row.dataset.changeable === "true",
       different: row.dataset.different === "true",
       missingZoneIds: row.dataset.missingZoneIds.split(" ").filter(Boolean),
+      phase: row.dataset.phase,
       presentCount: Number(row.dataset.presentCount),
       recordType: row.dataset.recordType,
       redirectTypes: row.dataset.redirectTypes.split(" ").filter(Boolean),
@@ -7238,6 +7658,7 @@ function focusConfigurationExplorer() {
 function showExplorerView(options = {}) {
   elements.search.value = ""
   elements.category.value = options.category || ""
+  elements.phase.value = options.phase || ""
   elements.scope.value = options.scope || MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -9507,13 +9928,20 @@ function openDesiredStateEditor(options) {
 }
 
 function openCellEditor(cell) {
-  if (state.busy || readOnly || !state.transportAvailable) return
   const action = editActionByCell.get(cell)
   const zone = zoneById(cell.dataset.zoneId)
   if (!action || !zone) {
     toast("The selected resource is no longer available", "error")
     return
   }
+  const rowLabel = cell.closest("tr")?.querySelector(".facet-title-value")?.textContent
+    || cell.closest("tr")?.querySelector(".facet-cell span")?.textContent
+    || ""
+  openActionEditor(action, zone, rowLabel, cell)
+}
+
+function openActionEditor(action, zone, rowLabel = "", sourceCell = null) {
+  if (state.busy || readOnly || !state.transportAvailable) return
   closeInlineEditor({ restoreFocus: false })
 
   let entries
@@ -9557,8 +9985,10 @@ function openCellEditor(cell) {
       || settingKind === JSON_VALUE_KIND.NUMBER
       || settingKind === JSON_VALUE_KIND.STRING
     ) {
-      openInlineSettingEditor(cell, action, zone, setting)
-      return
+      if (sourceCell) {
+        openInlineSettingEditor(sourceCell, action, zone, setting)
+        return
+      }
     }
     entries = [
       {
@@ -9586,7 +10016,7 @@ function openCellEditor(cell) {
     }))
     suggestions = collectValueSuggestions(entries.map((entry) => entry.value))
     kind = "DNS record"
-    title = cell.closest("tr")?.querySelector(".facet-cell span")?.textContent || "Edit DNS record"
+    title = rowLabel || "Edit DNS record"
     valueLabel = "Desired record definition"
   } else if (action.type === "ruleset-rule") {
     const cached = cachedRule(zone, action.rulesetId, action.ruleId)
@@ -9594,7 +10024,6 @@ function openCellEditor(cell) {
       toast("The selected rule is no longer available", "error")
       return
     }
-    const rowLabel = cell.closest("tr")?.querySelector(".facet-cell span")?.textContent
     entries = [
       {
         id: cached.rule.id,
@@ -10132,6 +10561,7 @@ function renderInventory(inventory, source) {
   if (elements.intentDialog.open) renderIntentManager()
   if (elements.rulesetComparisonDialog.open) renderRulesetComparison()
   if (elements.valueComparisonDialog.open) renderValueComparison()
+  if (elements.facetEquivalenceDialog.open) renderFacetEquivalenceDialog()
   updateSelectionStyles()
   return matrixChanged
 }
@@ -10263,6 +10693,8 @@ elements.category.addEventListener("change", () => {
   renderCategoryCapability()
   filterRows()
 })
+elements.phase.addEventListener("change", filterRows)
+elements.matrixSort.addEventListener("change", filterRows)
 elements.scope.addEventListener("change", filterRows)
 elements.dnsType.addEventListener("change", filterRows)
 elements.redirectType.addEventListener("change", filterRows)
@@ -10548,17 +10980,25 @@ elements.rulesetComparisonGroups.addEventListener("click", (event) => {
 elements.rulesetComparisonShowRules.addEventListener("click", showRulesetChildRows)
 elements.rulesetComparisonUseBaseline.addEventListener(
   "click",
-  editRulesetExactCountIntent,
+  editRulesetExactIntent,
 )
 elements.rulesetComparisonAllowDifferences.addEventListener(
   "click",
-  allowRulesetCountDifferences,
+  allowRulesetValueDifferences,
 )
 elements.rulesetComparisonDialog.addEventListener("close", () => {
   state.rulesetComparisonRowKey = null
 })
 elements.valueComparisonDialog.addEventListener("close", () => {
   state.valueComparisonRowKey = null
+})
+elements.facetEquivalenceZone.addEventListener("change", () => {
+  if (!state.facetEquivalence) return
+  state.facetEquivalence.zoneName = elements.facetEquivalenceZone.value
+  renderFacetEquivalenceDialog()
+})
+elements.facetEquivalenceDialog.addEventListener("close", () => {
+  state.facetEquivalence = null
 })
 elements.rulesetDescriptionDialog.addEventListener("close", () => {
   clearFieldError(

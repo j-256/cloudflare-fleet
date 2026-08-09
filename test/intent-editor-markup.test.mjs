@@ -5,12 +5,52 @@ import test from "node:test"
 const html = await readFile(new URL("../index.html", import.meta.url), "utf8")
 const appSource = await readFile(new URL("../src/app.mjs", import.meta.url), "utf8")
 
-test("intent editor exposes observed values as a comparison-backed radio group", () => {
+test("intent editor exposes exact comparison values and their observed sources", () => {
   assert.match(html, /<fieldset[^>]+id="intent-policy-observed-fields"/)
   assert.match(html, /id="intent-policy-values"/)
   assert.match(html, /id="intent-policy-differences"/)
-  assert.match(html, /Show complete selected value/)
+  assert.match(html, /id="intent-policy-equivalence"/)
+  assert.match(html, /Compared value that controls equivalence/)
+  assert.match(html, /id="intent-policy-source-value"/)
+  assert.match(html, /Representative observed source value/)
   assert.doesNotMatch(html, /<select id="intent-policy-value"/)
+})
+
+test("intent views render shared facet identity and equivalence explanations", () => {
+  assert.match(html, /id="intent-acknowledgement-equivalence"/)
+  assert.match(appSource, /createFacetEquivalencePanel\(row\)/)
+  assert.match(appSource, /facetExpectedComparisonValue\(policy\.expected\)/)
+})
+
+test("matrix opens compared and observed values in a dedicated equivalence modal", () => {
+  assert.match(html, /id="facet-equivalence-dialog"/)
+  assert.match(html, /id="facet-equivalence-zone"/)
+  assert.match(html, /id="facet-equivalence-compared"/)
+  assert.match(html, /id="facet-equivalence-observed"/)
+  assert.match(html, /id="facet-equivalence-access"/)
+  assert.match(html, /id="facet-equivalence-title-source"/)
+  assert.match(appSource, /function openFacetEquivalence\(/)
+  assert.match(appSource, /function renderFacetEquivalenceAccess\(/)
+  assert.match(appSource, /"Edit compared fields"/)
+  assert.match(appSource, /text: "Not compared"/)
+  assert.match(appSource, /className: "facet-label-source"/)
+  assert.match(appSource, /className: "facet-title-value"/)
+  assert.match(appSource, /className: "cell-action inspect-facet-value"/)
+  assert.match(appSource, /text: "Same facet"/)
+  assert.match(appSource, /text: "Exact match"/)
+  assert.doesNotMatch(appSource, /Facet identity and exact equivalence/)
+  assert.doesNotMatch(appSource, /details\.className = "cell-value-details"/)
+})
+
+test("matrix exposes phase as a filter and a stacked badge", () => {
+  assert.match(html, /<select id="phase"/)
+  assert.match(html, /<select id="matrix-sort"/)
+  assert.match(html, /<option value="phase-execution" selected>Sort: Phase execution order<\/option>/)
+  assert.match(html, /<option value="category">Sort: Category A-Z<\/option>/)
+  assert.match(appSource, /function renderPhases\(\)/)
+  assert.match(appSource, /sortMatrixRows\(/)
+  assert.match(appSource, /className: "facet-phase-friendly"/)
+  assert.match(appSource, /phase\.dataset\.phase = description\.phase/)
 })
 
 test("intent manager explains baseline and refinement composition", () => {

@@ -1,14 +1,10 @@
 import {
-  normalizeValue,
   stableString,
 } from "./normalize.mjs"
+import { rulesetExactComparisonValue } from "./facet-equivalence.mjs"
 
 const MISSING_GROUP_KEY = "missing"
 const RULESET_PARENT_CATEGORY = "Rulesets"
-const RULE_NORMALIZATION_OPTIONS = Object.freeze({
-  omit: ["last_updated", "ref", "version"],
-  preserveOrder: true,
-})
 
 function pluralize(value, singular, plural = `${singular}s`) {
   return `${value} ${value === 1 ? singular : plural}`
@@ -22,14 +18,8 @@ function countGroupLabel(ruleCount) {
   return ruleCount === null ? "Missing" : pluralize(ruleCount, "rule")
 }
 
-function normalizedRules(ruleset, zoneName) {
-  return (ruleset.rules || []).map((rule) => (
-    normalizeValue(rule, zoneName, RULE_NORMALIZATION_OPTIONS)
-  ))
-}
-
 function compareGroups(left, right) {
-  if (left.baseline !== right.baseline) return left.baseline ? -1 : 1
+  if (left.countBaseline !== right.countBaseline) return left.countBaseline ? -1 : 1
   if (left.ruleCount === null) return 1
   if (right.ruleCount === null) return -1
   return right.zoneCount - left.zoneCount || left.ruleCount - right.ruleCount
@@ -83,11 +73,13 @@ export function compareDetailedRulesetRow(row, zones) {
     group.zones.push(zoneEntry)
     if (!ruleset) continue
 
-    const rules = normalizedRules(ruleset, zone.meta.name)
-    const canonical = stableString(rules)
+    const exactValue = rulesetExactComparisonValue(ruleset, zone.meta.name)
+    const rules = exactValue.rules
+    const canonical = stableString(exactValue)
     if (!group.configurationsByCanonical.has(canonical)) {
       group.configurationsByCanonical.set(canonical, {
         canonical,
+        exactValue,
         rules,
         zones: [],
       })
@@ -104,7 +96,7 @@ export function compareDetailedRulesetRow(row, zones) {
   const largestGroups = presentRawGroups.filter(
     (group) => group.zones.length === largestZoneCount,
   )
-  const baselineKey = largestGroups.length === 1 ? largestGroups[0].key : null
+  const countBaselineKey = largestGroups.length === 1 ? largestGroups[0].key : null
   const groups = rawGroups.map((group) => {
     const configurations = [...group.configurationsByCanonical.values()]
       .map((configuration) => ({
@@ -113,7 +105,7 @@ export function compareDetailedRulesetRow(row, zones) {
       }))
       .sort(compareConfigurations)
     return {
-      baseline: group.key === baselineKey,
+      countBaseline: group.key === countBaselineKey,
       configurations,
       key: group.key,
       label: group.label,
@@ -122,32 +114,43 @@ export function compareDetailedRulesetRow(row, zones) {
       zones: group.zones,
     }
   }).sort(compareGroups)
-  const baseline = groups.find((group) => group.baseline) || null
+  const countBaseline = groups.find((group) => group.countBaseline) || null
+  const configurations = groups.flatMap((group) => group.configurations)
+  const largestDefinitionCount = Math.max(
+    0,
+    ...configurations.map((configuration) => configuration.zoneCount),
+  )
+  const leadingDefinitions = configurations.filter(
+    (configuration) => configuration.zoneCount === largestDefinitionCount,
+  )
+  const baseline = leadingDefinitions.length === 1
+    ? leadingDefinitions[0]
+    : null
+  for (const configuration of configurations) {
+    configuration.baseline = configuration === baseline
+  }
   const totalZones = (zones || []).length
   const outlierCount = baseline ? totalZones - baseline.zoneCount : 0
   const hasDefinitionDifferences = groups.some((group) => group.configurations.length > 1)
-  const configurationCount = groups.reduce(
-    (total, group) => total + group.configurations.length,
-    0,
-  )
+  const configurationCount = configurations.length
   const distributionText = groups
     .map((group) => `${group.label}: ${group.zoneCount}`)
     .join(" | ")
-  const presentGroups = groups.filter((group) => group.ruleCount !== null)
   const hasMissingGroup = groups.some((group) => group.ruleCount === null)
   const badgeText = baseline
-    ? `${baseline.label} on ${baseline.zoneCount}/${totalZones}`
-    : `${pluralize(presentGroups.length, "rule count")}${hasMissingGroup ? " + missing" : ""}`
+    ? `Exact value on ${baseline.zoneCount}/${totalZones}`
+    : `${pluralize(configurationCount, "exact value")}${hasMissingGroup ? " + missing" : ""}`
   const title = `${groups.map((group) => {
     if (group.ruleCount === null) {
       return `${pluralize(group.zoneCount, "zone")} ${group.zoneCount === 1 ? "is" : "are"} missing the entrypoint`
     }
     return `${pluralize(group.zoneCount, "zone")} ${group.zoneCount === 1 ? "has" : "have"} ${group.label}`
-  }).join("; ")}. This parent summary compares entrypoint presence and rule count, not individual rule definitions.`
+  }).join("; ")}. Exact equivalence includes the ruleset description and ordered editable rule fields; count is summary metadata only.`
 
   return {
     badgeText,
     baseline,
+    countBaseline,
     configurationCount,
     distributionText,
     groups,

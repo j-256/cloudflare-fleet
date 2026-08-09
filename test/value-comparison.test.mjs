@@ -145,6 +145,41 @@ test("fleet intent value comparison attributes every variant and exposes only di
   )
 })
 
+test("fleet intent values expose the compared ruleset projection separately from inspection data", () => {
+  const zones = [zone("alpha.example")]
+  const comparedValue = {
+    description: "",
+    rules: [{
+      action: "set_config",
+      enabled: true,
+      expression: "true",
+    }],
+  }
+  const inspectionValue = {
+    id: "ruleset-id",
+    kind: "zone",
+    name: "default",
+    phase: "http_config_settings",
+    rules: [{
+      action: "set_config",
+      enabled: true,
+      expression: "true",
+      id: "rule-id",
+    }],
+  }
+  const variants = groupFleetRowIntentValues({
+    cells: new Map([["alpha.example", {
+      canonical: JSON.stringify(comparedValue),
+      display: "1 rule",
+      inspectionValue,
+      intentCanonical: JSON.stringify(comparedValue),
+    }]]),
+  }, zones)
+
+  assert.deepEqual(variants[0].value, comparedValue)
+  assert.deepEqual(variants[0].inspectionValue, inspectionValue)
+})
+
 test("fleet value comparison preserves missing array and object paths", () => {
   const zones = [zone("alpha.example"), zone("beta.example")]
   const comparison = compareFleetRowValues({

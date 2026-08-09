@@ -25,11 +25,16 @@ function row(workspaceKind = null) {
 }
 
 const expected = Object.freeze({
-  canonical: '{"kind":"zone","rule_count":1}',
+  canonical: '{"kind":"zone","name":"default","rules":[{"action":"block","enabled":true,"expression":"true"}]}',
   resolutionCanonical: null,
   value: Object.freeze({
     kind: "zone",
-    rule_count: 1,
+    name: "default",
+    rules: Object.freeze([Object.freeze({
+      action: "block",
+      enabled: true,
+      expression: "true",
+    })]),
   }),
 })
 

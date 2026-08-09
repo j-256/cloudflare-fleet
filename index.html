@@ -200,6 +200,15 @@
             <select id="category">
               <option value="">All categories</option>
             </select>
+            <label class="sr-only" for="phase">Filter by ruleset phase</label>
+            <select id="phase" aria-describedby="visible-count">
+              <option value="">All phases</option>
+            </select>
+            <label class="sr-only" for="matrix-sort">Sort matrix facets</label>
+            <select id="matrix-sort" aria-describedby="visible-count">
+              <option value="phase-execution" selected>Sort: Phase execution order</option>
+              <option value="category">Sort: Category A-Z</option>
+            </select>
             <label class="sr-only" for="scope">Filter by fleet coverage</label>
             <select id="scope" aria-describedby="visible-count">
               <option value="fleet-patterns" selected>Fleet patterns</option>
@@ -215,11 +224,11 @@
             <select id="redirect-type" aria-describedby="visible-count" hidden>
               <option value="">All redirect targets</option>
             </select>
-            <button class="button button-quiet filter-reset" id="filter-reset" type="button" aria-label="Reset matrix filters" disabled hidden>Reset</button>
+            <button class="button button-quiet filter-reset" id="filter-reset" type="button" aria-label="Reset matrix filters and sort" disabled hidden>Reset</button>
           </div>
           <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Needs review</button>
           <button class="button toggle" id="change-support-toggle" type="button" aria-pressed="false">Supported changes</button>
-          <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters</button>
+          <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters &amp; sort</button>
           <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
           <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
           <button class="button button-quiet activity-button" id="show-activity" type="button" aria-haspopup="dialog" aria-label="Activity 0: operation history, no entries">Activity <span id="activity-count">0</span></button>
@@ -379,13 +388,13 @@
         </div>
         <div class="ruleset-comparison-metrics" id="ruleset-comparison-metrics" aria-label="Ruleset comparison summary"></div>
       </header>
-      <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares entrypoint presence and rule count. The ordered rule definitions below show what actually differs.</p>
+      <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares the complete ordered normalized ruleset. Rule count only organizes the review below and never determines exact equivalence.</p>
       <div class="ruleset-comparison-groups" id="ruleset-comparison-groups"></div>
       <p class="ruleset-comparison-intent" id="ruleset-comparison-intent"></p>
       <div class="ruleset-comparison-actions">
         <button class="button button-accent" id="ruleset-comparison-show-rules" type="button">Show child rules in matrix</button>
-        <button class="button button-quiet" id="ruleset-comparison-use-baseline" type="button" data-intent-write>Use common count as intent</button>
-        <button class="button button-quiet" id="ruleset-comparison-allow-differences" type="button" data-intent-write>Allow any rule count</button>
+        <button class="button button-quiet" id="ruleset-comparison-use-baseline" type="button" data-intent-write>Use exact fleet consensus as intent</button>
+        <button class="button button-quiet" id="ruleset-comparison-allow-differences" type="button" data-intent-write>Allow any ruleset value</button>
         <button class="button button-primary" type="button" data-dialog-close>Done</button>
       </div>
     </div>
@@ -424,6 +433,30 @@
         <summary>Show complete friendly values</summary>
         <div class="value-comparison-complete-grid" id="value-comparison-complete-grid"></div>
       </details>
+      <div class="value-comparison-actions">
+        <button class="button button-primary" type="button" data-dialog-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="value-comparison-dialog" id="facet-equivalence-dialog" aria-labelledby="facet-equivalence-title">
+    <div class="value-comparison-workspace facet-equivalence-workspace">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close facet equivalence inspector">&times;</button>
+      <header class="value-comparison-heading">
+        <div>
+          <p class="dialog-kicker">Facet matching</p>
+          <h2 id="facet-equivalence-title">Identity and equivalence</h2>
+          <p class="facet-equivalence-title-source" id="facet-equivalence-title-source"></p>
+        </div>
+      </header>
+      <section class="facet-equivalence-panel" id="facet-equivalence-identity" aria-label="Facet identity and exact equivalence"></section>
+      <label class="facet-equivalence-zone" for="facet-equivalence-zone">Show value from zone</label>
+      <select id="facet-equivalence-zone"></select>
+      <section class="facet-equivalence-access" id="facet-equivalence-access" aria-live="polite"></section>
+      <div class="value-comparison-complete-grid facet-equivalence-values">
+        <article class="value-comparison-complete-card" id="facet-equivalence-compared"></article>
+        <article class="value-comparison-complete-card" id="facet-equivalence-observed"></article>
+      </div>
       <div class="value-comparison-actions">
         <button class="button button-primary" type="button" data-dialog-close>Done</button>
       </div>
@@ -690,6 +723,7 @@
       <p class="dialog-kicker">Fleet intent policy</p>
       <h2 id="intent-policy-title">Set facet intent</h2>
       <p id="intent-policy-target"></p>
+      <section class="facet-equivalence-panel" id="intent-policy-equivalence" aria-label="Facet identity and exact equivalence"></section>
       <div class="intent-field-heading">
         <label for="intent-policy-group">Applies to zones</label>
         <button class="button button-quiet" id="intent-policy-add-group" type="button">Create zone group</button>
@@ -748,17 +782,21 @@
           </div>
         </fieldset>
         <fieldset class="intent-observed-values" id="intent-policy-observed-fields" aria-describedby="intent-policy-observed-help">
-          <legend>Observed value</legend>
-          <p class="intent-field-help" id="intent-policy-observed-help">Choose by the fields that differ and the zones using each value. The representative source records provenance and enables supported remediation.</p>
+          <legend>Compared fleet value</legend>
+          <p class="intent-field-help" id="intent-policy-observed-help">Choose the normalized value that controls equivalence. Fields absent from this value are not compared. The representative source records provenance and enables supported remediation.</p>
           <div class="intent-policy-values" id="intent-policy-values"></div>
           <section class="intent-policy-differences" id="intent-policy-differences" aria-label="Observed value differences"></section>
-          <details class="intent-policy-complete" id="intent-policy-complete">
-            <summary>Show complete selected value</summary>
+          <details class="intent-policy-complete" id="intent-policy-complete" open>
+            <summary>Compared value that controls equivalence</summary>
             <div class="intent-value-preview" id="intent-policy-preview"></div>
           </details>
           <details class="raw-value">
-            <summary>Show normalized JSON</summary>
+            <summary>Show compared JSON</summary>
             <pre id="intent-policy-raw"></pre>
+          </details>
+          <details class="intent-policy-complete" id="intent-policy-source-value" hidden>
+            <summary>Representative observed source value</summary>
+            <div class="intent-value-preview" id="intent-policy-source-preview"></div>
           </details>
         </fieldset>
         <section class="value-editor intent-custom-editor" id="intent-policy-custom-editor" aria-labelledby="intent-policy-custom-heading" hidden>
@@ -792,6 +830,7 @@
       <p class="dialog-kicker">Intentional difference</p>
       <h2 id="intent-acknowledgement-title">Acknowledge exact state</h2>
       <p id="intent-acknowledgement-target"></p>
+      <section class="facet-equivalence-panel" id="intent-acknowledgement-equivalence" aria-label="Facet identity and exact equivalence"></section>
       <div class="intent-value-preview" id="intent-acknowledgement-preview"></div>
       <label for="intent-acknowledgement-reason">Reason</label>
       <textarea id="intent-acknowledgement-reason" aria-errormessage="intent-acknowledgement-error" required></textarea>

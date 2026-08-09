@@ -243,6 +243,7 @@ function isPolicy(policy, options = {}) {
     && isLabel(policy.facet.category)
     && isLabel(policy.facet.key, 1000)
     && isLabel(policy.facet.label)
+    && (policy.facet.phase === undefined || isLabel(policy.facet.phase))
     && (policy.facet.description === undefined
       || typeof policy.facet.description === "string")
     && Object.values(FLEET_INTENT_PRESENCE_CONSTRAINT).includes(presenceConstraint)

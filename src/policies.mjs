@@ -47,6 +47,7 @@ const RULE_COPY_DEPENDENCY_KEYS = new Set([
 const RULE_WRITABLE_FIELDS = Object.freeze([
   "action",
   "action_parameters",
+  "categories",
   "description",
   "enabled",
   "exposed_credential_check",

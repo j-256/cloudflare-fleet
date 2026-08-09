@@ -7,6 +7,7 @@ import {
   fleetIntentFacetId,
   replaceFleetIntentPolicy,
 } from "./fleet-intent.mjs"
+import { facetCellComparisonValue } from "./facet-equivalence.mjs"
 
 const STRONG_CONSENSUS_MINIMUM_COUNT = 2
 const STRONG_CONSENSUS_MINIMUM_RATIO = 2 / 3
@@ -46,9 +47,7 @@ function cellCanonical(cell) {
 }
 
 function cellIntentValue(cell) {
-  return Object.prototype.hasOwnProperty.call(cell, "intentValue")
-    ? cell.intentValue
-    : cell.inspectionValue
+  return facetCellComparisonValue(cell)
 }
 
 function observedVariants(row, inventory) {
@@ -62,6 +61,7 @@ function observedVariants(row, inventory) {
         canonical,
         count: 0,
         display: cell.intentDisplay ?? cell.display,
+        inspectionValue: jsonClone(cell.inspectionValue),
         origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
         resolutionCanonical: cell.resolutionCanonical || null,
         sourceZoneId: zone.meta.id,
@@ -76,6 +76,7 @@ function observedVariants(row, inventory) {
       variant.resolutionCanonical = cell.resolutionCanonical || null
       variant.sourceZoneId = zone.meta.id
       variant.sourceZoneName = zone.meta.name
+      variant.inspectionValue = jsonClone(cell.inspectionValue)
       variant.value = jsonClone(cellIntentValue(cell))
     }
   }
@@ -163,6 +164,7 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
       id,
       key: row.key,
       label: row.label,
+      phase: row.phase || "",
       missingCount,
       presentCount,
       recommendation: {
@@ -229,6 +231,7 @@ export function createIntentAdoptionPolicy(candidate, selection) {
       description: candidate.description,
       key: candidate.key,
       label: candidate.label,
+      ...(candidate.phase ? { phase: candidate.phase } : {}),
     },
     groupId: selection.groupId,
     id: selection.policyId,

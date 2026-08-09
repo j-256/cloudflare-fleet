@@ -21,6 +21,7 @@ import { DNS_MATRIX_CATEGORIES } from "./matrix-filter.mjs"
 import {
   dnsRecordCopyCapability,
   dnsRecordEditCapability,
+  editableEmailRoutingRulePayload,
   emailDnsRecordAssociationKey,
   emailRoutingRuleEditCapability,
   ruleCopyCapability,
@@ -31,36 +32,15 @@ import {
   redirectSemanticIdentity,
 } from "./redirect-presentation.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
+import {
+  ruleExactComparisonValue,
+  rulesetExactComparisonValue,
+} from "./facet-equivalence.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
   RULESET_KIND.ZONE,
 ])
-const CATEGORY_ORDER = [
-  "Email",
-  "Email routes",
-  "Email DNS specification",
-  "Rulesets",
-  MATRIX_CATEGORY.REDIRECTS,
-  MATRIX_CATEGORY.RULESET_RULES,
-  "Zone settings",
-  "DNSSEC",
-  "DNS records",
-  "Workers routes",
-  MATRIX_CATEGORY.LEGACY_FIREWALL_VIEW,
-  "Security",
-  "TLS",
-  "Performance",
-  "IP access rules",
-  "Health checks",
-  "Load balancers",
-  "Logpush jobs",
-  "Waiting rooms",
-  "Web3 hostnames",
-  "Snippets",
-  "TLS inventory",
-  "Zone",
-]
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 const EMAIL_ROUTING_MX_DRIFT_DESCRIPTION = "Cloudflare-assigned MX priorities are ignored for drift; live priorities remain inspectable and editable"
 const MATRIX_MISSING_CANONICAL = "__missing__"
@@ -133,13 +113,22 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
       descriptions: new Set(),
       key,
       label,
+      labelSources: new Set(),
       cells: new Map(),
       duplicateZoneNames: new Set(),
+      phase: options.phase || "",
       resolutionKind: options.resolutionKind || null,
     })
   }
   const row = rows.get(id)
   if (options.description) row.descriptions.add(options.description)
+  row.labelSources.add(options.labelSource || "Facet definition")
+  if (options.phase) {
+    if (row.phase && row.phase !== options.phase) {
+      throw new Error(`Conflicting phases for ${category}: ${label}`)
+    }
+    row.phase = options.phase
+  }
   if (options.resolutionKind) {
     if (row.resolutionKind && row.resolutionKind !== options.resolutionKind) {
       throw new Error(`Conflicting resolution kinds for ${category}: ${label}`)
@@ -187,7 +176,12 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
 function addScalar(rows, inventory, category, key, label, getter, options = {}) {
   for (const zone of inventory.zones) {
     const value = getter(zone)
-    if (value !== undefined) addCell(rows, category, key, label, zone, value, options)
+    if (value !== undefined) {
+      addCell(rows, category, key, label, zone, value, {
+        labelSource: "Inventory field",
+        ...options,
+      })
+    }
   }
 }
 
@@ -250,6 +244,7 @@ function addSettingRows(rows, inventory) {
           }),
           inspectionValue: normalizeValue(setting.value, zone.meta.name),
           intentValue: normalizeValue(setting.value, zone.meta.name),
+          labelSource: "Setting ID",
         },
       )
     }
@@ -279,6 +274,7 @@ function addDnssecRows(rows, inventory) {
           ? requestedStatus ?? normalized.status
           : shortDisplay(normalized),
         intentValue,
+        labelSource: "Facet type",
         resolutionValue: intentValue,
       },
     )
@@ -307,6 +303,12 @@ function emailRoutingRuleCellOptions(rule, zone, options = {}) {
           reason: capability.reason,
         },
   }
+}
+
+function emailRoutingComparisonValue(rule, zoneName, options = {}) {
+  const writable = editableEmailRoutingRulePayload(rule, options)
+  if (!options.catchAll) delete writable.priority
+  return normalizeValue(writable, zoneName)
 }
 
 function emailDnsMatrixRecord(record) {
@@ -372,6 +374,7 @@ function addEmailRows(rows, inventory) {
     if (settings) {
       for (const key of ["enabled", "status", "skip_wizard", "support_subaddress"]) {
         addCell(rows, "Email", `settings:${key}`, key, zone, settings[key], {
+          labelSource: "Setting field",
           resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
         })
       }
@@ -379,17 +382,26 @@ function addEmailRows(rows, inventory) {
 
     const catchAll = surfaceResult(zone, "email-catch-all")
     if (catchAll) {
+      const comparedCatchAll = emailRoutingComparisonValue(
+        catchAll,
+        zone.meta.name,
+        { catchAll: true },
+      )
       addCell(
         rows,
         "Email",
         "catch-all",
         "Catch-all rule",
         zone,
-        normalizeValue(catchAll, zone.meta.name, { omit: ["priority"] }),
+        comparedCatchAll,
         {
           ...emailRoutingRuleCellOptions(catchAll, zone, {
             catchAll: true,
           }),
+          full: displayJson(normalizeValue(catchAll, zone.meta.name)),
+          inspectionValue: catchAll,
+          labelSource: "Facet type",
+          normalized: comparedCatchAll,
           resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
         },
       )
@@ -401,14 +413,21 @@ function addEmailRows(rows, inventory) {
         ?.map((entry) => normalizeValue(entry, zone.meta.name))
         .map(stableString)
         .join(" + ") || "unnamed"
+      const comparedRule = emailRoutingComparisonValue(rule, zone.meta.name)
       addCell(
         rows,
         "Email routes",
         `routing:${matcher}`,
         rule.name || matcher,
         zone,
-        normalizeValue(rule, zone.meta.name, { omit: ["priority"] }),
-        emailRoutingRuleCellOptions(rule, zone),
+        comparedRule,
+        {
+          ...emailRoutingRuleCellOptions(rule, zone),
+          full: displayJson(normalizeValue(rule, zone.meta.name)),
+          inspectionValue: rule,
+          labelSource: rule.name ? "Route name" : "Normalized matcher",
+          normalized: comparedRule,
+        },
       )
     }
 
@@ -474,6 +493,7 @@ function addEmailRows(rows, inventory) {
             display: shortDisplay(comparisonRecords),
             full: displayJson(inspectionRecords),
             inspectionValue: inspectionRecords,
+            labelSource: "Record type + owner",
             normalized: comparisonRecords,
             resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
           },
@@ -564,6 +584,7 @@ function addDnsRows(rows, inventory) {
           display: shortDisplay(comparisonRecords),
           full: displayJson(inspectionRecords),
           inspectionValue: inspectionRecords,
+          labelSource: "Record type + owner",
           normalized: comparisonRecords,
           resolutionKind: HOLE_RESOLUTION_KIND.DNS_RECORDS,
           resolutionValue: inspectionRecords,
@@ -596,9 +617,11 @@ function addRulesetRows(rows, inventory) {
           version: ruleset.version,
         },
         {
-          description: `${rulePhaseLabel(ruleset.phase)} | Managed`,
+          description: "Managed ruleset",
           display: `Managed | ${rulePhaseLabel(ruleset.phase)}`,
           inspectionValue: ruleset,
+          labelSource: "Ruleset name",
+          phase: ruleset.phase,
           workspaceAction: {
             kind: ruleset.kind,
             name: ruleset.name,
@@ -618,8 +641,14 @@ function addRulesetRows(rows, inventory) {
         ? `zone:${phase}`
         : `${ruleset.kind}:${phase}:${normalizeText(ruleset.name || ruleset.id, zone.meta.name)}`
       const rulesetLabel = ruleset.kind === RULESET_KIND.ZONE
-        ? `${rulePhaseLabel(phase)} entrypoint`
-        : ruleset.name || `${rulePhaseLabel(phase)} ruleset`
+        ? "Zone entrypoint"
+        : ruleset.name || "Unnamed ruleset"
+      const rulesetLabelSource = ruleset.kind === RULESET_KIND.ZONE
+        ? "Ruleset kind"
+        : ruleset.name
+          ? "Ruleset name"
+          : "Generated fallback"
+      const exactValue = rulesetExactComparisonValue(ruleset, zone.meta.name)
       const workspaceAction = {
         kind: ruleset.kind,
         name: ruleset.name,
@@ -634,37 +663,41 @@ function addRulesetRows(rows, inventory) {
         rulesetKey,
         rulesetLabel,
         zone,
+        exactValue,
         {
-          kind: ruleset.kind,
-          name: ruleset.name,
-          rule_count: ruleset.rules?.length || 0,
-        },
-        {
-          description: `${rulePhaseLabel(phase)} | ${ruleset.kind}`,
           display: `${ruleset.rules?.length || 0} rule${ruleset.rules?.length === 1 ? "" : "s"}`,
           inspectionValue: ruleset,
+          labelSource: rulesetLabelSource,
+          normalized: exactValue,
+          phase,
+          search: [
+            rulePhaseLabel(phase),
+            phase,
+            `${rulePhaseLabel(phase)} entrypoint`,
+          ].join(" "),
           workspaceAction,
         },
       )
 
       const ruleIdentityOccurrences = new Map()
       for (const [index, rule] of (ruleset.rules || []).entries()) {
-        const normalizedRule = normalizeValue(rule, zone.meta.name, {
+        const observedRule = normalizeValue(rule, zone.meta.name, {
           omit: ["last_updated", "ref", "version"],
           preserveOrder: true,
         })
+        const comparedRule = ruleExactComparisonValue(rule, zone.meta.name)
         const capability = ruleCopyCapability(ruleset, rule)
         const stableRef = rule.ref && rule.ref !== rule.id ? rule.ref : ""
         const label = normalizeText(
           rule.description || stableRef || `${rule.action || "rule"} rule ${index + 1} | ${(rule.expression || "").slice(0, 80)}`,
           zone.meta.name,
         )
-        const redirect = presentRedirect(normalizedRule, {
+        const redirect = presentRedirect(observedRule, {
           position: index + 1,
         })
         let identity = label
         if (redirect) {
-          const baseIdentity = redirectSemanticIdentity(normalizedRule, index)
+          const baseIdentity = redirectSemanticIdentity(observedRule, index)
           const occurrence = ruleIdentityOccurrences.get(baseIdentity) || 0
           ruleIdentityOccurrences.set(baseIdentity, occurrence + 1)
           identity = occurrence === 0
@@ -676,14 +709,19 @@ function addRulesetRows(rows, inventory) {
           : MATRIX_CATEGORY.RULESET_RULES
         const description = redirect
           ? `When ${redirect.match || "every request"}`
-          : `${rule.action || "unknown"} | ${phase}`
+          : `Action: ${rule.action || "unknown"}`
+        const labelSource = rule.description
+          ? "Rule description"
+          : stableRef
+            ? "Rule reference"
+            : "Generated fallback"
         addCell(
           rows,
           category,
           `${phase}:${identity}`,
           label,
           zone,
-          normalizedRule,
+          comparedRule,
           {
             action: EDITABLE_RULESET_KINDS.has(ruleset.kind)
               ? {
@@ -704,22 +742,24 @@ function addRulesetRows(rows, inventory) {
             full: displayJson({
               copy_capability: capability.copyable ? "copy to selected zones" : capability.reason,
               ...(redirect ? { position: redirect.position } : {}),
-              rule: normalizedRule,
+              rule: observedRule,
             }),
+            labelSource,
             normalized: redirect
               ? {
                   position: redirect.position,
-                  rule: normalizedRule,
+                  rule: comparedRule,
                 }
-              : normalizedRule,
+              : comparedRule,
+            phase,
             presentation: {
               kind: "rule",
               phase,
               redirect,
-              rule: normalizedRule,
+              rule: observedRule,
             },
-            inspectionValue: normalizedRule,
-            resolutionValue: normalizedRule,
+            inspectionValue: rule,
+            resolutionValue: comparedRule,
             parentAction: workspaceAction,
             secondaryAction: capability.copyable
               ? {
@@ -744,6 +784,7 @@ function addRulesetRows(rows, inventory) {
               rulesetLabel,
               rulePhaseLabel(phase),
               phase,
+              `${rulePhaseLabel(phase)} entrypoint`,
               ...(redirect
                 ? [
                   redirect.targetKindLabel,
@@ -769,6 +810,7 @@ function addRouteAndLegacyRows(rows, inventory) {
       const pattern = normalizeText(route.pattern, zone.meta.name)
       addCell(rows, "Workers routes", pattern, pattern, zone, normalizeValue(route, zone.meta.name), {
         display: route.script || route.script_name || "No script",
+        labelSource: "Route pattern",
       })
     }
 
@@ -789,6 +831,13 @@ function addRouteAndLegacyRows(rows, inventory) {
         }, zone.meta.name),
         {
           display: `${rule.paused ? "Paused" : "Enabled"} | ${rule.action}`,
+          labelSource: rule.description
+            ? "Rule description"
+            : rule.ref
+              ? "Rule reference"
+              : rule.id
+                ? "Rule ID"
+                : "Generated fallback",
         },
       )
     }
@@ -808,7 +857,9 @@ function addAdditionalRows(rows, inventory) {
     for (const zone of inventory.zones) {
       for (const [index, item] of (surfaceResult(zone, surfaceId) || []).entries()) {
         const identity = normalizeText(String(identityFor(item) || `${surfaceId}-${index + 1}`), zone.meta.name)
-        addCell(rows, category, identity, identity, zone, normalizeValue(item, zone.meta.name))
+        addCell(rows, category, identity, identity, zone, normalizeValue(item, zone.meta.name), {
+          labelSource: "Object name or fallback identity",
+        })
       }
     }
   }
@@ -825,7 +876,9 @@ function addAdditionalRows(rows, inventory) {
     for (const zone of inventory.zones) {
       const value = surfaceResult(zone, surfaceId)
       if (value === undefined) continue
-      addCell(rows, category, surfaceId, label, zone, normalizeValue(value, zone.meta.name))
+      addCell(rows, category, surfaceId, label, zone, normalizeValue(value, zone.meta.name), {
+        labelSource: "Facet type",
+      })
     }
   }
 
@@ -838,7 +891,9 @@ function addAdditionalRows(rows, inventory) {
       validation_method: pack.validation_method,
       validity_days: pack.validity_days,
     }, zone.meta.name))
-    addCell(rows, "TLS inventory", "certificate-packs", "Certificate packs", zone, packs)
+    addCell(rows, "TLS inventory", "certificate-packs", "Certificate packs", zone, packs, {
+      labelSource: "Facet type",
+    })
   }
 }
 
@@ -1084,9 +1139,11 @@ export function buildMatrix(inventory) {
     const {
       descriptions,
       duplicateZoneNames,
+      labelSources,
       ...rowDefinition
     } = row
     const description = [...descriptions].sort().join(" / ")
+    const labelSource = [...labelSources].sort().join(" / ")
     const canonicalValues = inventory.zones.map(
       (zone) => row.cells.get(zone.meta.name)?.canonical ?? MATRIX_MISSING_CANONICAL,
     )
@@ -1124,6 +1181,7 @@ export function buildMatrix(inventory) {
       different: variants.length > 1,
       fleetAction: fleetRename.action,
       fleetActionReason: fleetRename.reason,
+      labelSource,
       missingResolutions,
       missingCount: canonicalValues.filter(
         (value) => value === MATRIX_MISSING_CANONICAL,
@@ -1135,6 +1193,7 @@ export function buildMatrix(inventory) {
       search: [
         row.category,
         row.label,
+        labelSource,
         description,
         ...row.cells.keys(),
         ...[...row.cells.values()].map((cell) => cell.full),
@@ -1144,11 +1203,9 @@ export function buildMatrix(inventory) {
   })
 
   rendered.sort((left, right) => {
-    const leftCategory = CATEGORY_ORDER.indexOf(left.category)
-    const rightCategory = CATEGORY_ORDER.indexOf(right.category)
-    const leftOrder = leftCategory === -1 ? CATEGORY_ORDER.length : leftCategory
-    const rightOrder = rightCategory === -1 ? CATEGORY_ORDER.length : rightCategory
-    return leftOrder - rightOrder || left.label.localeCompare(right.label)
+    return left.category.localeCompare(right.category)
+      || left.label.localeCompare(right.label)
+      || left.key.localeCompare(right.key)
   })
 
   return {
@@ -1193,11 +1250,13 @@ export function matrixRenderKey(inventory, matrix) {
       fleetActionReason: row.fleetActionReason,
       key: row.key,
       label: row.label,
+      labelSource: row.labelSource,
       missingCount: row.missingCount,
       missingZoneIds: row.missingZoneIds,
       missingResolutions: inventory.zones.map(
         (zone) => row.missingResolutions.get(zone.meta.name) || null,
       ),
+      phase: row.phase,
       presentCount: row.presentCount,
       recordType: row.recordType,
       redirectTypes: row.redirectTypes,
