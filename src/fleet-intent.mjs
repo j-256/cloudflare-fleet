@@ -4,8 +4,9 @@ import {
 } from "./normalize.mjs"
 import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
+import { editableEmailRoutingRulePayload } from "./policies.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 5
+export const FLEET_INTENT_SCHEMA_VERSION = 6
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -64,10 +65,14 @@ export const FLEET_INTENT_POLICY_CONFLICT_KIND = Object.freeze({
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const DNSSEC_INTENT_CATEGORY = "DNSSEC"
 const DNSSEC_INTENT_CONFIGURATION_KEY = "configuration"
+const EMAIL_INTENT_CATEGORY = "Email"
+const EMAIL_INTENT_CATCH_ALL_KEY = "catch-all"
+const EMAIL_ROUTE_INTENT_CATEGORY = "Email routes"
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_ONE = 1
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO = 2
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE = 3
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR = 4
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE = 5
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 const COMPOSED_CELL_STATUS_PRIORITY = Object.freeze({
   [FLEET_INTENT_CELL_STATUS.MATCH]: 0,
@@ -199,31 +204,83 @@ function dnssecStatusExpectedIsNormalized(expected) {
       || expected.resolutionCanonical === canonical)
 }
 
+function emailRoutingIntentOptions(policy) {
+  if (policy?.facet?.category === EMAIL_ROUTE_INTENT_CATEGORY) {
+    return { catchAll: false }
+  }
+  if (policy?.facet?.category === EMAIL_INTENT_CATEGORY
+    && policy.facet.key === EMAIL_INTENT_CATCH_ALL_KEY) {
+    return { catchAll: true }
+  }
+  return null
+}
+
+function emailRoutingIntentProjection(policy, value) {
+  const options = emailRoutingIntentOptions(policy)
+  if (!options) return null
+  const projected = editableEmailRoutingRulePayload(value, options)
+  if (!options.catchAll) delete projected.priority
+  return projected
+}
+
+function normalizeObservedEmailRoutingIntentPolicy(policy) {
+  const expectedOrigin = policy?.expected?.origin
+    ?? FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED
+  if (fleetIntentPolicyValueConstraint(policy)
+      !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    || expectedOrigin !== FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED) return policy
+  const value = emailRoutingIntentProjection(policy, policy.expected?.value)
+  if (value === null) return policy
+  const canonical = stableString(value)
+  return {
+    ...policy,
+    expected: {
+      ...policy.expected,
+      canonical,
+      display: shortDisplay(value),
+      resolutionCanonical: policy.expected.resolutionCanonical === null
+        ? null
+        : canonical,
+      value,
+    },
+  }
+}
+
+function emailRoutingIntentExpectedIsNormalized(policy) {
+  const normalized = normalizeObservedEmailRoutingIntentPolicy(
+    structuredClone(policy),
+  )
+  return stableString(normalized) === stableString(policy)
+}
+
 function normalizeFleetIntentPolicy(policy) {
-  const normalized = structuredClone(policy)
+  let normalized = structuredClone(policy)
   normalized.presenceConstraint = fleetIntentPolicyPresenceConstraint(normalized)
   if (normalized.presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
     normalized.expected = null
     normalized.valueConstraint = FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER
     return normalized
   }
-  if (!isDnssecIntentPolicy(normalized)
-    || fleetIntentPolicyValueConstraint(normalized)
-      !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT) return normalized
-  const observedStatus = normalized.expected?.value?.status
-  const status = dnssecRequestedStatus(observedStatus) ?? observedStatus
-  if (typeof status !== "string" || status.length === 0) return normalized
-  const value = { status }
-  const canonical = stableString(value)
-  normalized.expected = {
-    ...normalized.expected,
-    canonical,
-    display: status,
-    resolutionCanonical: normalized.expected.resolutionCanonical === null
-      ? null
-      : canonical,
-    value,
+  if (isDnssecIntentPolicy(normalized)
+    && fleetIntentPolicyValueConstraint(normalized)
+      === FLEET_INTENT_VALUE_CONSTRAINT.EXACT) {
+    const observedStatus = normalized.expected?.value?.status
+    const status = dnssecRequestedStatus(observedStatus) ?? observedStatus
+    if (typeof status === "string" && status.length > 0) {
+      const value = { status }
+      const canonical = stableString(value)
+      normalized.expected = {
+        ...normalized.expected,
+        canonical,
+        display: status,
+        resolutionCanonical: normalized.expected.resolutionCanonical === null
+          ? null
+          : canonical,
+        value,
+      }
+    }
   }
+  normalized = normalizeObservedEmailRoutingIntentPolicy(normalized)
   return normalized
 }
 
@@ -255,6 +312,8 @@ function isPolicy(policy, options = {}) {
       || !isDnssecIntentPolicy(policy)
       || valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
       || dnssecStatusExpectedIsNormalized(policy.expected))
+    && (!options.requireNormalizedEmailRouting
+      || emailRoutingIntentExpectedIsNormalized(policy))
 }
 
 export function createAuthoredFleetIntentExpected(value) {
@@ -323,6 +382,7 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   const supportsCoverageIntent = schemaVersion === FLEET_INTENT_SCHEMA_VERSION
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
+    || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
   if (!isObject(value)) return false
   if (value.schemaVersion !== schemaVersion) return false
   if (!isLabel(value.accountId)) return false
@@ -334,8 +394,11 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   if (!Array.isArray(value.policies) || !value.policies.every(
     (policy) => isPolicy(policy, {
       requireNormalizedDnssec: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
-        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR,
-      requireNormalizedPresence: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE,
+      requireNormalizedEmailRouting: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+      requireNormalizedPresence: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE,
     }),
   )) return false
   if (!Array.isArray(value.acknowledgements)
@@ -397,7 +460,13 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     accountId,
     LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR,
   )
-  if (!versionOneValid && !versionTwoValid && !versionThreeValid && !versionFourValid) {
+  const versionFiveValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE,
+  )
+  if (!versionOneValid && !versionTwoValid && !versionThreeValid
+    && !versionFourValid && !versionFiveValid) {
     throw new TypeError("Fleet intent document cannot be migrated")
   }
   const legacyPolicies = versionOneValid
@@ -410,14 +479,24 @@ export function migrateFleetIntentDocument(value, accountId = null) {
   const dnssecPolicyIds = new Set(
     policies.filter(isDnssecIntentPolicy).map((policy) => policy.id),
   )
+  const policiesById = new Map(policies.map((policy) => [policy.id, policy]))
   const acknowledgements = value.acknowledgements.map((acknowledgement) => {
     const normalized = structuredClone(acknowledgement)
-    if (!dnssecPolicyIds.has(normalized.policyId)) return normalized
     try {
       const observed = JSON.parse(normalized.observedCanonical)
-      const status = dnssecRequestedStatus(observed?.status) ?? observed?.status
-      if (typeof status === "string" && status.length > 0) {
-        normalized.observedCanonical = stableString({ status })
+      if (dnssecPolicyIds.has(normalized.policyId)) {
+        const status = dnssecRequestedStatus(observed?.status) ?? observed?.status
+        if (typeof status === "string" && status.length > 0) {
+          normalized.observedCanonical = stableString({ status })
+        }
+        return normalized
+      }
+      const projected = emailRoutingIntentProjection(
+        policiesById.get(normalized.policyId),
+        observed,
+      )
+      if (projected !== null) {
+        normalized.observedCanonical = stableString(projected)
       }
     } catch {
       return normalized
@@ -427,7 +506,7 @@ export function migrateFleetIntentDocument(value, accountId = null) {
   const migrated = {
     ...structuredClone(value),
     acknowledgements,
-    coverageExpectations: versionThreeValid || versionFourValid
+    coverageExpectations: versionThreeValid || versionFourValid || versionFiveValid
       ? structuredClone(value.coverageExpectations)
       : [],
     policies,

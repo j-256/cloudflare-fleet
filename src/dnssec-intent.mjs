@@ -2,6 +2,8 @@ import { DNSSEC_STATUS } from "./constants.mjs"
 import {
   dnssecRequestedStatus,
   dnssecStatusRequestSatisfied,
+  dnssecTransitionHealth,
+  DNSSEC_TRANSITION_STATE,
 } from "./dnssec.mjs"
 import {
   FLEET_INTENT_CELL_STATUS,
@@ -50,6 +52,7 @@ export function dnssecIntentCorrection(row, options = {}) {
       conflicts: [],
       generatedOnly: [],
       reason: "This facet is not backed by the DNSSEC status adapter",
+      stalled: [],
       targets: [],
       waiting: [],
     }
@@ -57,6 +60,7 @@ export function dnssecIntentCorrection(row, options = {}) {
 
   const conflicts = []
   const generatedOnly = []
+  const stalled = []
   const targets = []
   const waiting = []
   for (const cell of row.intentState?.cells.values() || []) {
@@ -72,10 +76,16 @@ export function dnssecIntentCorrection(row, options = {}) {
     const desiredStatus = dnssecDesiredStatus(cell.policy.expected)
     if (!desiredStatus) continue
     const observed = row.cells.get(cell.zone.meta.name)?.inspectionValue || null
+    const liveDnssec = cell.zone.surfaces?.dnssec?.result || observed
     const currentStatus = observed?.status || null
     if (DNSSEC_PENDING_STATUS.has(currentStatus)
       && dnssecStatusRequestSatisfied(currentStatus, desiredStatus)) {
-      waiting.push(cell.zone.meta.name)
+      const health = dnssecTransitionHealth(liveDnssec, options)
+      if (health.state === DNSSEC_TRANSITION_STATE.STALLED) {
+        stalled.push(cell.zone.meta.name)
+      } else {
+        waiting.push(cell.zone.meta.name)
+      }
       continue
     }
     if (!correctableIntentCell(cell)) continue
@@ -98,10 +108,13 @@ export function dnssecIntentCorrection(row, options = {}) {
   targets.sort((left, right) => left.zoneName.localeCompare(right.zoneName))
   conflicts.sort()
   generatedOnly.sort()
+  stalled.sort()
   waiting.sort()
-  const reason = targets.length > 0
-    ? "DNSSEC status drift can be corrected through the zone DNSSEC endpoint"
-    : waiting.length > 0
+  const reason = stalled.length > 0
+    ? "Cloudflare has not completed the requested DNSSEC transition within the expected propagation window"
+    : targets.length > 0
+      ? "DNSSEC status drift can be corrected through the zone DNSSEC endpoint"
+      : waiting.length > 0
       ? "Cloudflare is already processing the requested DNSSEC status"
       : generatedOnly.length > 0
         ? "Only Cloudflare-generated DNSSEC fields differ"
@@ -113,6 +126,7 @@ export function dnssecIntentCorrection(row, options = {}) {
     conflicts,
     generatedOnly,
     reason,
+    stalled,
     targets,
     waiting,
   }

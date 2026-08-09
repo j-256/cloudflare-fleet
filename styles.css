@@ -879,6 +879,12 @@ dialog h2 {
   background: rgba(90, 169, 255, 0.08);
 }
 
+.workflow-state.actionable {
+  border-color: rgba(255, 104, 117, 0.44);
+  color: var(--danger);
+  background: rgba(255, 104, 117, 0.08);
+}
+
 .workflow-state.inactive {
   border-color: var(--line);
   color: var(--muted);
@@ -3489,6 +3495,7 @@ dialog form {
 
 .intent-item.stale,
 .intent-item.actionable,
+.intent-item.dnssec-stalled,
 .intent-item.unresolved {
   border-left-color: var(--danger);
 }

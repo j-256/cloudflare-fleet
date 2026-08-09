@@ -3518,6 +3518,13 @@ function renderDnssecWorkflowCard() {
     elements.dnssecWorkflowDetail.textContent = "DNSSEC was not available in the loaded fleet snapshot."
     return
   }
+  if (correction.stalled.length > 0) {
+    const count = correction.stalled.length
+    elements.dnssecWorkflowState.textContent = `${count} stalled`
+    elements.dnssecWorkflowState.classList.add("actionable")
+    elements.dnssecWorkflowDetail.textContent = correction.reason
+    return
+  }
   if (correction.available) {
     const count = correction.targets.length
     elements.dnssecWorkflowState.textContent = `${count} correctable`
@@ -5603,8 +5610,9 @@ function renderIntentPolicies() {
     const correction = row
       ? dnssecIntentCorrection(row, { policyId: policy.id })
       : null
+    const stalledDnssecCount = correction?.stalled.length || 0
     const item = createElement("article", {
-      className: `intent-item ${status} ${layer.role}`,
+      className: `intent-item ${status} ${layer.role}${stalledDnssecCount > 0 ? " dnssec-stalled" : ""}`,
     })
     const heading = createElement("div", { className: "intent-item-heading" })
     const badges = createElement("div", { className: "intent-item-badges" })
@@ -5614,6 +5622,12 @@ function renderIntentPolicies() {
     )
     remediationBadge.title = remediation.text
     badges.append(intentStatusBadge(statusLabel, status))
+    if (stalledDnssecCount > 0) {
+      badges.append(intentStatusBadge(
+        `${stalledDnssecCount} DNSSEC stalled`,
+        INTENT_POLICY_DISPLAY_STATUS.ACTIONABLE,
+      ))
+    }
     if (layerPresentation.label) {
       badges.append(intentStatusBadge(
         layerPresentation.label,

@@ -11,12 +11,20 @@ import {
   FLEET_INTENT_VALUE_CONSTRAINT,
 } from "../src/fleet-intent.mjs"
 
-function zone(name) {
+function zone(name, dnssec = null) {
   return {
     meta: {
       id: `zone-${name}`,
       name,
     },
+    surfaces: dnssec === null
+      ? {}
+      : {
+          dnssec: {
+            ok: true,
+            result: dnssec,
+          },
+        },
   }
 }
 
@@ -119,6 +127,34 @@ test("DNSSEC intent correction can isolate one policy from disjoint coverage", (
       .map((target) => target.zoneName),
     ["second.example"],
   )
+})
+
+test("DNSSEC intent correction separates stalled transitions from propagation", () => {
+  const desired = policy("active-policy", "active")
+  const waiting = zone("waiting.example", {
+    modified_on: "2026-08-09T00:00:00.000Z",
+    status: "pending",
+  })
+  const stalled = zone("stalled.example", {
+    modified_on: "2026-08-01T00:00:00.000Z",
+    status: "pending",
+  })
+  const row = dnssecRow([
+    [waiting, "pending"],
+    [stalled, "pending"],
+  ], [
+    intentCell(waiting, desired, FLEET_INTENT_CELL_STATUS.MATCH),
+    intentCell(stalled, desired, FLEET_INTENT_CELL_STATUS.MATCH),
+  ])
+
+  const correction = dnssecIntentCorrection(row, {
+    now: Date.parse("2026-08-09T18:00:00.000Z"),
+  })
+
+  assert.equal(correction.available, false)
+  assert.deepEqual(correction.waiting, ["waiting.example"])
+  assert.deepEqual(correction.stalled, ["stalled.example"])
+  assert.match(correction.reason, /has not completed/)
 })
 
 test("DNSSEC intent requires a writable expected status", () => {

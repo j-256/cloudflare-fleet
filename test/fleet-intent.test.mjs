@@ -325,6 +325,112 @@ test("version four policies migrate to required presence", () => {
   assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
 })
 
+test("version five Email Routing intent migrates to writable comparison values", () => {
+  const timestamp = "2026-08-04T18:00:00.000Z"
+  const routeValue = {
+    actions: [{ type: "worker", value: ["email"] }],
+    enabled: true,
+    matchers: [{ field: "to", type: "literal", value: "worker@{zone}" }],
+    name: "Worker route",
+    priority: 0,
+    source: "api",
+  }
+  const catchAllValue = {
+    actions: [{ type: "forward", value: ["fleet@example.com"] }],
+    enabled: true,
+    matchers: [{ type: "all" }],
+    name: "Catch-all to Gmail",
+    priority: 9,
+    source: "api",
+  }
+  const routeCanonical = JSON.stringify(routeValue)
+  const catchAllCanonical = JSON.stringify(catchAllValue)
+  const legacy = createEmptyFleetIntentDocument("account-id")
+  legacy.schemaVersion = 5
+  legacy.revision = "e".repeat(64)
+  legacy.policies.push(
+    policy({
+      category: "Email routes",
+      key: "routing:worker",
+      label: "Worker route",
+    }, {
+      expected: {
+        canonical: routeCanonical,
+        display: "6 fields",
+        origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
+        resolutionCanonical: routeCanonical,
+        sourceZoneId: "zone-a",
+        sourceZoneName: "a.example",
+        value: routeValue,
+      },
+      id: "route-policy",
+      presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+    }),
+    policy({
+      category: "Email",
+      key: "catch-all",
+      label: "Catch-all rule",
+    }, {
+      expected: {
+        canonical: catchAllCanonical,
+        display: "6 fields",
+        origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
+        resolutionCanonical: catchAllCanonical,
+        sourceZoneId: "zone-a",
+        sourceZoneName: "a.example",
+        value: catchAllValue,
+      },
+      id: "catch-all-policy",
+      presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+    }),
+  )
+  legacy.acknowledgements.push({
+    createdAt: timestamp,
+    id: "route-acknowledgement",
+    observedCanonical: routeCanonical,
+    policyId: "route-policy",
+    reason: "Known route variation",
+    updatedAt: timestamp,
+    zoneId: "zone-a",
+    zoneName: "a.example",
+  }, {
+    createdAt: timestamp,
+    id: "catch-all-acknowledgement",
+    observedCanonical: catchAllCanonical,
+    policyId: "catch-all-policy",
+    reason: "Known catch-all variation",
+    updatedAt: timestamp,
+    zoneId: "zone-a",
+    zoneName: "a.example",
+  })
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+
+  assert.equal(migrated.schemaVersion, FLEET_INTENT_SCHEMA_VERSION)
+  assert.equal(migrated.revision, legacy.revision)
+  assert.deepEqual(migrated.policies[0].expected.value, {
+    actions: routeValue.actions,
+    enabled: true,
+    matchers: routeValue.matchers,
+    name: "Worker route",
+  })
+  assert.deepEqual(migrated.policies[1].expected.value, {
+    actions: catchAllValue.actions,
+    enabled: true,
+    matchers: catchAllValue.matchers,
+    name: "Catch-all to Gmail",
+  })
+  assert.equal(
+    migrated.acknowledgements[0].observedCanonical,
+    migrated.policies[0].expected.canonical,
+  )
+  assert.equal(
+    migrated.acknowledgements[1].observedCanonical,
+    migrated.policies[1].expected.canonical,
+  )
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+})
+
 test("coverage expectations are unique per inventory target", () => {
   const timestamp = new Date().toISOString()
   const expectation = {
