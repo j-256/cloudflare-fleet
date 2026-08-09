@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   DEFAULT_MATRIX_FILTERS,
   facetMatchesScope,
+  MATRIX_INTENT_FILTER,
   MATRIX_SCOPE,
   MATRIX_SORT,
   matrixColumnIsVisible,
@@ -48,6 +49,10 @@ test("matrix filter changes count only deviations from the initial view", () => 
   assert.equal(matrixFilterChangeCount({
     ...DEFAULT_MATRIX_FILTERS,
     sort: MATRIX_SORT.CATEGORY,
+  }), 1)
+  assert.equal(matrixFilterChangeCount({
+    ...DEFAULT_MATRIX_FILTERS,
+    intentStatus: MATRIX_INTENT_FILTER.MATCH,
   }), 1)
 })
 
@@ -247,4 +252,32 @@ test("matrix drift filter prefers actionable intent over raw difference", () => 
     actionable: true,
     different: false,
   }, filters), true)
+})
+
+test("matrix filters facets by their composed intent result", () => {
+  const filters = {
+    ...DEFAULT_MATRIX_FILTERS,
+    differencesOnly: false,
+    intentStatus: MATRIX_INTENT_FILTER.MATCH,
+    scope: MATRIX_SCOPE.ALL,
+    targetZoneIds: new Set(),
+    zoneCount: 2,
+  }
+  const row = {
+    actionable: false,
+    category: "Zone settings",
+    different: true,
+    intentStatus: MATRIX_INTENT_FILTER.MATCH,
+    missingZoneIds: [],
+    presentCount: 2,
+    recordType: "",
+    redirectTypes: [],
+    search: "zone settings",
+  }
+
+  assert.equal(matrixRowMatchesFilters(row, filters), true)
+  assert.equal(matrixRowMatchesFilters({
+    ...row,
+    intentStatus: MATRIX_INTENT_FILTER.DRIFT,
+  }, filters), false)
 })

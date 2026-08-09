@@ -2,9 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  fleetIntentFacetResultPresentation,
   FLEET_INTENT_HEALTH_STATUS,
   fleetIntentHealth,
 } from "../src/intent-health.mjs"
+import { FLEET_INTENT_ROW_STATUS } from "../src/fleet-intent.mjs"
 
 function summary(overrides = {}) {
   return {
@@ -74,4 +76,38 @@ test("a one-zone fleet uses a singular match verdict", () => {
   }))
 
   assert.equal(health.title, "The loaded zone matches fleet intent")
+})
+
+test("facet intent result names complete matches and acknowledged states", () => {
+  assert.deepEqual(fleetIntentFacetResultPresentation({
+    acknowledgedCount: 1,
+    actionableCells: [],
+    applicableCount: 3,
+    satisfiedCount: 3,
+    status: FLEET_INTENT_ROW_STATUS.MATCH,
+  }), {
+    label: "Matches intent 3/3",
+    status: FLEET_INTENT_ROW_STATUS.MATCH,
+    title: "All 3 applicable zones satisfy fleet intent, including 1 acknowledged exact state",
+  })
+})
+
+test("facet intent result keeps drift, review, and ungoverned states distinct", () => {
+  assert.deepEqual(fleetIntentFacetResultPresentation({
+    actionableCells: [{}, {}],
+    applicableCount: 3,
+    satisfiedCount: 1,
+    status: FLEET_INTENT_ROW_STATUS.DRIFT,
+  }), {
+    label: "Intent drift 2/3",
+    status: FLEET_INTENT_ROW_STATUS.DRIFT,
+    title: "2 of 3 applicable zones do not satisfy fleet intent; 1 satisfies it",
+  })
+  assert.equal(
+    fleetIntentFacetResultPresentation({
+      status: FLEET_INTENT_ROW_STATUS.REVIEW,
+    }).label,
+    "Intent needs review",
+  )
+  assert.equal(fleetIntentFacetResultPresentation().label, "Intent not set")
 })

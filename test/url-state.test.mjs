@@ -6,7 +6,11 @@ import {
   decodeViewState,
   encodeViewState,
 } from "../src/url-state.mjs"
-import { MATRIX_SCOPE, MATRIX_SORT } from "../src/matrix-filter.mjs"
+import {
+  MATRIX_INTENT_FILTER,
+  MATRIX_SCOPE,
+  MATRIX_SORT,
+} from "../src/matrix-filter.mjs"
 
 test("a default view encodes to an empty query string", () => {
   assert.equal(encodeViewState(DEFAULT_VIEW_STATE), "")
@@ -17,12 +21,14 @@ test("only non-default fields are written, differences-only as an off switch", (
     ...DEFAULT_VIEW_STATE,
     query: "waf test",
     scope: "all",
+    intentStatus: MATRIX_INTENT_FILTER.MATCH,
     changeableOnly: true,
     differencesOnly: false,
   })
   const params = new URLSearchParams(encoded)
   assert.equal(params.get("q"), "waf test")
   assert.equal(params.get("scope"), "all")
+  assert.equal(params.get("intent"), "match")
   assert.equal(params.get("changeable"), "1")
   assert.equal(params.get("review"), "0")
   assert.equal(params.get("phase"), null)
@@ -41,7 +47,7 @@ test("round-trips representative states", () => {
     DEFAULT_VIEW_STATE,
     { ...DEFAULT_VIEW_STATE, query: "email dmarc", category: "DNS records" },
     { ...DEFAULT_VIEW_STATE, selectedZoneIds: ["zone-a", "zone-b"], selectedColumnsOnly: true },
-    { ...DEFAULT_VIEW_STATE, scope: "zone-specific", sort: "category", recordType: "TXT", differencesOnly: false, changeableOnly: true, targetHolesOnly: true },
+    { ...DEFAULT_VIEW_STATE, scope: "zone-specific", sort: "category", recordType: "TXT", intentStatus: MATRIX_INTENT_FILTER.DRIFT, differencesOnly: false, changeableOnly: true, targetHolesOnly: true },
   ]
   for (const state of states) {
     assert.deepEqual(decodeViewState(encodeViewState(state)), state)
@@ -81,21 +87,28 @@ test("returns a fresh object each call so callers cannot mutate the default", ()
   assert.deepEqual(decodeViewState("").selectedZoneIds, [])
 })
 
-test("an unrecognized scope or sort falls back to the default", () => {
+test("an unrecognized enum filter or sort falls back to the default", () => {
   // these selects have no empty option, so a blank value would hide the whole matrix
   assert.equal(decodeViewState("scope=bogus").scope, DEFAULT_VIEW_STATE.scope)
   assert.equal(decodeViewState("sort=bogus").sort, DEFAULT_VIEW_STATE.sort)
+  assert.equal(
+    decodeViewState("intent=bogus").intentStatus,
+    DEFAULT_VIEW_STATE.intentStatus,
+  )
 })
 
-test("every valid scope and sort value round-trips through decode", () => {
+test("every valid scope, intent filter, and sort value round-trips through decode", () => {
   for (const value of Object.values(MATRIX_SCOPE)) {
     assert.equal(decodeViewState("scope=" + value).scope, value)
   }
   for (const value of Object.values(MATRIX_SORT)) {
     assert.equal(decodeViewState("sort=" + value).sort, value)
   }
+  for (const value of Object.values(MATRIX_INTENT_FILTER)) {
+    assert.equal(decodeViewState("intent=" + value).intentStatus, value)
+  }
 })
 
-test("string enum fields other than scope and sort pass through verbatim", () => {
+test("free-form string filters pass through verbatim", () => {
   assert.equal(decodeViewState("category=NoSuchCat").category, "NoSuchCat")
 })

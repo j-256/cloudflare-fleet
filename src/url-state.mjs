@@ -2,6 +2,7 @@ import {
   DEFAULT_MATRIX_FILTERS,
   DEFAULT_MATRIX_SCOPE,
   DEFAULT_MATRIX_SORT,
+  MATRIX_INTENT_FILTER,
   MATRIX_SCOPE,
   MATRIX_SORT,
 } from "./matrix-filter.mjs"
@@ -9,6 +10,7 @@ import {
 export const DEFAULT_VIEW_STATE = Object.freeze({
   query: DEFAULT_MATRIX_FILTERS.query,
   category: DEFAULT_MATRIX_FILTERS.category,
+  intentStatus: DEFAULT_MATRIX_FILTERS.intentStatus,
   phase: DEFAULT_MATRIX_FILTERS.phase,
   scope: DEFAULT_MATRIX_SCOPE,
   sort: DEFAULT_MATRIX_SORT,
@@ -31,6 +33,7 @@ const FIELDS = [
   { key: "q", field: "query", kind: "string" },
   { key: "category", field: "category", kind: "string" },
   { key: "phase", field: "phase", kind: "string" },
+  { key: "intent", field: "intentStatus", kind: "string", allowed: new Set(Object.values(MATRIX_INTENT_FILTER)) },
   { key: "scope", field: "scope", kind: "string", allowed: new Set(Object.values(MATRIX_SCOPE)) },
   { key: "sort", field: "sort", kind: "string", allowed: new Set(Object.values(MATRIX_SORT)) },
   { key: "type", field: "recordType", kind: "string" },

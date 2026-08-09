@@ -15,6 +15,7 @@ import {
   FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_POLICY_CONFLICT_KIND,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
+  FLEET_INTENT_ROW_STATUS,
   FLEET_INTENT_SCHEMA_VERSION,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
@@ -837,8 +838,39 @@ test("evaluation separates intent matches, variants, and missing cells", () => {
   assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.VARIANT)
   assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
   assert.equal(rowState.actionable, true)
+  assert.equal(rowState.applicableCount, 3)
+  assert.equal(rowState.matchCount, 1)
+  assert.equal(rowState.satisfiedCount, 1)
+  assert.equal(rowState.status, FLEET_INTENT_ROW_STATUS.DRIFT)
   assert.equal(evaluation.summary.actionableCells, 2)
   assert.equal(evaluation.summary.actionableRows, 1)
+})
+
+test("facet intent match includes exact acknowledged states", () => {
+  const { inventory, matrix, row } = fixture()
+  row.cells.set("c.example", { canonical: '"on"' })
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row))
+  const timestamp = new Date().toISOString()
+  document = replaceFleetIntentAcknowledgement(document, {
+    createdAt: timestamp,
+    id: "ack-one",
+    observedCanonical: '"off"',
+    policyId: "policy-one",
+    reason: "Legacy origin requires HTTP",
+    updatedAt: timestamp,
+    zoneId: "zone-b",
+    zoneName: "b.example",
+  })
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+
+  assert.equal(rowState.status, FLEET_INTENT_ROW_STATUS.MATCH)
+  assert.equal(rowState.applicableCount, 3)
+  assert.equal(rowState.matchCount, 2)
+  assert.equal(rowState.acknowledgedCount, 1)
+  assert.equal(rowState.satisfiedCount, 3)
 })
 
 test("exact acknowledgement suppresses one observed state and becomes stale after change", () => {
@@ -928,6 +960,10 @@ test("custom group limits policy scope while raw ungoverned rows retain drift", 
   }
   matrix.rows.push(ungovernedRow)
   const nextEvaluation = evaluateFleetIntent(document, inventory, matrix)
+  assert.equal(
+    nextEvaluation.rowStates.get(fleetIntentFacetId("Zone", "status")).status,
+    FLEET_INTENT_ROW_STATUS.UNGOVERNED,
+  )
   assert.equal(
     nextEvaluation.rowStates.get(fleetIntentFacetId("Zone", "status")).actionable,
     true,
@@ -1113,6 +1149,10 @@ test("unresolved policies and unavailable group members stay visible", () => {
   let evaluation = evaluateFleetIntent(document, inventory, matrix)
   assert.equal(evaluation.summary.unresolvedPolicies, 1)
   assert.deepEqual(evaluation.policyStates[0].unavailableZoneIds, ["zone-missing"])
+  assert.equal(
+    evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key)).status,
+    FLEET_INTENT_ROW_STATUS.REVIEW,
+  )
 
   matrix.rows = []
   evaluation = evaluateFleetIntent(document, inventory, matrix)

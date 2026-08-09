@@ -53,6 +53,15 @@ test("matrix exposes phase as a filter and a stacked badge", () => {
   assert.match(appSource, /phase\.dataset\.phase = description\.phase/)
 })
 
+test("matrix exposes facet-level intent results and filtering", () => {
+  assert.match(html, /<select id="intent-status"/)
+  assert.match(html, /<option value="match">Matches intent<\/option>/)
+  assert.match(appSource, /function facetIntentStatus\(row\)/)
+  assert.match(appSource, /fleetIntentFacetResultPresentation\(row\.intentState\)/)
+  assert.match(appSource, /className: `facet-intent-status \$\{presentation\.status\}`/)
+  assert.match(appSource, /intentStatus: row\.dataset\.intentStatus/)
+})
+
 test("intent manager explains baseline and refinement composition", () => {
   assert.match(
     html,
@@ -71,6 +80,7 @@ test("intent health is prominent and policy review precedes group administration
 
 test("fleet intent exposes persistent save status and locks every save action", () => {
   assert.equal((html.match(/data-intent-save-status/g) || []).length, 2)
+  assert.equal((html.match(/data-intent-undo/g) || []).length, 2)
   assert.match(
     html,
     /data-intent-save-status[^>]+role="status"[^>]+aria-live="polite"/,
@@ -87,4 +97,6 @@ test("fleet intent exposes persistent save status and locks every save action", 
       new RegExp(`<button[^>]+id="${id}"[^>]+data-intent-write`),
     )
   }
+  assert.match(html, /data-intent-undo disabled>Undo<\/button>/)
+  assert.match(appSource, /button\.addEventListener\("click", undoIntentChange\)/)
 })

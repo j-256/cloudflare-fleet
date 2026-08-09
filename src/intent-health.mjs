@@ -1,9 +1,45 @@
+import { FLEET_INTENT_ROW_STATUS } from "./fleet-intent.mjs"
+
 export const FLEET_INTENT_HEALTH_STATUS = Object.freeze({
   ALIGNED: "aligned",
   DRIFT: "drift",
   EMPTY: "empty",
   REVIEW: "review",
 })
+
+export function fleetIntentFacetResultPresentation(rowState = {}) {
+  const applicableCount = rowState.applicableCount || 0
+  const acknowledgedCount = rowState.acknowledgedCount || 0
+  const actionableCount = rowState.actionableCells?.length || 0
+  const satisfiedCount = rowState.satisfiedCount || 0
+  const status = rowState.status || FLEET_INTENT_ROW_STATUS.UNGOVERNED
+  if (status === FLEET_INTENT_ROW_STATUS.MATCH) {
+    return {
+      label: `Matches intent ${satisfiedCount}/${applicableCount}`,
+      status,
+      title: `All ${applicableCount} applicable zone${applicableCount === 1 ? "" : "s"} ${applicableCount === 1 ? "satisfies" : "satisfy"} fleet intent${acknowledgedCount > 0 ? `, including ${acknowledgedCount} acknowledged exact state${acknowledgedCount === 1 ? "" : "s"}` : ""}`,
+    }
+  }
+  if (status === FLEET_INTENT_ROW_STATUS.DRIFT) {
+    return {
+      label: `Intent drift ${actionableCount}/${applicableCount}`,
+      status,
+      title: `${actionableCount} of ${applicableCount} applicable zone${applicableCount === 1 ? "" : "s"} ${actionableCount === 1 ? "does" : "do"} not satisfy fleet intent; ${satisfiedCount} ${satisfiedCount === 1 ? "satisfies" : "satisfy"} it`,
+    }
+  }
+  if (status === FLEET_INTENT_ROW_STATUS.REVIEW) {
+    return {
+      label: "Intent needs review",
+      status,
+      title: "Saved fleet intent cannot be fully evaluated against the loaded zones",
+    }
+  }
+  return {
+    label: "Intent not set",
+    status: FLEET_INTENT_ROW_STATUS.UNGOVERNED,
+    title: "No fleet intent policy governs this facet",
+  }
+}
 
 function plural(count, singular, pluralValue = `${singular}s`) {
   return count === 1 ? singular : pluralValue

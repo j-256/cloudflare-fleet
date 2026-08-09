@@ -510,7 +510,8 @@ h1 {
   max-width: 215px;
 }
 
-#scope {
+#scope,
+#intent-status {
   max-width: 190px;
 }
 
@@ -758,6 +759,14 @@ dialog h2 {
   align-items: center;
   justify-content: space-between;
   padding-top: 12px;
+}
+
+.intent-task-controls,
+.intent-save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .change-readiness {
@@ -1433,6 +1442,13 @@ thead .facet-heading {
   gap: 2px;
 }
 
+.facet-cell .facet-title-badges {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  justify-items: end;
+}
+
 .facet-cell .facet-label-source {
   margin: 0;
   color: var(--accent-2);
@@ -1635,6 +1651,34 @@ thead .facet-heading {
 
 .facet-cell .facet-title .comparison-badge.no-consensus {
   color: var(--accent-2);
+}
+
+.facet-cell .facet-title .facet-intent-status {
+  display: inline;
+  width: auto;
+  margin: 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  line-height: 1.25;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.facet-cell .facet-title .facet-intent-status.match {
+  color: var(--green);
+}
+
+.facet-cell .facet-title .facet-intent-status.drift {
+  color: var(--danger);
+}
+
+.facet-cell .facet-title .facet-intent-status.review {
+  color: var(--accent-2);
+}
+
+.facet-cell .facet-title .facet-intent-status.ungoverned {
+  color: var(--muted);
 }
 
 .facet-cell .capability-badge.copy {
@@ -3397,6 +3441,10 @@ dialog form {
   display: grid;
   gap: 5px;
   justify-items: end;
+}
+
+.intent-heading-status .intent-save-actions {
+  justify-content: flex-end;
 }
 
 .intent-metrics {
@@ -5663,6 +5711,7 @@ dialog details > summary {
   #phase,
   #matrix-sort,
   #scope,
+  #intent-status,
   #dns-type,
   #redirect-type {
     width: 100%;
@@ -5712,6 +5761,10 @@ dialog details > summary {
     align-items: flex-start;
   }
 
+  .facet-cell .facet-title-badges {
+    justify-items: start;
+  }
+
   .selection-bar {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -5750,6 +5803,10 @@ dialog details > summary {
 
   .intent-heading-status {
     justify-items: start;
+  }
+
+  .intent-heading-status .intent-save-actions {
+    justify-content: flex-start;
   }
 
   .ruleset-comparison-group-heading,

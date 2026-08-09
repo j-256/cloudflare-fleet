@@ -110,6 +110,7 @@ import {
   firstFleetIntentObservedCanonical,
 } from "./intent-defaults.mjs"
 import {
+  fleetIntentFacetResultPresentation,
   FLEET_INTENT_HEALTH_STATUS,
   fleetIntentHealth,
 } from "./intent-health.mjs"
@@ -129,6 +130,12 @@ import {
   resolveIntentSaveStatus,
 } from "./intent-save-status.mjs"
 import {
+  completeIntentUndo,
+  currentIntentUndo,
+  prepareIntentUndoDocument,
+  recordIntentUndo,
+} from "./intent-undo.mjs"
+import {
   matrixNavigationTarget,
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
@@ -147,6 +154,7 @@ import {
   DEFAULT_MATRIX_SCOPE,
   DNS_MATRIX_CATEGORIES,
   facetMatchesScope,
+  MATRIX_INTENT_FILTER,
   MATRIX_SCOPE,
   matrixColumnIsVisible,
   matrixEmptyMessage,
@@ -456,6 +464,7 @@ const state = {
   intentSaveFailure: "",
   intentSaving: false,
   intentSyncing: false,
+  intentUndoStack: [],
   filterPanelExpanded: false,
   matrixFocusScrollY: 0,
   ruleRename: null,
@@ -652,7 +661,9 @@ const elements = {
   intentPolicyValueRelationship: document.querySelector("#intent-policy-value-relationship"),
   intentReviewUngoverned: document.querySelector("#intent-review-ungoverned"),
   intentSaveStatuses: [...document.querySelectorAll("[data-intent-save-status]")],
+  intentStatus: document.querySelector("#intent-status"),
   intentSummary: document.querySelector("#intent-summary"),
+  intentUndoButtons: [...document.querySelectorAll("[data-intent-undo]")],
   intentVerdict: document.querySelector("#intent-verdict"),
   intentVerdictAction: document.querySelector("#intent-verdict-action"),
   intentVerdictDetail: document.querySelector("#intent-verdict-detail"),
@@ -2288,6 +2299,7 @@ function showWorkspaceRuleInMatrix(ruleId) {
     ? MATRIX_CATEGORY.REDIRECTS
     : MATRIX_CATEGORY.RULESET_RULES
   elements.phase.value = ruleset.phase
+  elements.intentStatus.value = MATRIX_INTENT_FILTER.ALL
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -2568,6 +2580,7 @@ function showRulesetChildRows() {
   elements.search.value = row.label
   elements.category.value = category
   elements.phase.value = phase
+  elements.intentStatus.value = MATRIX_INTENT_FILTER.ALL
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -3690,6 +3703,31 @@ function renderScopes() {
     : DEFAULT_MATRIX_SCOPE
 }
 
+function renderIntentStatuses() {
+  const previous = elements.intentStatus.value
+  const statuses = [
+    [MATRIX_INTENT_FILTER.ALL, "All intent results", "No facet intent-result filter"],
+    [MATRIX_INTENT_FILTER.MATCH, "Matches intent", "Every applicable loaded zone satisfies composed fleet intent"],
+    [MATRIX_INTENT_FILTER.DRIFT, "Intent drift", "At least one applicable loaded zone does not satisfy composed fleet intent"],
+    [MATRIX_INTENT_FILTER.REVIEW, "Needs intent review", "Saved intent cannot be fully evaluated against the loaded zones"],
+    [MATRIX_INTENT_FILTER.UNGOVERNED, "Intent not set", "No fleet intent policy governs the facet"],
+  ]
+  elements.intentStatus.replaceChildren(...statuses.map(([value, label, title]) => {
+    const count = value
+      ? state.matrix.rows.filter((row) => row.intentState.status === value).length
+      : state.matrix.rows.length
+    const option = createElement("option", {
+      text: `${label} (${count})`,
+    })
+    option.value = value
+    option.title = title
+    return option
+  }))
+  elements.intentStatus.value = statuses.some(([value]) => value === previous)
+    ? previous
+    : DEFAULT_MATRIX_FILTERS.intentStatus
+}
+
 function renderPhases() {
   const previous = elements.phase.value
   const counts = new Map()
@@ -3784,6 +3822,7 @@ function currentMatrixFilters() {
     category: elements.category.value,
     changeableOnly: elements.changeSupportToggle.getAttribute("aria-pressed") === "true",
     differencesOnly: elements.differenceToggle.getAttribute("aria-pressed") === "true",
+    intentStatus: elements.intentStatus.value,
     phase: elements.phase.value,
     query: elements.search.value,
     recordType: elements.dnsType.value,
@@ -3805,6 +3844,7 @@ function captureViewState() {
     query: filters.query,
     category: filters.category,
     phase: filters.phase,
+    intentStatus: filters.intentStatus,
     scope: filters.scope,
     sort: filters.sort,
     recordType: filters.recordType,
@@ -3856,6 +3896,7 @@ function resetMatrixFilters() {
   elements.search.value = DEFAULT_MATRIX_FILTERS.query
   elements.category.value = DEFAULT_MATRIX_FILTERS.category
   elements.phase.value = DEFAULT_MATRIX_FILTERS.phase
+  elements.intentStatus.value = DEFAULT_MATRIX_FILTERS.intentStatus
   elements.scope.value = DEFAULT_MATRIX_FILTERS.scope
   elements.dnsType.value = DEFAULT_MATRIX_FILTERS.recordType
   elements.redirectType.value = DEFAULT_MATRIX_FILTERS.redirectType
@@ -3884,6 +3925,7 @@ function applyViewFilters(view) {
   elements.search.value = view.query
   elements.category.value = view.category
   elements.phase.value = view.phase
+  elements.intentStatus.value = view.intentStatus
   elements.scope.value = view.scope
   elements.dnsType.value = view.recordType
   elements.redirectType.value = view.redirectType
@@ -3901,6 +3943,7 @@ function renderMatrixFilters() {
   renderCategories()
   renderPhases()
   renderScopes()
+  renderIntentStatuses()
   renderDnsTypes()
   renderRedirectTypes()
   syncDnsTypeAvailability()
@@ -4035,6 +4078,7 @@ function showPolicyExceptionInMatrix(exception) {
       : `${exception.zoneName} ${exception.component}`
     elements.category.value = "DNS records"
     elements.phase.value = ""
+    elements.intentStatus.value = MATRIX_INTENT_FILTER.ALL
     elements.scope.value = MATRIX_SCOPE.ALL
     elements.dnsType.value = "TXT"
     elements.redirectType.value = ""
@@ -4150,6 +4194,29 @@ function setIntentSaving(saving) {
   if (elements.intentDialog.open) renderIntentManager()
 }
 
+function intentUndoUnavailableReason() {
+  if (readOnly) return "This session is read-only"
+  if (!api.usesBroker) return "Intent undo requires a normal dashboard session"
+  if (!state.transportAvailable) return "The session broker is offline"
+  if (state.intentSaving) return "Wait for the fleet intent save to finish"
+  if (state.busy) return "Wait for the current fleet operation to finish"
+  return "No fleet intent change from this window is available to undo"
+}
+
+function renderIntentUndoControls() {
+  const entry = currentIntentUndo(state.intentUndoStack, state.intent)
+  const actionLabel = entry
+    ? `Undo last fleet intent change: ${entry.description}`
+    : "Undo last fleet intent change"
+  for (const button of elements.intentUndoButtons) {
+    button.disabled = !entry || !intentWritable()
+    button.title = button.disabled
+      ? intentUndoUnavailableReason()
+      : actionLabel
+    button.setAttribute("aria-label", actionLabel)
+  }
+}
+
 function renderIntentSaveStatus() {
   const status = resolveIntentSaveStatus({
     failureMessage: state.intentSaveFailure,
@@ -4175,13 +4242,14 @@ function renderIntentSaveStatus() {
       status === FLEET_INTENT_SAVE_STATUS.FAILED ? "assertive" : "polite",
     )
   }
+  renderIntentUndoControls()
 }
 
-function setIntentSaveButtonSaving(button, saving) {
+function setIntentSaveButtonSaving(button, saving, savingLabel = "") {
   if (!button) return
   if (saving) {
     button.dataset.intentIdleLabel = button.textContent
-    button.textContent = intentSaveStatusPresentation(
+    button.textContent = savingLabel || intentSaveStatusPresentation(
       FLEET_INTENT_SAVE_STATUS.SAVING,
     ).label
     button.setAttribute("aria-busy", "true")
@@ -4204,13 +4272,26 @@ async function persistIntentDocument(document, successMessage, options = {}) {
     )
     return false
   }
+  const previousDocument = state.intent
   state.intentSaveFailure = ""
-  setIntentSaveButtonSaving(options.saveButton, true)
+  setIntentSaveButtonSaving(
+    options.saveButton,
+    true,
+    options.savingLabel,
+  )
   setIntentSaving(true)
   try {
     const saved = await api.persistFleetIntent(document)
     if (!isFleetIntentDocument(saved, auth.accountId)) {
       throw new Error("The broker returned an invalid fleet intent document")
+    }
+    if (options.recordUndo !== false) {
+      state.intentUndoStack = recordIntentUndo(
+        state.intentUndoStack,
+        previousDocument,
+        saved,
+        successMessage,
+      )
     }
     state.intent = saved
     state.intentSaveFailure = ""
@@ -4223,6 +4304,7 @@ async function persistIntentDocument(document, successMessage, options = {}) {
       && isFleetIntentDocument(error.currentDocument, auth.accountId)) {
       const message = "Fleet intent changed in another window. The latest version is loaded; review and retry your edit."
       state.intent = error.currentDocument
+      state.intentUndoStack = []
       state.intentSaveFailure = message
       if (state.inventory) renderInventory(state.inventory, state.inventorySource)
       toast(message, "error")
@@ -4235,6 +4317,30 @@ async function persistIntentDocument(document, successMessage, options = {}) {
     setIntentSaveButtonSaving(options.saveButton, false)
     setIntentSaving(false)
   }
+}
+
+async function undoIntentChange(event) {
+  const stack = state.intentUndoStack
+  const entry = currentIntentUndo(stack, state.intent)
+  const document = prepareIntentUndoDocument(entry, state.intent)
+  if (!entry || !document) {
+    state.intentUndoStack = []
+    renderIntentSaveStatus()
+    toast("Fleet intent undo is no longer available because the saved revision changed", "error")
+    return
+  }
+  const saved = await persistIntentDocument(
+    document,
+    "Fleet intent change undone",
+    {
+      recordUndo: false,
+      saveButton: event.currentTarget,
+      savingLabel: "Undoing...",
+    },
+  )
+  if (!saved) return
+  state.intentUndoStack = completeIntentUndo(stack, state.intent)
+  renderIntentSaveStatus()
 }
 
 function openCoverageIntentEditor(issue, expectation = null) {
@@ -4360,6 +4466,7 @@ async function syncFleetIntent(options = {}) {
     }
     if (latest.revision === state.intent.revision) return false
     state.intent = latest
+    state.intentUndoStack = []
     renderIntentSaveStatus()
     if (state.inventory) renderInventory(state.inventory, state.inventorySource)
     else renderIntentPolicyCard()
@@ -5385,6 +5492,7 @@ function showIntentPolicyInMatrix(policy) {
   elements.search.value = ""
   elements.category.value = row.category
   elements.phase.value = row.phase || ""
+  elements.intentStatus.value = MATRIX_INTENT_FILTER.ALL
   elements.scope.value = MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -6682,6 +6790,17 @@ function cellIntentState(row, zone) {
   return row.intentState?.cells.get(zone.meta.id) || null
 }
 
+function facetIntentStatus(row) {
+  const presentation = fleetIntentFacetResultPresentation(row.intentState)
+  const element = createElement("small", {
+    className: `facet-intent-status ${presentation.status}`,
+    text: presentation.label,
+  })
+  element.title = presentation.title
+  element.setAttribute("aria-label", presentation.title)
+  return element
+}
+
 function cellIntentStatus(state) {
   if (!state
     || state.status === FLEET_INTENT_CELL_STATUS.UNGOVERNED
@@ -7037,6 +7156,7 @@ function renderMatrix() {
     tr.dataset.defaultOrder = String(defaultOrder)
     tr.dataset.facetKey = row.key
     tr.dataset.facetLabel = row.label
+    tr.dataset.intentStatus = row.intentState.status
     tr.dataset.missingZoneIds = row.missingZoneIds.join(" ")
     tr.dataset.phase = row.phase
     tr.dataset.presentCount = String(row.presentCount)
@@ -7066,6 +7186,7 @@ function renderMatrix() {
       ? `${row.consensusCount} of ${state.inventory.zones.length} zones match the unique row consensus`
       : `${row.variantCount} present variants; the most common values are tied`
     consensusBadge.setAttribute("aria-label", consensusBadge.title)
+    const intentBadge = facetIntentStatus(row)
     const facetTitle = createElement("div", { className: "facet-title" })
     const facetTitleCopy = createElement("span", {
       className: "facet-title-copy",
@@ -7080,10 +7201,11 @@ function renderMatrix() {
         text: row.label,
       }),
     )
-    facetTitle.append(
-      facetTitleCopy,
-      consensusBadge,
-    )
+    const facetTitleBadges = createElement("span", {
+      className: "facet-title-badges",
+    })
+    facetTitleBadges.append(consensusBadge, intentBadge)
+    facetTitle.append(facetTitleCopy, facetTitleBadges)
     facetCell.append(facetTitle)
     if (row.description) facetCell.append(createElement("small", { text: row.description }))
     const phase = createFacetPhaseElement(row, "matrix-facet-phase")
@@ -7514,6 +7636,7 @@ function filterRows() {
       category: row.dataset.category,
       changeable: row.dataset.changeable === "true",
       different: row.dataset.different === "true",
+      intentStatus: row.dataset.intentStatus,
       missingZoneIds: row.dataset.missingZoneIds.split(" ").filter(Boolean),
       phase: row.dataset.phase,
       presentCount: Number(row.dataset.presentCount),
@@ -7814,6 +7937,7 @@ function showExplorerView(options = {}) {
   elements.search.value = ""
   elements.category.value = options.category || ""
   elements.phase.value = options.phase || ""
+  elements.intentStatus.value = options.intentStatus || MATRIX_INTENT_FILTER.ALL
   elements.scope.value = options.scope || MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
   elements.redirectType.value = ""
@@ -10868,6 +10992,12 @@ elements.category.addEventListener("change", () => {
 elements.phase.addEventListener("change", filterRows)
 elements.matrixSort.addEventListener("change", filterRows)
 elements.scope.addEventListener("change", filterRows)
+elements.intentStatus.addEventListener("change", () => {
+  if (elements.intentStatus.value !== MATRIX_INTENT_FILTER.ALL) {
+    elements.differenceToggle.setAttribute("aria-pressed", "false")
+  }
+  filterRows()
+})
 elements.dnsType.addEventListener("change", filterRows)
 elements.redirectType.addEventListener("change", filterRows)
 elements.targetHoles.addEventListener("click", () => {
@@ -11192,6 +11322,9 @@ elements.renameValue.addEventListener("input", () => {
 })
 elements.renameForm.addEventListener("submit", reviewRuleRename)
 elements.manageIntent.addEventListener("click", openIntentManager)
+for (const button of elements.intentUndoButtons) {
+  button.addEventListener("click", undoIntentChange)
+}
 elements.intentVerdictAction.addEventListener("click", openIntentManager)
 elements.intentReviewUngoverned.addEventListener("click", openIntentAdoption)
 elements.intentAdoptionAddGroup.addEventListener("click", () => {

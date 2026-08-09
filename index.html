@@ -94,7 +94,10 @@
                 <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
                 <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
               </div>
-              <button class="button button-accent" id="manage-intent" type="button">Manage fleet intent</button>
+              <div class="intent-task-controls">
+                <button class="button button-quiet" type="button" data-intent-undo disabled>Undo</button>
+                <button class="button button-accent" id="manage-intent" type="button">Manage fleet intent</button>
+              </div>
             </div>
           </article>
 
@@ -227,6 +230,14 @@
               <option value="fleet-wide">Fleet-wide</option>
               <option value="zone-specific">Zone-specific</option>
               <option value="all">Everything</option>
+            </select>
+            <label class="sr-only" for="intent-status">Filter by facet intent result</label>
+            <select id="intent-status" aria-describedby="visible-count">
+              <option value="">All intent results</option>
+              <option value="match">Matches intent</option>
+              <option value="drift">Intent drift</option>
+              <option value="review">Needs intent review</option>
+              <option value="ungoverned">Intent not set</option>
             </select>
             <label class="sr-only" for="dns-type">Filter by DNS record type</label>
             <select id="dns-type" aria-describedby="visible-count">
@@ -589,7 +600,10 @@
           <p id="intent-summary">Define where facets may exist and how present values should relate without hiding observed differences.</p>
         </div>
         <div class="intent-heading-status">
-          <span class="intent-save-status unsaved" data-intent-save-status role="status" aria-live="polite" aria-atomic="true">Not saved yet</span>
+          <div class="intent-save-actions">
+            <span class="intent-save-status unsaved" data-intent-save-status role="status" aria-live="polite" aria-atomic="true">Not saved yet</span>
+            <button class="button button-quiet" type="button" data-intent-undo disabled>Undo</button>
+          </div>
           <div class="intent-metrics" id="intent-metrics" aria-label="Fleet intent summary"></div>
         </div>
       </header>

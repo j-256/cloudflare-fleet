@@ -1,4 +1,13 @@
+import { FLEET_INTENT_ROW_STATUS } from "./fleet-intent.mjs"
 import { RULE_PHASE_EXECUTION_ORDER } from "./rule-presentation.mjs"
+
+export const MATRIX_INTENT_FILTER = Object.freeze({
+  ALL: "",
+  DRIFT: FLEET_INTENT_ROW_STATUS.DRIFT,
+  MATCH: FLEET_INTENT_ROW_STATUS.MATCH,
+  REVIEW: FLEET_INTENT_ROW_STATUS.REVIEW,
+  UNGOVERNED: FLEET_INTENT_ROW_STATUS.UNGOVERNED,
+})
 
 export const MATRIX_SCOPE = Object.freeze({
   ALL: "all",
@@ -20,6 +29,7 @@ export const DEFAULT_MATRIX_FILTERS = Object.freeze({
   category: "",
   changeableOnly: false,
   differencesOnly: true,
+  intentStatus: MATRIX_INTENT_FILTER.ALL,
   phase: "",
   query: "",
   recordType: "",
@@ -65,6 +75,7 @@ export function matrixFilterChangeCount(filters) {
     String(filters.sort || "") !== DEFAULT_MATRIX_FILTERS.sort,
     Boolean(filters.changeableOnly) !== DEFAULT_MATRIX_FILTERS.changeableOnly,
     Boolean(filters.differencesOnly) !== DEFAULT_MATRIX_FILTERS.differencesOnly,
+    String(filters.intentStatus || "") !== DEFAULT_MATRIX_FILTERS.intentStatus,
     Boolean(filters.targetHolesOnly) !== DEFAULT_MATRIX_FILTERS.targetHolesOnly,
   ].filter(Boolean).length
 }
@@ -146,6 +157,7 @@ export function matrixRowMatchesFilters(row, filters) {
     && (!filters.changeableOnly || row.changeable)
     && (!filters.recordType || row.recordType === filters.recordType)
     && (!filters.redirectType || (row.redirectTypes || []).includes(filters.redirectType))
+    && (!filters.intentStatus || row.intentStatus === filters.intentStatus)
     && (!filters.differencesOnly || (row.actionable ?? row.different))
     && hasTargetHole
     && facetMatchesScope(

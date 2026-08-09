@@ -29,6 +29,13 @@ export const FLEET_INTENT_CELL_STATUS = Object.freeze({
   VARIANT: "variant",
 })
 
+export const FLEET_INTENT_ROW_STATUS = Object.freeze({
+  DRIFT: "drift",
+  MATCH: "match",
+  REVIEW: "review",
+  UNGOVERNED: "ungoverned",
+})
+
 export const FLEET_INTENT_ACKNOWLEDGEMENT_STATUS = Object.freeze({
   ACTIVE: "active",
   STALE: "stale",
@@ -1031,15 +1038,41 @@ export function evaluateFleetIntent(document, inventory, matrix) {
         || cell.status === FLEET_INTENT_CELL_STATUS.MISSING
         || cell.status === FLEET_INTENT_CELL_STATUS.VARIANT,
     )
+    const applicableCells = [...cells.values()].filter(
+      (cell) => cell.status !== FLEET_INTENT_CELL_STATUS.OUT_OF_SCOPE
+        && cell.status !== FLEET_INTENT_CELL_STATUS.UNGOVERNED,
+    )
+    const acknowledgedCount = applicableCells.filter(
+      (cell) => cell.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED,
+    ).length
+    const matchCount = applicableCells.filter(
+      (cell) => cell.status === FLEET_INTENT_CELL_STATUS.MATCH,
+    ).length
+    const unresolved = matchingPolicies.some(
+      (policyState) => policyState.unresolved,
+    )
+    const status = matchingPolicies.length === 0
+      ? FLEET_INTENT_ROW_STATUS.UNGOVERNED
+      : actionableCells.length > 0
+        ? FLEET_INTENT_ROW_STATUS.DRIFT
+        : unresolved
+          ? FLEET_INTENT_ROW_STATUS.REVIEW
+          : FLEET_INTENT_ROW_STATUS.MATCH
     rowStates.set(facetId, {
       actionable: matchingPolicies.length > 0
         ? actionableCells.length > 0
         : row.different,
       actionableCells,
+      acknowledgedCount,
+      applicableCount: applicableCells.length,
       cells,
       governed: matchingPolicies.length > 0,
+      matchCount,
       policies: matchingPolicies.map((policyState) => policyState.policy),
       row,
+      satisfiedCount: matchCount + acknowledgedCount,
+      status,
+      unresolved,
     })
   }
 
