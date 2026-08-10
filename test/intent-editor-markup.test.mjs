@@ -43,6 +43,13 @@ test("matrix opens compared and observed values in a dedicated equivalence modal
   assert.doesNotMatch(appSource, /details\.className = "cell-value-details"/)
 })
 
+test("ruleset parent review leads with exact definitions instead of count buckets", () => {
+  assert.match(html, /Rule count appears on each definition as review metadata/)
+  assert.match(appSource, /const reviewLabel = "Compare rule sets"/)
+  assert.match(appSource, /text: rulesetComparison\.definitionSummaryText/)
+  assert.doesNotMatch(appSource, /Most common count/)
+})
+
 test("matrix exposes phase as a filter and a stacked badge", () => {
   assert.match(html, /<select id="phase"/)
   assert.match(html, /<select id="matrix-sort"/)
@@ -154,6 +161,31 @@ test("policy and group editors preview impact and support focused shortcuts", ()
   assert.match(appSource, /function renderIntentPolicyImpact\(\)/)
   assert.match(appSource, /function renderIntentGroupImpact\(\)/)
   assert.match(appSource, /function applyInactiveOrAbsentIntentPreset\(\)/)
+})
+
+test("facet intent can build an arbitrary zone scope without requiring a name", () => {
+  for (const id of [
+    "intent-policy-zone-picker",
+    "intent-policy-zone-search",
+    "intent-policy-zone-selected-only",
+    "intent-policy-zone-select-all",
+    "intent-policy-zone-clear",
+    "intent-policy-zone-members",
+    "intent-policy-scope-name",
+    "intent-policy-use-zone-selection",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`))
+  }
+  assert.match(html, /Saved scope shortcut/)
+  assert.match(html, /Scope name <span class="optional-field">\(optional\)<\/span>/)
+  assert.doesNotMatch(html, /id="intent-group-name"[^>]+required/)
+  assert.doesNotMatch(html, /id="intent-policy-add-group"/)
+  assert.match(appSource, /findIntentGroupForZoneSelection\(/)
+  assert.match(appSource, /generatedIntentScopeName\(/)
+  assert.match(
+    appSource,
+    /document = replaceFleetIntentGroup\(document, group\)[\s\S]+document = replaceFleetIntentPolicy\(document, policy\)/,
+  )
 })
 
 test("intent health is prominent and policy review precedes group administration", () => {

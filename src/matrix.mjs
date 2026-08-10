@@ -642,10 +642,10 @@ function addRulesetRows(rows, inventory) {
         ? `zone:${phase}`
         : `${ruleset.kind}:${phase}:${normalizeText(ruleset.name || ruleset.id, zone.meta.name)}`
       const rulesetLabel = ruleset.kind === RULESET_KIND.ZONE
-        ? "Zone entrypoint"
+        ? `${rulePhaseLabel(phase)} ruleset`
         : ruleset.name || "Unnamed ruleset"
       const rulesetLabelSource = ruleset.kind === RULESET_KIND.ZONE
-        ? "Ruleset kind"
+        ? "Ruleset phase"
         : ruleset.name
           ? "Ruleset name"
           : "Generated fallback"
@@ -666,6 +666,9 @@ function addRulesetRows(rows, inventory) {
         zone,
         exactValue,
         {
+          description: ruleset.kind === RULESET_KIND.ZONE
+            ? "Complete ordered rules for each zone"
+            : "",
           display: `${ruleset.rules?.length || 0} rule${ruleset.rules?.length === 1 ? "" : "s"}`,
           inspectionValue: ruleset,
           labelSource: rulesetLabelSource,

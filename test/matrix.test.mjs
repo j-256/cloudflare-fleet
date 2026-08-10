@@ -322,10 +322,11 @@ test("matrix leads with rule names and separates direct edits from copying", () 
   })
   const parentRow = matrix.rows.find(
     (entry) => entry.category === "Rulesets"
-      && entry.label === "Zone entrypoint",
+      && entry.label === "Dynamic redirects ruleset",
   )
   assert.equal(parentRow.phase, "http_request_dynamic_redirect")
-  assert.equal(parentRow.labelSource, "Ruleset kind")
+  assert.equal(parentRow.labelSource, "Ruleset phase")
+  assert.equal(parentRow.description, "Complete ordered rules for each zone")
   assert.deepEqual(
     parentRow.cells.get("alpha.example").workspaceAction,
     cell.parentAction,

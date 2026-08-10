@@ -3536,7 +3536,8 @@ dialog form {
 
 .intent-manager-toolbar input,
 .intent-manager-toolbar select,
-.intent-group-tools input {
+.intent-group-tools input,
+.intent-policy-zone-tools input {
   width: 100%;
   min-height: 34px;
   padding: 6px 9px;
@@ -3547,7 +3548,8 @@ dialog form {
 }
 
 #intent-policy-visible-count,
-#intent-group-visible {
+#intent-group-visible,
+#intent-policy-zone-visible {
   color: var(--muted);
   font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
@@ -3688,6 +3690,87 @@ dialog .intent-field-heading > label {
 
 .intent-field-heading .button {
   flex: 0 0 auto;
+}
+
+.optional-field {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.intent-policy-scope-editor {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  margin: 18px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.intent-policy-scope-editor > legend {
+  padding: 0 5px;
+  font-weight: 700;
+}
+
+.intent-policy-scope-editor > .intent-field-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.intent-policy-scope-shortcut {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+
+.intent-policy-scope-shortcut > label {
+  margin: 0;
+}
+
+.intent-policy-zone-picker {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(43, 59, 77, 0.72);
+  border-radius: 7px;
+  background: rgba(11, 19, 28, 0.62);
+}
+
+.intent-policy-zone-picker > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.intent-policy-zone-tools {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(3, auto) auto;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.intent-policy-zone-options {
+  max-height: min(30vh, 280px);
+  margin-bottom: 10px;
+}
+
+.intent-policy-zone-picker > label {
+  display: block;
+  margin-top: 8px;
+}
+
+.intent-policy-zone-picker > input {
+  width: 100%;
+}
+
+.intent-policy-zone-picker > .intent-field-help {
+  margin: 5px 0 0;
+}
+
+.intent-policy-zone-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 9px;
 }
 
 .intent-zone-scope {
@@ -5695,8 +5778,18 @@ dialog details > summary {
   }
 
   .intent-group-tools input,
-  #intent-group-visible {
+  #intent-group-visible,
+  .intent-policy-zone-tools input,
+  #intent-policy-zone-visible {
     grid-column: 1 / -1;
+  }
+
+  .intent-policy-zone-tools {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .intent-policy-scope-shortcut {
+    grid-template-columns: 1fr;
   }
 
   .intent-adoption-impact {

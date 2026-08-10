@@ -414,7 +414,7 @@
         </div>
         <div class="ruleset-comparison-metrics" id="ruleset-comparison-metrics" aria-label="Ruleset comparison summary"></div>
       </header>
-      <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares the complete ordered normalized ruleset. Rule count only organizes the review below and never determines exact equivalence.</p>
+      <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares the complete ordered normalized ruleset. Rule count appears on each definition as review metadata and never determines exact equivalence.</p>
       <div class="ruleset-comparison-groups" id="ruleset-comparison-groups"></div>
       <p class="ruleset-comparison-intent" id="ruleset-comparison-intent"></p>
       <div class="ruleset-comparison-actions">
@@ -656,10 +656,10 @@
       <section class="intent-section" id="intent-groups-section" data-intent-manager-panel="groups" aria-labelledby="intent-groups-title" hidden>
         <div class="intent-section-heading">
           <div>
-            <h3 id="intent-groups-title">Zone groups</h3>
-            <p>Saved membership defines where a policy applies; the group label is secondary.</p>
+            <h3 id="intent-groups-title">Saved scopes</h3>
+            <p>Reuse exact zone selections across policies; names are optional shortcuts.</p>
           </div>
-          <button class="button button-quiet" id="intent-add-group" type="button">Create zone group</button>
+          <button class="button button-quiet" id="intent-add-group" type="button">Create saved scope</button>
         </div>
         <div class="intent-list" id="intent-group-list"></div>
       </section>
@@ -697,7 +697,7 @@
           <p id="intent-adoption-summary">Choose which observed fleet patterns should become durable policy. Suggestions do not change Cloudflare configuration.</p>
         </div>
         <div class="intent-adoption-heading-actions">
-          <button class="button button-quiet" id="intent-adoption-add-group" type="button" data-intent-write>Create zone group</button>
+          <button class="button button-quiet" id="intent-adoption-add-group" type="button" data-intent-write>Create saved scope</button>
           <button class="button button-accent" id="intent-adoption-select-clear" type="button">Select fleet consensus</button>
           <button class="button button-quiet" id="intent-adoption-clear" type="button">Clear selection</button>
         </div>
@@ -757,11 +757,11 @@
 
   <dialog id="intent-group-dialog" aria-labelledby="intent-group-title" aria-describedby="intent-group-help">
     <form method="dialog" id="intent-group-form" novalidate>
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close zone group editor">&times;</button>
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close saved scope editor">&times;</button>
       <p class="dialog-kicker">Fleet intent coverage</p>
-      <h2 id="intent-group-title">New zone group</h2>
-      <p id="intent-group-help">Choose exactly where policies using this group apply. Membership is stored by zone identifier, with the current domain retained for review.</p>
-      <div class="target-tools intent-group-tools" role="search" aria-label="Filter zone group members">
+      <h2 id="intent-group-title">New saved scope</h2>
+      <p id="intent-group-help">Choose exactly where policies using this saved scope apply. Membership is stored by zone identifier, with the current domain retained for review.</p>
+      <div class="target-tools intent-group-tools" role="search" aria-label="Filter saved scope members">
         <label class="sr-only" for="intent-group-search">Search zones</label>
         <input id="intent-group-search" type="search" placeholder="Search zones">
         <button class="button button-quiet" id="intent-group-selected-only" type="button" aria-pressed="false">Selected only</button>
@@ -772,21 +772,21 @@
       <div class="target-options" id="intent-group-members"></div>
       <div class="intent-zone-scope intent-group-selection-summary" id="intent-group-selection-summary"></div>
       <p class="sr-only" id="intent-group-selection-announcement" role="status" aria-live="polite"></p>
-      <label for="intent-group-name">Group label</label>
-      <input id="intent-group-name" type="text" autocomplete="off" spellcheck="false" aria-describedby="intent-group-label-help" aria-errormessage="intent-group-error" required>
-      <p class="intent-field-help" id="intent-group-label-help">This secondary label helps distinguish groups with similar membership.</p>
+      <label for="intent-group-name">Scope name <span class="optional-field">(optional)</span></label>
+      <input id="intent-group-name" type="text" autocomplete="off" spellcheck="false" aria-describedby="intent-group-label-help" aria-errormessage="intent-group-error" placeholder="Generated from selected zones">
+      <p class="intent-field-help" id="intent-group-label-help">Leave this blank to generate a concise unique name from the selected domains.</p>
       <section class="intent-draft-impact" id="intent-group-impact" aria-labelledby="intent-group-impact-title" hidden>
         <div>
           <p class="dialog-kicker">Before-save effect</p>
-          <h3 id="intent-group-impact-title">No policies use this group</h3>
+          <h3 id="intent-group-impact-title">No policies use this scope</h3>
           <p id="intent-group-impact-summary" role="status" aria-live="polite"></p>
         </div>
-        <div class="intent-adoption-impact-metrics" id="intent-group-impact-metrics" aria-label="Zone group change effect"></div>
+        <div class="intent-adoption-impact-metrics" id="intent-group-impact-metrics" aria-label="Zone scope change effect"></div>
       </section>
       <p class="field-error" id="intent-group-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>
-        <button class="button button-primary" id="intent-group-save" value="save" data-intent-write>Save group</button>
+        <button class="button button-primary" id="intent-group-save" value="save" data-intent-write>Save scope</button>
       </div>
     </form>
   </dialog>
@@ -798,12 +798,33 @@
       <h2 id="intent-policy-title">Set facet intent</h2>
       <p id="intent-policy-target"></p>
       <section class="facet-equivalence-panel" id="intent-policy-equivalence" aria-label="Facet identity and exact equivalence"></section>
-      <div class="intent-field-heading">
-        <label for="intent-policy-group">Applies to zones</label>
-        <button class="button button-quiet" id="intent-policy-add-group" type="button">Create zone group</button>
-      </div>
-      <p class="intent-field-help" id="intent-policy-group-help">Choose the group whose independent policy you want to edit. Configured groups load their saved intent; unconfigured groups start from observed defaults.</p>
-      <select id="intent-policy-group" aria-describedby="intent-policy-group-help intent-policy-scope intent-policy-overlap" required></select>
+      <fieldset class="intent-policy-scope-editor" aria-describedby="intent-policy-group-help intent-policy-scope intent-policy-overlap">
+        <legend>Applies to zones</legend>
+        <p class="intent-field-help" id="intent-policy-group-help">Search and combine zones directly, or start from a concise saved-scope shortcut. A different selection always edits an independent policy.</p>
+        <div class="intent-policy-scope-shortcut">
+          <label for="intent-policy-group">Saved scope shortcut</label>
+          <select id="intent-policy-group" required></select>
+        </div>
+        <details class="intent-policy-zone-picker" id="intent-policy-zone-picker" open>
+          <summary>Choose any zones</summary>
+          <div class="target-tools intent-policy-zone-tools" role="search" aria-label="Filter policy scope zones">
+            <label class="sr-only" for="intent-policy-zone-search">Search zones</label>
+            <input id="intent-policy-zone-search" type="search" placeholder="Search zones">
+            <button class="button button-quiet" id="intent-policy-zone-selected-only" type="button" aria-pressed="false">Selected only</button>
+            <button class="button button-quiet" id="intent-policy-zone-select-all" type="button">Select visible</button>
+            <button class="button button-quiet" id="intent-policy-zone-clear" type="button">Clear visible</button>
+            <span id="intent-policy-zone-visible" role="status" aria-live="polite">0 zones shown</span>
+          </div>
+          <div class="target-options intent-policy-zone-options" id="intent-policy-zone-members"></div>
+          <label for="intent-policy-scope-name">Scope name <span class="optional-field">(optional)</span></label>
+          <input id="intent-policy-scope-name" type="text" autocomplete="off" spellcheck="false" aria-describedby="intent-policy-scope-name-help" aria-errormessage="intent-policy-error" placeholder="Generated from selected zones">
+          <p class="intent-field-help" id="intent-policy-scope-name-help">A new combination is saved with the policy. Leave its name blank to generate one automatically.</p>
+          <div class="intent-policy-zone-actions">
+            <button class="button button-accent" id="intent-policy-use-zone-selection" type="button">Use selection</button>
+          </div>
+          <p class="sr-only" id="intent-policy-zone-announcement" role="status" aria-live="polite"></p>
+        </details>
+      </fieldset>
       <div class="intent-zone-scope intent-policy-scope" id="intent-policy-scope"></div>
       <p class="intent-policy-overlap" id="intent-policy-overlap" role="status" hidden></p>
       <p class="intent-field-help" id="intent-policy-constraint-help">Choose these independently: Presence decides whether absence is drift. Value when present compares only zones where the facet exists.</p>

@@ -116,6 +116,12 @@ export function compareDetailedRulesetRow(row, zones) {
   }).sort(compareGroups)
   const countBaseline = groups.find((group) => group.countBaseline) || null
   const configurations = groups.flatMap((group) => group.configurations)
+  for (const group of groups) {
+    for (const configuration of group.configurations) {
+      configuration.ruleCount = group.ruleCount
+    }
+  }
+  configurations.sort(compareConfigurations)
   const largestDefinitionCount = Math.max(
     0,
     ...configurations.map((configuration) => configuration.zoneCount),
@@ -137,26 +143,31 @@ export function compareDetailedRulesetRow(row, zones) {
     .map((group) => `${group.label}: ${group.zoneCount}`)
     .join(" | ")
   const hasMissingGroup = groups.some((group) => group.ruleCount === null)
+  const missingGroup = groups.find((group) => group.ruleCount === null) || null
+  const missingZones = missingGroup?.zones || []
+  const missingZoneCount = missingZones.length
+  const presentZoneCount = totalZones - missingZoneCount
+  const definitionSummaryText = `${pluralize(configurationCount, "unique ordered definition")} across ${pluralize(totalZones, "zone")}${missingZoneCount > 0 ? `; ${pluralize(missingZoneCount, "zone")} missing this ruleset` : ""}`
   const badgeText = baseline
     ? `Exact value on ${baseline.zoneCount}/${totalZones}`
     : `${pluralize(configurationCount, "exact value")}${hasMissingGroup ? " + missing" : ""}`
-  const title = `${groups.map((group) => {
-    if (group.ruleCount === null) {
-      return `${pluralize(group.zoneCount, "zone")} ${group.zoneCount === 1 ? "is" : "are"} missing the entrypoint`
-    }
-    return `${pluralize(group.zoneCount, "zone")} ${group.zoneCount === 1 ? "has" : "have"} ${group.label}`
-  }).join("; ")}. Exact equivalence includes the ruleset description and ordered editable rule fields; count is summary metadata only.`
+  const title = `${definitionSummaryText}. Exact equivalence includes the ruleset description and ordered editable rule fields; rule count is review metadata only.`
 
   return {
     badgeText,
     baseline,
+    configurations,
     countBaseline,
     configurationCount,
+    definitionSummaryText,
     distributionText,
     groups,
     hasDefinitionDifferences,
     hasDifferences: groups.length > 1 || hasDefinitionDifferences,
+    missingZoneCount,
+    missingZones,
     outlierCount,
+    presentZoneCount,
     title,
     totalZones,
   }

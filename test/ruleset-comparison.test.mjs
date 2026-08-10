@@ -63,9 +63,14 @@ test("ruleset comparison makes the dominant rule-count distribution explicit", (
 
   assert.equal(compared.badgeText, "Exact value on 2/3")
   assert.equal(compared.distributionText, "1 rule: 2 | 2 rules: 1")
+  assert.equal(
+    compared.definitionSummaryText,
+    "2 unique ordered definitions across 3 zones",
+  )
   assert.equal(compared.outlierCount, 1)
   assert.equal(compared.groups[0].countBaseline, true)
   assert.equal(compared.baseline.zoneCount, 2)
+  assert.deepEqual(compared.configurations.map((entry) => entry.ruleCount), [1, 2])
   assert.deepEqual(compared.groups.map((group) => group.ruleCount), [1, 2])
 })
 
@@ -102,6 +107,13 @@ test("ruleset comparison retains missing zones and rejects summary-only rows", (
   assert.equal(rulesetParentRowIsReviewable(detailed), true)
   assert.equal(rulesetRowPhase(detailed), "http_request_firewall_custom")
   assert.equal(compared.badgeText, "Exact value on 1/2")
+  assert.equal(
+    compared.definitionSummaryText,
+    "1 unique ordered definition across 2 zones; 1 zone missing this ruleset",
+  )
+  assert.equal(compared.missingZoneCount, 1)
+  assert.equal(compared.presentZoneCount, 1)
+  assert.equal(compared.missingZones[0].name, "b.example")
   assert.equal(compared.groups[0].countBaseline, true)
   assert.equal(compared.groups[1].ruleCount, null)
   assert.equal(compared.groups[1].zones[0].name, "b.example")
