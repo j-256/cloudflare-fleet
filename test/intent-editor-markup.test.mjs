@@ -65,9 +65,64 @@ test("matrix exposes facet-level intent results and filtering", () => {
 test("intent manager explains baseline and refinement composition", () => {
   assert.match(
     html,
-    /Broader groups form baselines; narrower overlapping groups refine them\./,
+    /Contained groups refine broader baselines; partial overlaps remain peers\./,
   )
   assert.doesNotMatch(appSource, /allowed variation/i)
+})
+
+test("matching controls retain their visible label in the accessible name", () => {
+  assert.match(
+    appSource,
+    /contextualActionLabel\(\s*"How matching works",\s*row\.label/,
+  )
+})
+
+test("intent manager is sectioned, filterable, and compact by default", () => {
+  for (const section of [
+    "policies",
+    "groups",
+    "coverage",
+    "acknowledgements",
+  ]) {
+    assert.match(html, new RegExp(`data-intent-manager-section="${section}"`))
+    assert.match(html, new RegExp(`data-intent-manager-panel="${section}"`))
+  }
+  for (const id of [
+    "intent-policy-search",
+    "intent-policy-status-filter",
+    "intent-policy-category-filter",
+    "intent-policy-group-filter",
+    "intent-policy-visible-count",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`))
+  }
+  assert.match(appSource, /function filterIntentPolicies\(\)/)
+  assert.match(appSource, /matchingDetails\.className = "intent-item-details"/)
+})
+
+test("facet intent actions stay in the focused policy editor", () => {
+  assert.doesNotMatch(appSource, /showManager/)
+  assert.match(
+    appSource,
+    /function activateIntentPolicyRow\(button\)[\s\S]+openIntentPolicyEditor\(action\.row, action\.policy\)/,
+  )
+  assert.match(appSource, /openIntentPolicyEditor\(row, preferredIntentPolicy\(policies\), options\)/)
+})
+
+test("policy and group editors preview impact and support focused shortcuts", () => {
+  for (const id of [
+    "intent-policy-impact",
+    "intent-policy-inactive-preset",
+    "intent-group-impact",
+    "intent-group-search",
+    "intent-group-selected-only",
+    "intent-group-visible",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`))
+  }
+  assert.match(appSource, /function renderIntentPolicyImpact\(\)/)
+  assert.match(appSource, /function renderIntentGroupImpact\(\)/)
+  assert.match(appSource, /function applyInactiveOrAbsentIntentPreset\(\)/)
 })
 
 test("intent health is prominent and policy review precedes group administration", () => {

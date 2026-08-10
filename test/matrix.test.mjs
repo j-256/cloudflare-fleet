@@ -521,6 +521,14 @@ test("matrix treats redirect order as behavioral drift", () => {
   assert.equal(row.different, true)
   assert.equal(row.cells.get("alpha.example").presentation.redirect.position, 1)
   assert.equal(row.cells.get("beta.example").presentation.redirect.position, 2)
+  assert.notEqual(
+    row.cells.get("alpha.example").canonical,
+    row.cells.get("beta.example").canonical,
+  )
+  assert.equal(
+    row.cells.get("alpha.example").intentCanonical,
+    row.cells.get("beta.example").intentCanonical,
+  )
   assert.equal(
     row.cells.get("alpha.example").resolutionCanonical,
     row.cells.get("beta.example").resolutionCanonical,

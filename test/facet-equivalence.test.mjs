@@ -8,6 +8,8 @@ import {
   facetCellComparisonValue,
   facetExpectedComparisonValue,
   facetPhase,
+  redirectIntentComparisonValue,
+  redirectIntentValueProjection,
   ruleExactComparisonValue,
   rulesetExactComparisonValue,
 } from "../src/facet-equivalence.mjs"
@@ -201,4 +203,43 @@ test("ruleset exact comparison retains normalized explicit rule refs", () => {
   }, "alpha.example")
 
   assert.equal(compared.rules[0].ref, "protect-{zone}")
+})
+
+test("redirect child intent excludes ruleset-local order and display metadata", () => {
+  const rule = {
+    action: "redirect",
+    action_parameters: {
+      from_value: {
+        status_code: 302,
+        target_url: { value: "https://alpha.example/docs" },
+      },
+    },
+    description: "Redirect docs",
+    enabled: true,
+    expression: "http.host eq \"alpha.example\"",
+    id: "generated-id",
+    ref: "explicit-ref",
+  }
+
+  assert.deepEqual(redirectIntentComparisonValue(rule, "alpha.example"), {
+    action: "redirect",
+    action_parameters: {
+      from_value: {
+        status_code: 302,
+        target_url: { value: "https://{zone}/docs" },
+      },
+    },
+    enabled: true,
+    expression: "http.host eq \"{zone}\"",
+  })
+  assert.deepEqual(redirectIntentValueProjection({
+    position: 7,
+    rule: ruleExactComparisonValue(rule, "alpha.example"),
+  }), redirectIntentComparisonValue(rule, "alpha.example"))
+  const description = describeFacetEquivalence({
+    category: "Redirects",
+    key: "http_request_dynamic_redirect:docs",
+  })
+  assert.equal(description.equivalenceSummary, "Behavioral rule fields")
+  assert.match(description.ignoredSummary, /Absolute position/)
 })

@@ -33,6 +33,7 @@ import {
 } from "./redirect-presentation.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
 import {
+  redirectIntentComparisonValue,
   ruleExactComparisonValue,
   rulesetExactComparisonValue,
 } from "./facet-equivalence.mjs"
@@ -686,6 +687,10 @@ function addRulesetRows(rows, inventory) {
           preserveOrder: true,
         })
         const comparedRule = ruleExactComparisonValue(rule, zone.meta.name)
+        const redirectIntentValue = redirectIntentComparisonValue(
+          rule,
+          zone.meta.name,
+        )
         const capability = ruleCopyCapability(ruleset, rule)
         const stableRef = rule.ref && rule.ref !== rule.id ? rule.ref : ""
         const label = normalizeText(
@@ -759,6 +764,10 @@ function addRulesetRows(rows, inventory) {
               rule: observedRule,
             },
             inspectionValue: rule,
+            ...(redirect ? {
+              intentDisplay: redirect.target || "Redirect",
+              intentValue: redirectIntentValue,
+            } : {}),
             resolutionValue: comparedRule,
             parentAction: workspaceAction,
             secondaryAction: capability.copyable

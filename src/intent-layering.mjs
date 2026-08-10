@@ -44,10 +44,12 @@ function setsOverlap(left, right) {
   return false
 }
 
-function isProperSubset(left, right) {
-  if (left.size >= right.size) return false
-  for (const value of left) {
-    if (!right.has(value)) return false
+function groupIsProperSubset(left, right) {
+  if (left.group.mode === FLEET_INTENT_GROUP_MODE.ALL) return false
+  if (right.group.mode === FLEET_INTENT_GROUP_MODE.ALL) return true
+  if (left.scope.size >= right.scope.size) return false
+  for (const value of left.scope) {
+    if (!right.scope.has(value)) return false
   }
   return true
 }
@@ -78,9 +80,9 @@ export function fleetIntentPolicyLayers(policies, groups, loadedZoneIds) {
           || !candidate.scope
           || fleetIntentPolicyFacetId(candidate.policy)
             !== fleetIntentPolicyFacetId(entry.policy)) continue
-        if (isProperSubset(entry.scope, candidate.scope)) {
+        if (groupIsProperSubset(entry, candidate)) {
           broader.push(candidate)
-        } else if (isProperSubset(candidate.scope, entry.scope)) {
+        } else if (groupIsProperSubset(candidate, entry)) {
           narrower.push(candidate)
         } else if (setsOverlap(entry.scope, candidate.scope)) {
           overlapping.push(candidate)

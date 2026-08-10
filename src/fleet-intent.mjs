@@ -2,11 +2,15 @@ import {
   shortDisplay,
   stableString,
 } from "./normalize.mjs"
-import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
+import {
+  INVENTORY_COVERAGE_KIND,
+  MATRIX_CATEGORY,
+} from "./constants.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
 import { editableEmailRoutingRulePayload } from "./policies.mjs"
+import { redirectIntentValueProjection } from "./facet-equivalence.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 6
+export const FLEET_INTENT_SCHEMA_VERSION = 7
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -80,6 +84,7 @@ const LEGACY_FLEET_INTENT_SCHEMA_VERSION_TWO = 2
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE = 3
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR = 4
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE = 5
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX = 6
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 const COMPOSED_CELL_STATUS_PRIORITY = Object.freeze({
   [FLEET_INTENT_CELL_STATUS.MATCH]: 0,
@@ -198,6 +203,10 @@ function isDnssecIntentPolicy(policy) {
     && policy.facet.key === DNSSEC_INTENT_CONFIGURATION_KEY
 }
 
+function isRedirectIntentPolicy(policy) {
+  return policy?.facet?.category === MATRIX_CATEGORY.REDIRECTS
+}
+
 function dnssecStatusExpectedIsNormalized(expected) {
   if (!isObject(expected?.value)) return false
   const keys = Object.keys(expected.value)
@@ -260,6 +269,31 @@ function emailRoutingIntentExpectedIsNormalized(policy) {
   return stableString(normalized) === stableString(policy)
 }
 
+function normalizeRedirectIntentPolicy(policy) {
+  if (!isRedirectIntentPolicy(policy)
+    || fleetIntentPolicyValueConstraint(policy)
+      !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    || !policy.expected) return policy
+  const value = redirectIntentValueProjection(policy.expected.value)
+  const canonical = stableString(value)
+  return {
+    ...policy,
+    expected: {
+      ...policy.expected,
+      canonical,
+      display: shortDisplay(value),
+      value,
+    },
+  }
+}
+
+function redirectIntentExpectedIsNormalized(policy) {
+  const normalized = normalizeRedirectIntentPolicy(
+    structuredClone(policy),
+  )
+  return stableString(normalized) === stableString(policy)
+}
+
 function normalizeFleetIntentPolicy(policy) {
   let normalized = structuredClone(policy)
   normalized.presenceConstraint = fleetIntentPolicyPresenceConstraint(normalized)
@@ -288,6 +322,7 @@ function normalizeFleetIntentPolicy(policy) {
     }
   }
   normalized = normalizeObservedEmailRoutingIntentPolicy(normalized)
+  normalized = normalizeRedirectIntentPolicy(normalized)
   return normalized
 }
 
@@ -321,6 +356,8 @@ function isPolicy(policy, options = {}) {
       || dnssecStatusExpectedIsNormalized(policy.expected))
     && (!options.requireNormalizedEmailRouting
       || emailRoutingIntentExpectedIsNormalized(policy))
+    && (!options.requireNormalizedRedirect
+      || redirectIntentExpectedIsNormalized(policy))
 }
 
 export function createAuthoredFleetIntentExpected(value) {
@@ -390,6 +427,7 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
+    || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX
   if (!isObject(value)) return false
   if (value.schemaVersion !== schemaVersion) return false
   if (!isLabel(value.accountId)) return false
@@ -402,10 +440,14 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
     (policy) => isPolicy(policy, {
       requireNormalizedDnssec: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
         || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
-        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE,
-      requireNormalizedEmailRouting: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
+      requireNormalizedEmailRouting: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
       requireNormalizedPresence: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
-        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE,
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
+      requireNormalizedRedirect: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
     }),
   )) return false
   if (!Array.isArray(value.acknowledgements)
@@ -472,8 +514,13 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     accountId,
     LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE,
   )
+  const versionSixValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
+  )
   if (!versionOneValid && !versionTwoValid && !versionThreeValid
-    && !versionFourValid && !versionFiveValid) {
+    && !versionFourValid && !versionFiveValid && !versionSixValid) {
     throw new TypeError("Fleet intent document cannot be migrated")
   }
   const legacyPolicies = versionOneValid
@@ -504,6 +551,12 @@ export function migrateFleetIntentDocument(value, accountId = null) {
       )
       if (projected !== null) {
         normalized.observedCanonical = stableString(projected)
+        return normalized
+      }
+      if (isRedirectIntentPolicy(policiesById.get(normalized.policyId))) {
+        normalized.observedCanonical = stableString(
+          redirectIntentValueProjection(observed),
+        )
       }
     } catch {
       return normalized
@@ -514,6 +567,7 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     ...structuredClone(value),
     acknowledgements,
     coverageExpectations: versionThreeValid || versionFourValid || versionFiveValid
+      || versionSixValid
       ? structuredClone(value.coverageExpectations)
       : [],
     policies,
@@ -582,7 +636,9 @@ export function replaceFleetIntentPolicy(document, policy) {
   const normalizedPolicy = normalizeFleetIntentPolicy(policy)
   if (!isPolicy(normalizedPolicy, {
     requireNormalizedDnssec: true,
+    requireNormalizedEmailRouting: true,
     requireNormalizedPresence: true,
+    requireNormalizedRedirect: true,
   })) {
     throw new TypeError("Fleet intent policy is invalid")
   }
@@ -749,6 +805,63 @@ export function fleetIntentGroupZoneIds(group, inventory) {
   return group.members.map((member) => member.zoneId)
 }
 
+function groupIsStrictlyNarrower(candidate, baseline) {
+  if (candidate.mode === FLEET_INTENT_GROUP_MODE.ALL) return false
+  if (baseline.mode === FLEET_INTENT_GROUP_MODE.ALL) return true
+  const candidateIds = new Set(candidate.members.map((member) => member.zoneId))
+  const baselineIds = new Set(baseline.members.map((member) => member.zoneId))
+  if (candidateIds.size >= baselineIds.size) return false
+  return [...candidateIds].every((zoneId) => baselineIds.has(zoneId))
+}
+
+function effectivePolicyScopes(document, inventory, groupsById) {
+  const loadedZoneIds = new Set(
+    inventory.zones.map((zone) => zone.meta.id),
+  )
+  const entries = document.policies.map((policy) => {
+    const group = groupsById.get(policy.groupId)
+    const targetedZoneIds = fleetIntentGroupZoneIds(group, inventory)
+    return {
+      group,
+      loadedTargetZoneIds: targetedZoneIds.filter(
+        (zoneId) => loadedZoneIds.has(zoneId),
+      ),
+      policy,
+      targetedZoneIds,
+      unavailableZoneIds: targetedZoneIds.filter(
+        (zoneId) => !loadedZoneIds.has(zoneId),
+      ),
+    }
+  })
+  const scopes = new Map()
+  for (const entry of entries) {
+    const effectiveZoneIds = []
+    const overriddenByZone = new Map()
+    for (const zoneId of entry.loadedTargetZoneIds) {
+      const overridingPolicies = entries.filter((candidate) => (
+        candidate.policy.id !== entry.policy.id
+          && fleetIntentPolicyFacetId(candidate.policy)
+            === fleetIntentPolicyFacetId(entry.policy)
+          && candidate.loadedTargetZoneIds.includes(zoneId)
+          && groupIsStrictlyNarrower(candidate.group, entry.group)
+      )).map((candidate) => candidate.policy)
+        .sort((left, right) => left.id.localeCompare(right.id))
+      if (overridingPolicies.length > 0) {
+        overriddenByZone.set(zoneId, overridingPolicies)
+      } else {
+        effectiveZoneIds.push(zoneId)
+      }
+    }
+    scopes.set(entry.policy.id, {
+      ...entry,
+      effectiveZoneIds,
+      overriddenByZone,
+      overriddenZoneIds: [...overriddenByZone.keys()],
+    })
+  }
+  return scopes
+}
+
 function observedCanonical(row, zoneName) {
   const cell = row?.cells.get(zoneName)
   return cell?.intentCanonical
@@ -762,6 +875,73 @@ function uniquenessCanonical(row, zoneName) {
     ?? cell?.intentCanonical
     ?? cell?.canonical
     ?? FLEET_INTENT_MISSING_CANONICAL
+}
+
+function jsonValueStructurallyMatches(expected, observed) {
+  if (Array.isArray(expected)) {
+    return Array.isArray(observed)
+      && expected.length === observed.length
+      && expected.every((entry, index) => (
+        jsonValueStructurallyMatches(entry, observed[index])
+      ))
+  }
+  if (isObject(expected)) {
+    if (!isObject(observed)) return false
+    return Object.entries(expected).every(([key, entry]) => (
+      Object.prototype.hasOwnProperty.call(observed, key)
+        && jsonValueStructurallyMatches(entry, observed[key])
+    ))
+  }
+  return expected === observed
+}
+
+function exactExpectedMatches(expected, observedValue) {
+  if (!fleetIntentExpectedIsAuthored(expected)) {
+    return observedValue.observedCanonical === expected.canonical
+  }
+  try {
+    return jsonValueStructurallyMatches(
+      expected.value,
+      JSON.parse(observedValue.observedCanonical),
+    )
+  } catch {
+    return false
+  }
+}
+
+function authoredValuesCompatible(left, right) {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((entry, index) => (
+        authoredValuesCompatible(entry, right[index])
+      ))
+  }
+  if (isObject(left) || isObject(right)) {
+    if (!isObject(left) || !isObject(right)) return false
+    const sharedKeys = Object.keys(left).filter(
+      (key) => Object.prototype.hasOwnProperty.call(right, key),
+    )
+    return sharedKeys.every(
+      (key) => authoredValuesCompatible(left[key], right[key]),
+    )
+  }
+  return left === right
+}
+
+function exactExpectationsCompatible(left, right) {
+  const leftAuthored = fleetIntentExpectedIsAuthored(left)
+  const rightAuthored = fleetIntentExpectedIsAuthored(right)
+  if (!leftAuthored && !rightAuthored) return left.canonical === right.canonical
+  if (leftAuthored && rightAuthored) {
+    return authoredValuesCompatible(left.value, right.value)
+  }
+  const authored = leftAuthored ? left : right
+  const observed = leftAuthored ? right : left
+  return exactExpectedMatches(authored, {
+    observedCanonical: observed.canonical,
+  })
 }
 
 function basePolicyCellStatus(
@@ -787,19 +967,23 @@ function basePolicyCellStatus(
       ? FLEET_INTENT_CELL_STATUS.VARIANT
       : FLEET_INTENT_CELL_STATUS.MATCH
   }
-  return observation.observedCanonical === expected.canonical
+  return exactExpectedMatches(expected, observation)
     ? FLEET_INTENT_CELL_STATUS.MATCH
     : FLEET_INTENT_CELL_STATUS.VARIANT
 }
 
-function policyEvaluation(policy, group, row, inventory, acknowledgements) {
+function policyEvaluation(
+  policy,
+  row,
+  inventory,
+  acknowledgements,
+  scope,
+) {
   const zoneById = new Map(inventory.zones.map((zone) => [zone.meta.id, zone]))
-  const targetedZoneIds = fleetIntentGroupZoneIds(group, inventory)
   const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
   const valueConstraint = fleetIntentPolicyValueConstraint(policy)
-  const observations = targetedZoneIds
+  const observations = scope.effectiveZoneIds
     .map((zoneId) => zoneById.get(zoneId))
-    .filter(Boolean)
     .map((zone) => ({
       observedCanonical: observedCanonical(row, zone.meta.name),
       uniquenessCanonical: uniquenessCanonical(row, zone.meta.name),
@@ -851,7 +1035,12 @@ function policyEvaluation(policy, group, row, inventory, acknowledgements) {
     })
   }
   const statuses = [...cells.values()].map((cell) => cell.status)
-  const unavailableZoneIds = targetedZoneIds.filter((zoneId) => !zoneById.has(zoneId))
+  const unresolvedReasons = [
+    !row ? "Its facet is not present in the loaded matrix" : "",
+    scope.unavailableZoneIds.length > 0
+      ? "Its group contains zones outside the loaded inventory"
+      : "",
+  ].filter(Boolean)
   return {
     acknowledgementCount: statuses.filter(
       (status) => status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED,
@@ -861,13 +1050,20 @@ function policyEvaluation(policy, group, row, inventory, acknowledgements) {
         || status === FLEET_INTENT_CELL_STATUS.VARIANT,
     ).length,
     cells,
+    effectiveCount: cells.size,
+    loadedTargetZoneIds: scope.loadedTargetZoneIds,
     matchCount: statuses.filter(
       (status) => status === FLEET_INTENT_CELL_STATUS.MATCH,
     ).length,
+    overriddenByZone: scope.overriddenByZone,
+    overriddenCount: scope.overriddenZoneIds.length,
+    overriddenZoneIds: scope.overriddenZoneIds,
     policy,
-    targetCount: cells.size,
-    unavailableZoneIds,
-    unresolved: !row || unavailableZoneIds.length > 0,
+    reason: unresolvedReasons.join("; "),
+    targetCount: scope.loadedTargetZoneIds.length,
+    targetedZoneIds: scope.targetedZoneIds,
+    unavailableZoneIds: scope.unavailableZoneIds,
+    unresolved: unresolvedReasons.length > 0,
   }
 }
 
@@ -883,11 +1079,16 @@ function applicablePolicyConflictKinds(policyStates) {
   if (presenceConstraints.has(FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN)) {
     return conflicts
   }
-  const exactCanonicals = new Set(policyStates
+  const exactExpectations = policyStates
     .filter((policyState) => fleetIntentPolicyValueConstraint(policyState.policy)
       === FLEET_INTENT_VALUE_CONSTRAINT.EXACT)
-    .map((policyState) => policyState.policy.expected.canonical))
-  if (exactCanonicals.size > 1) {
+    .map((policyState) => policyState.policy.expected)
+  const exactConflict = exactExpectations.some((expected, index) => (
+    exactExpectations.slice(index + 1).some(
+      (candidate) => !exactExpectationsCompatible(expected, candidate),
+    )
+  ))
+  if (exactConflict) {
     conflicts.push(FLEET_INTENT_POLICY_CONFLICT_KIND.EXACT_VALUE)
   }
   return conflicts
@@ -961,7 +1162,15 @@ function acknowledgementEvaluation(
   if (!policy) reason = "Its policy no longer exists"
   else if (!row) reason = "Its facet is not present in the loaded matrix"
   else if (!zone) reason = "Its zone is not present in the loaded inventory"
-  else if (!policyState.cells.has(zone.meta.id)) reason = "Its zone is no longer targeted by the policy"
+  else if (!policyState.targetedZoneIds.includes(zone.meta.id)) {
+    reason = "Its zone is no longer targeted by the policy"
+  }
+  else if (policyState.overriddenByZone.has(zone.meta.id)) {
+    reason = "A narrower group policy overrides this policy on the zone"
+  }
+  else if (!policyState.cells.has(zone.meta.id)) {
+    reason = "Its policy is not effective on the zone"
+  }
   else if (rowState?.cells.get(zone.meta.id)?.status === FLEET_INTENT_CELL_STATUS.CONFLICT) {
     reason = "Overlapping policies conflict on this cell"
   }
@@ -990,14 +1199,15 @@ export function evaluateFleetIntent(document, inventory, matrix) {
     matrix.rows.map((row) => [fleetIntentFacetId(row.category, row.key), row]),
   )
   const groupsById = new Map(document.groups.map((group) => [group.id, group]))
+  const policyScopes = effectivePolicyScopes(document, inventory, groupsById)
   const policyStates = document.policies.map((policy) => {
     const row = rowsByFacet.get(fleetIntentPolicyFacetId(policy)) || null
     return policyEvaluation(
       policy,
-      groupsById.get(policy.groupId),
       row,
       inventory,
       document.acknowledgements,
+      policyScopes.get(policy.id),
     )
   })
   const policyStatesById = new Map(

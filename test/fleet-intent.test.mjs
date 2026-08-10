@@ -432,6 +432,70 @@ test("version five Email Routing intent migrates to writable comparison values",
   assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
 })
 
+test("version six redirect intent migrates to behavioral child-rule values", () => {
+  const timestamp = "2026-08-04T18:00:00.000Z"
+  const ruleValue = {
+    action: "redirect",
+    description: "Redirect docs",
+    enabled: true,
+    expression: "http.request.uri.path eq \"/docs\"",
+    ref: "redirect-docs",
+  }
+  const legacyValue = {
+    position: 4,
+    rule: ruleValue,
+  }
+  const legacyCanonical = JSON.stringify(legacyValue)
+  const resolutionCanonical = JSON.stringify(ruleValue)
+  const legacy = createEmptyFleetIntentDocument("account-id")
+  legacy.schemaVersion = 6
+  legacy.revision = "f".repeat(64)
+  legacy.policies.push(policy({
+    category: "Redirects",
+    key: "http_request_dynamic_redirect:docs",
+    label: "Redirect docs",
+  }, {
+    expected: {
+      canonical: legacyCanonical,
+      display: "2 fields",
+      origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
+      resolutionCanonical,
+      sourceZoneId: "zone-a",
+      sourceZoneName: "a.example",
+      value: legacyValue,
+    },
+    id: "redirect-policy",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+  }))
+  legacy.acknowledgements.push({
+    createdAt: timestamp,
+    id: "redirect-acknowledgement",
+    observedCanonical: legacyCanonical,
+    policyId: "redirect-policy",
+    reason: "Known metadata variation",
+    updatedAt: timestamp,
+    zoneId: "zone-a",
+    zoneName: "a.example",
+  })
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+
+  assert.deepEqual(migrated.policies[0].expected.value, {
+    action: "redirect",
+    enabled: true,
+    expression: "http.request.uri.path eq \"/docs\"",
+  })
+  assert.equal(
+    migrated.policies[0].expected.resolutionCanonical,
+    resolutionCanonical,
+  )
+  assert.equal(
+    migrated.acknowledgements[0].observedCanonical,
+    migrated.policies[0].expected.canonical,
+  )
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+})
+
 test("coverage expectations are unique per inventory target", () => {
   const timestamp = new Date().toISOString()
   const expectation = {
@@ -758,18 +822,42 @@ test("must-differ acknowledgements stay local and become stale when a collision 
   assert.match(evaluation.acknowledgementStates[0].reason, /satisfies intent/)
 })
 
-test("authored expected values participate in exact intent evaluation", () => {
+test("authored exact objects compare only the recursively specified fields", () => {
   const { inventory, matrix, row } = fixture()
+  row.cells.set("a.example", {
+    canonical: '{"enabled":false,"nested":{"mode":"strict","note":"kept"}}',
+  })
+  row.cells.set("b.example", {
+    canonical: '{"enabled":true,"nested":{"mode":"strict","note":"kept"}}',
+  })
   let document = createEmptyFleetIntentDocument("account-id")
   document = replaceFleetIntentPolicy(document, policy(row, {
-    expected: createAuthoredFleetIntentExpected("off"),
+    expected: createAuthoredFleetIntentExpected({
+      enabled: false,
+      nested: { mode: "strict" },
+    }),
   }))
 
   const evaluation = evaluateFleetIntent(document, inventory, matrix)
   const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
-  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.VARIANT)
-  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.VARIANT)
   assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
+})
+
+test("authored exact arrays retain exact length and order", () => {
+  const { inventory, matrix, row } = fixture()
+  row.cells.set("a.example", { canonical: '{"values":[1,2]}' })
+  row.cells.set("b.example", { canonical: '{"values":[2,1]}' })
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: createAuthoredFleetIntentExpected({ values: [1, 2] }),
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.VARIANT)
 })
 
 test("group and policy mutations preserve references and remove dependent acknowledgements", () => {
@@ -974,7 +1062,7 @@ test("custom group limits policy scope while raw ungoverned rows retain drift", 
   assert.equal(nextEvaluation.summary.zones, 3)
 })
 
-test("compatible overlapping policies refine optional fleet intent for a required zone", () => {
+test("narrower policies replace broader intent on their covered zones", () => {
   const { inventory, matrix, row } = fixture()
   let document = createEmptyFleetIntentDocument("account-id")
   document = replaceFleetIntentGroup(document, {
@@ -997,8 +1085,13 @@ test("compatible overlapping policies refine optional fleet intent for a require
   let evaluation = evaluateFleetIntent(document, inventory, matrix)
   let rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
   assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
-  assert.equal(rowState.cells.get("zone-a").policies.length, 2)
+  assert.deepEqual(
+    rowState.cells.get("zone-a").policies.map((entry) => entry.id),
+    ["policy-required"],
+  )
   assert.deepEqual(rowState.cells.get("zone-a").conflictKinds, [])
+  assert.equal(evaluation.policyStates[0].overriddenCount, 1)
+  assert.equal(evaluation.policyStates[0].effectiveCount, 2)
   assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
   assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MATCH)
   assert.equal(evaluation.summary.actionableCells, 0)
@@ -1063,7 +1156,7 @@ test("compatible overlap evaluation is independent of policy order", () => {
   }
 })
 
-test("overlapping exact policies conflict only when their values differ", () => {
+test("narrower exact intent overrides a different fleet baseline", () => {
   const { inventory, matrix, row } = fixture()
   let document = createEmptyFleetIntentDocument("account-id")
   document = replaceFleetIntentPolicy(document, policy(row))
@@ -1095,16 +1188,14 @@ test("overlapping exact policies conflict only when their values differ", () => 
   const evaluation = evaluateFleetIntent(document, inventory, matrix)
   const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
   assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
-  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.CONFLICT)
-  assert.deepEqual(rowState.cells.get("zone-b").conflictKinds, [
-    FLEET_INTENT_POLICY_CONFLICT_KIND.EXACT_VALUE,
-  ])
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.deepEqual(rowState.cells.get("zone-b").conflictKinds, [])
   assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
   assert.equal(evaluation.acknowledgementStates[0].status, FLEET_INTENT_ACKNOWLEDGEMENT_STATUS.STALE)
-  assert.match(evaluation.acknowledgementStates[0].reason, /Overlapping policies/)
+  assert.match(evaluation.acknowledgementStates[0].reason, /narrower group policy/)
 })
 
-test("required and forbidden overlapping policies remain an explicit conflict", () => {
+test("narrower forbidden intent overrides a required fleet baseline", () => {
   const { inventory, matrix, row } = fixture()
   let document = createEmptyFleetIntentDocument("account-id")
   document = replaceFleetIntentPolicy(document, policy(row, {
@@ -1125,12 +1216,256 @@ test("required and forbidden overlapping policies remain an explicit conflict", 
 
   const evaluation = evaluateFleetIntent(document, inventory, matrix)
   const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
-  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.CONFLICT)
-  assert.deepEqual(rowState.cells.get("zone-a").conflictKinds, [
-    FLEET_INTENT_POLICY_CONFLICT_KIND.PRESENCE,
-  ])
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.VARIANT)
+  assert.deepEqual(rowState.cells.get("zone-a").conflictKinds, [])
   assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
   assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
+})
+
+test("partially overlapping exact policies remain peers and conflict", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "left-zones",
+    members: [
+      { zoneId: "zone-a", zoneName: "a.example" },
+      { zoneId: "zone-b", zoneName: "b.example" },
+    ],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Left zones",
+  })
+  document = replaceFleetIntentGroup(document, {
+    id: "right-zones",
+    members: [
+      { zoneId: "zone-b", zoneName: "b.example" },
+      { zoneId: "zone-c", zoneName: "c.example" },
+    ],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Right zones",
+  })
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    groupId: "left-zones",
+    id: "policy-left",
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    canonical: '"off"',
+    display: "off",
+    groupId: "right-zones",
+    id: "policy-right",
+    value: "off",
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.CONFLICT)
+  assert.deepEqual(rowState.cells.get("zone-b").conflictKinds, [
+    FLEET_INTENT_POLICY_CONFLICT_KIND.EXACT_VALUE,
+  ])
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MISSING)
+})
+
+test("peer exact policies compose when an authored subset accepts the observed value", () => {
+  const { inventory, matrix, row } = fixture()
+  const completeValue = { enabled: true, mode: "strict" }
+  const completeCanonical = JSON.stringify(completeValue)
+  row.cells.set("a.example", { canonical: completeCanonical })
+  row.cells.set("b.example", { canonical: completeCanonical })
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "left-zones",
+    members: [
+      { zoneId: "zone-a", zoneName: "a.example" },
+      { zoneId: "zone-b", zoneName: "b.example" },
+    ],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Left zones",
+  })
+  document = replaceFleetIntentGroup(document, {
+    id: "right-zones",
+    members: [
+      { zoneId: "zone-b", zoneName: "b.example" },
+      { zoneId: "zone-c", zoneName: "c.example" },
+    ],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Right zones",
+  })
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    canonical: completeCanonical,
+    display: "2 fields",
+    groupId: "left-zones",
+    id: "policy-left",
+    resolutionCanonical: completeCanonical,
+    value: completeValue,
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: createAuthoredFleetIntentExpected({ enabled: true }),
+    groupId: "right-zones",
+    id: "policy-right",
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.deepEqual(rowState.cells.get("zone-b").conflictKinds, [])
+})
+
+test("peer authored exact subsets conflict when a shared field disagrees", () => {
+  const { inventory, matrix, row } = fixture()
+  row.cells.set("a.example", { canonical: '{"enabled":true}' })
+  row.cells.set("b.example", { canonical: '{"enabled":true}' })
+  let document = createEmptyFleetIntentDocument("account-id")
+  for (const [id, name, members] of [
+    ["left-zones", "Left zones", ["zone-a", "zone-b"]],
+    ["right-zones", "Right zones", ["zone-b", "zone-c"]],
+  ]) {
+    document = replaceFleetIntentGroup(document, {
+      id,
+      members: members.map((zoneId) => ({
+        zoneId,
+        zoneName: `${zoneId.slice(-1)}.example`,
+      })),
+      mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+      name,
+    })
+  }
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: createAuthoredFleetIntentExpected({ enabled: true }),
+    groupId: "left-zones",
+    id: "policy-left",
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: createAuthoredFleetIntentExpected({ enabled: false }),
+    groupId: "right-zones",
+    id: "policy-right",
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.CONFLICT)
+  assert.deepEqual(rowState.cells.get("zone-b").conflictKinds, [
+    FLEET_INTENT_POLICY_CONFLICT_KIND.EXACT_VALUE,
+  ])
+})
+
+test("partially overlapping required and forbidden policies remain peers", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  for (const [id, name, members] of [
+    ["left-zones", "Left zones", ["zone-a", "zone-b"]],
+    ["right-zones", "Right zones", ["zone-b", "zone-c"]],
+  ]) {
+    document = replaceFleetIntentGroup(document, {
+      id,
+      members: members.map((zoneId) => ({
+        zoneId,
+        zoneName: `${zoneId.slice(-1)}.example`,
+      })),
+      mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+      name,
+    })
+  }
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    groupId: "left-zones",
+    id: "policy-left",
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    groupId: "right-zones",
+    id: "policy-right",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.CONFLICT)
+  assert.deepEqual(rowState.cells.get("zone-b").conflictKinds, [
+    FLEET_INTENT_POLICY_CONFLICT_KIND.PRESENCE,
+  ])
+  assert.equal(rowState.cells.get("zone-c").status, FLEET_INTENT_CELL_STATUS.MATCH)
+})
+
+test("must-differ evaluates only zones where the policy remains effective", () => {
+  const { inventory, matrix, row } = fixture()
+  row.cells.get("a.example").uniquenessCanonical = '"duplicate"'
+  row.cells.get("b.example").uniquenessCanonical = '"duplicate"'
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "zone-b-only",
+    members: [{ zoneId: "zone-b", zoneName: "b.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Zone B only",
+  })
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    id: "policy-fleet",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER,
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    canonical: '"off"',
+    display: "off",
+    groupId: "zone-b-only",
+    id: "policy-zone-b",
+    value: "off",
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.equal(rowState.cells.get("zone-a").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(rowState.cells.get("zone-b").status, FLEET_INTENT_CELL_STATUS.MATCH)
+  assert.equal(evaluation.policyStates[0].overriddenCount, 1)
+})
+
+test("only the most specific policy in a containment chain is effective", () => {
+  const { inventory, matrix, row } = fixture()
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "zones-a-b",
+    members: [
+      { zoneId: "zone-a", zoneName: "a.example" },
+      { zoneId: "zone-b", zoneName: "b.example" },
+    ],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Zones A and B",
+  })
+  document = replaceFleetIntentGroup(document, {
+    id: "zone-a-only",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Zone A only",
+  })
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    id: "policy-fleet",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN,
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    expected: null,
+    groupId: "zones-a-b",
+    id: "policy-a-b",
+    presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+    valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+  }))
+  document = replaceFleetIntentPolicy(document, policy(row, {
+    groupId: "zone-a-only",
+    id: "policy-a",
+  }))
+
+  const evaluation = evaluateFleetIntent(document, inventory, matrix)
+  const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
+  assert.deepEqual(
+    [...rowState.cells.values()].map((cell) => ({
+      policies: cell.policies.map((entry) => entry.id),
+      status: cell.status,
+    })),
+    [
+      { policies: ["policy-a"], status: FLEET_INTENT_CELL_STATUS.MATCH },
+      { policies: ["policy-a-b"], status: FLEET_INTENT_CELL_STATUS.MATCH },
+      { policies: ["policy-fleet"], status: FLEET_INTENT_CELL_STATUS.MATCH },
+    ],
+  )
 })
 
 test("unresolved policies and unavailable group members stay visible", () => {

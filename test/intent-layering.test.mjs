@@ -106,3 +106,40 @@ test("partial overlaps remain peers rather than implying precedence", () => {
     ["Right group"],
   )
 })
+
+test("a fixed group stays narrower than all zones when it has unavailable members", () => {
+  const groups = [
+    {
+      id: "all-zones",
+      members: [],
+      mode: "all",
+      name: "All zones",
+    },
+    {
+      id: "fixed-group",
+      members: [
+        { zoneId: "zone-a", zoneName: "a.example" },
+        { zoneId: "zone-retired", zoneName: "retired.example" },
+      ],
+      mode: "members",
+      name: "Fixed group",
+    },
+  ]
+  const layers = fleetIntentPolicyLayers(
+    [
+      policy("fleet-policy", "all-zones"),
+      policy("fixed-policy", "fixed-group"),
+    ],
+    groups,
+    ["zone-a"],
+  )
+
+  assert.equal(
+    layers.get("fleet-policy").role,
+    FLEET_INTENT_POLICY_LAYER_ROLE.BASELINE,
+  )
+  assert.equal(
+    layers.get("fixed-policy").role,
+    FLEET_INTENT_POLICY_LAYER_ROLE.REFINEMENT,
+  )
+})

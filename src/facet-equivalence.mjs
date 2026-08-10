@@ -44,6 +44,30 @@ export function ruleExactComparisonValue(rule, zoneName) {
   )
 }
 
+export function redirectIntentValueProjection(value) {
+  const source = value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && value.rule
+    && typeof value.rule === "object"
+    && !Array.isArray(value.rule)
+    ? value.rule
+    : value
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return source
+  }
+  const projected = structuredClone(source)
+  delete projected.description
+  delete projected.ref
+  return projected
+}
+
+export function redirectIntentComparisonValue(rule, zoneName) {
+  return redirectIntentValueProjection(
+    ruleExactComparisonValue(rule, zoneName),
+  )
+}
+
 export function rulesetExactComparisonValue(ruleset, zoneName) {
   return {
     description: normalizeValue(
@@ -128,7 +152,7 @@ function facetEquivalenceSummary(facet) {
     return "Description + ordered editable rule fields"
   }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
-    return "Order + editable rule fields"
+    return "Behavioral rule fields"
   }
   if (category === MATRIX_CATEGORY.RULESET_RULES) {
     return "Editable rule fields"
@@ -163,7 +187,10 @@ function facetIgnoredSummary(facet) {
   if (category === RULESET_CATEGORY && !key.startsWith(MANAGED_RULESET_KEY_PREFIX)) {
     return "Immutable name, kind, phase; IDs, timestamps, versions, generated refs, unsupported fields"
   }
-  if (RULE_CATEGORIES.has(category)) {
+  if (category === MATRIX_CATEGORY.REDIRECTS) {
+    return "Absolute position, description, explicit ref, IDs, timestamps, versions, unsupported API fields"
+  }
+  if (category === MATRIX_CATEGORY.RULESET_RULES) {
     return "Rule IDs, timestamps, versions, generated refs, unsupported API fields"
   }
   if (category === ZONE_SETTING_CATEGORY) return "Editability metadata"
