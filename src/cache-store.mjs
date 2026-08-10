@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs"
 import path from "node:path"
 
+import { atomicWriteFile } from "./atomic-file.mjs"
 import {
   CACHE_MAX_AGE_HOURS,
   CACHE_RECORD_GLOBAL,
@@ -63,16 +64,6 @@ async function readCacheEntries(cacheDir) {
   return entries
 }
 
-async function atomicWrite(filePath, content) {
-  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
-  await fs.writeFile(temporaryPath, content, {
-    encoding: "utf8",
-    mode: 0o600,
-  })
-  await fs.rename(temporaryPath, filePath)
-  await fs.chmod(filePath, 0o600)
-}
-
 async function pruneCacheFiles(cacheDir) {
   const entries = await readCacheEntries(cacheDir)
   const groups = new Map()
@@ -114,7 +105,7 @@ export async function persistCacheRecord(cacheDir, sessionId, record) {
   if (!isCacheRecord(record)) throw new TypeError("Invalid cache record")
   await ensureCacheDirectory(cacheDir)
   const filePath = path.join(cacheDir, cacheFilename(sessionId))
-  await atomicWrite(filePath, `${JSON.stringify(record)}\n`)
+  await atomicWriteFile(filePath, `${JSON.stringify(record)}\n`)
   await pruneCacheFiles(cacheDir)
   return filePath
 }
@@ -137,7 +128,7 @@ export async function prepareCacheScript(options) {
   const payload = JSON.stringify(record)
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029")
-  await atomicWrite(
+  await atomicWriteFile(
     outputPath,
     `window[${JSON.stringify(CACHE_RECORD_GLOBAL)}] = ${payload}\n`,
   )

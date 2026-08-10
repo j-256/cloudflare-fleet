@@ -4,8 +4,8 @@ import { promises as fs } from "node:fs"
 import http from "node:http"
 import path from "node:path"
 
+import { atomicWriteFile } from "./atomic-file.mjs"
 import {
-  API_BASE_URL,
   HTTP_METHOD,
 } from "./constants.mjs"
 import {
@@ -15,6 +15,7 @@ import {
 } from "./activity-store.mjs"
 import {
   BROKER_SESSION_HEADER,
+  resolveCloudflareApiUrl,
 } from "./api.mjs"
 import {
   isCacheRecord,
@@ -33,7 +34,9 @@ import {
 } from "./session-watcher.mjs"
 
 const BODY_LIMIT_BYTES = 2 * 1024 * 1024
+const DEFAULT_CLOUDFLARE_REQUEST_TIMEOUT_MS = 30000
 const DEFAULT_SHUTDOWN_GRACE_MS = 15000
+const GATEWAY_TIMEOUT_STATUS = 504
 const LIVENESS_PING_INTERVAL_MS = 20000
 const LOOPBACK_HOST = "127.0.0.1"
 const MIME_TYPES = Object.freeze({
@@ -50,6 +53,14 @@ const PROXY_METHODS = new Set([
   HTTP_METHOD.PUT,
 ])
 const SERVICE_TARGET_PATTERN = /^gui\/[0-9]+\/com\.j256\.cloudflare-fleet\.broker\.[A-Za-z0-9]+$/
+const SERVICE_TARGET_PREFIX = "com.j256.cloudflare-fleet.broker."
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super("Request body is too large")
+    this.name = "RequestBodyTooLargeError"
+  }
+}
 
 function safeEqual(left, right) {
   const leftBuffer = Buffer.from(String(left || ""))
@@ -83,7 +94,7 @@ async function requestBody(request) {
   let size = 0
   for await (const chunk of request) {
     size += chunk.length
-    if (size > BODY_LIMIT_BYTES) throw new Error("Request body is too large")
+    if (size > BODY_LIMIT_BYTES) throw new RequestBodyTooLargeError()
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
@@ -95,6 +106,27 @@ function authorized(request, sessionSecret, origin) {
   if (request.headers.origin && request.headers.origin !== origin) return false
   const fetchSite = request.headers["sec-fetch-site"]
   return !fetchSite || fetchSite === "same-origin"
+}
+
+function upstreamAbort(response, timeoutMs) {
+  const controller = new AbortController()
+  let timedOut = false
+  const disconnect = () => controller.abort()
+  const timeout = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  response.once("close", disconnect)
+  return {
+    dispose() {
+      clearTimeout(timeout)
+      response.removeListener("close", disconnect)
+    },
+    signal: controller.signal,
+    timedOut() {
+      return timedOut
+    },
+  }
 }
 
 function staticFileFor(runtimeDir, relativePath) {
@@ -165,6 +197,7 @@ async function proxyCloudflare(
   options,
   cloudflareFetch,
   apiRelativePath,
+  requestTimeoutMs,
 ) {
   if (!PROXY_METHODS.has(request.method)) {
     errorResponse(response, 405, "Cloudflare method is not allowed")
@@ -174,9 +207,10 @@ async function proxyCloudflare(
     errorResponse(response, 403, "Cloudflare writes are disabled for this session")
     return
   }
-  const target = new URL(apiRelativePath, API_BASE_URL)
-  const apiBase = new URL(API_BASE_URL)
-  if (target.origin !== apiBase.origin || !target.pathname.startsWith(apiBase.pathname)) {
+  let target
+  try {
+    target = resolveCloudflareApiUrl(apiRelativePath)
+  } catch {
     errorResponse(response, 400, "Cloudflare path is outside the API boundary")
     return
   }
@@ -190,22 +224,31 @@ async function proxyCloudflare(
   }
   if (body?.length) headers["Content-Type"] = "application/json"
 
+  const abort = upstreamAbort(response, requestTimeoutMs)
+  let responseBody
   let upstream
   try {
     upstream = await cloudflareFetch(target, {
       body: body?.length ? body : undefined,
       headers,
       method: request.method,
+      signal: abort.signal,
     })
+    responseBody = Buffer.from(await upstream.arrayBuffer())
   } catch (error) {
+    if (response.destroyed) return
     errorResponse(
       response,
-      502,
-      `Cloudflare request failed: ${error instanceof Error ? error.message : String(error)}`,
+      abort.timedOut() ? GATEWAY_TIMEOUT_STATUS : 502,
+      abort.timedOut()
+        ? "Cloudflare request timed out"
+        : `Cloudflare request failed: ${error instanceof Error ? error.message : String(error)}`,
     )
     return
+  } finally {
+    abort.dispose()
   }
-  const responseBody = Buffer.from(await upstream.arrayBuffer())
+  if (response.destroyed) return
   response.writeHead(upstream.status, {
     "Cache-Control": "no-store",
     "Content-Length": responseBody.length,
@@ -223,7 +266,8 @@ async function persistSnapshot(request, response, options) {
   let record
   try {
     record = JSON.parse((await requestBody(request)).toString("utf8"))
-  } catch {
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) throw error
     errorResponse(response, 400, "Snapshot body is not valid JSON")
     return
   }
@@ -260,7 +304,8 @@ async function handleFleetIntent(request, response, options) {
   let payload
   try {
     payload = JSON.parse((await requestBody(request)).toString("utf8"))
-  } catch {
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) throw error
     errorResponse(response, 400, "Fleet intent body is not valid JSON")
     return
   }
@@ -319,7 +364,8 @@ async function handleOperationActivity(request, response, options) {
   let payload
   try {
     payload = JSON.parse((await requestBody(request)).toString("utf8"))
-  } catch {
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) throw error
     errorResponse(response, 400, "Operation activity body is not valid JSON")
     return
   }
@@ -360,6 +406,12 @@ export async function startSessionBroker(options) {
   const cloudflareFetch = options.cloudflareFetch ?? globalThis.fetch
   if (typeof cloudflareFetch !== "function") {
     throw new TypeError("The session broker requires a Cloudflare fetch transport")
+  }
+  const cloudflareRequestTimeoutMs = options.cloudflareRequestTimeoutMs
+    ?? DEFAULT_CLOUDFLARE_REQUEST_TIMEOUT_MS
+  if (!Number.isFinite(cloudflareRequestTimeoutMs)
+    || cloudflareRequestTimeoutMs <= 0) {
+    throw new TypeError("Cloudflare request timeout must be a positive number")
   }
   const shutdownGraceMs = options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS
   const livenessResponses = new Set()
@@ -469,6 +521,7 @@ export async function startSessionBroker(options) {
           options,
           cloudflareFetch,
           relative,
+          cloudflareRequestTimeoutMs,
         )
         return
       }
@@ -476,7 +529,7 @@ export async function startSessionBroker(options) {
     } catch (error) {
       errorResponse(
         response,
-        500,
+        error instanceof RequestBodyTooLargeError ? 413 : 500,
         error instanceof Error ? error.message : String(error),
       )
     }
@@ -507,27 +560,34 @@ export async function startSessionBroker(options) {
   }
 }
 
-async function atomicWrite(filePath, content) {
-  const temporaryPath = `${filePath}.${process.pid}.tmp`
-  await fs.writeFile(temporaryPath, content, {
-    encoding: "utf8",
-    mode: 0o600,
-  })
-  await fs.rename(temporaryPath, filePath)
-  await fs.chmod(filePath, 0o600)
+export async function readAndRemoveBrokerConfig(configPath) {
+  let serialized
+  try {
+    serialized = await fs.readFile(configPath, "utf8")
+  } finally {
+    await fs.rm(configPath, { force: true })
+  }
+  return JSON.parse(serialized)
+}
+
+export function validateBrokerConfig(config) {
+  if (!SERVICE_TARGET_PATTERN.test(config.serviceTarget || "")
+    || !config.serviceTarget.endsWith(`/${SERVICE_TARGET_PREFIX}${config.sessionId}`)) {
+    throw new Error("Session broker service target is invalid")
+  }
+  if (!runtimePathIsSafe(config.runtimeDir, config.runtimeBase, config.sessionId)) {
+    throw new Error(`Session broker runtime path is invalid: ${config.runtimeDir}`)
+  }
 }
 
 async function main(args) {
   const [configPath] = args
   if (!configPath) throw new Error("Usage: session-broker.mjs CONFIG_PATH")
-  const config = JSON.parse(await fs.readFile(configPath, "utf8"))
-  await fs.rm(configPath, { force: true })
+  const config = await readAndRemoveBrokerConfig(configPath)
   const apiToken = config.apiToken
   delete config.apiToken
   if (!apiToken) throw new Error("CLOUDFLARE_API_TOKEN is unavailable to the session broker")
-  if (!SERVICE_TARGET_PATTERN.test(config.serviceTarget || "")) {
-    throw new Error("Session broker service target is invalid")
-  }
+  validateBrokerConfig(config)
 
   let pageReadyWritten = false
   const broker = await startSessionBroker({
@@ -536,7 +596,7 @@ async function main(args) {
     onClientConnected: () => {
       if (pageReadyWritten) return
       pageReadyWritten = true
-      atomicWrite(
+      atomicWriteFile(
         path.join(config.runtimeDir, "page-ready.json"),
         `${JSON.stringify({ connected: true })}\n`,
       ).catch((error) => {
@@ -544,7 +604,7 @@ async function main(args) {
       })
     },
   })
-  await atomicWrite(
+  await atomicWriteFile(
     path.join(config.runtimeDir, "broker-ready.json"),
     `${JSON.stringify({
       origin: broker.origin,
@@ -553,7 +613,7 @@ async function main(args) {
     })}\n`,
   )
   await broker.closed
-  if (!runtimePathIsSafe(config.runtimeDir, config.runtimeBase)) {
+  if (!runtimePathIsSafe(config.runtimeDir, config.runtimeBase, config.sessionId)) {
     throw new Error(`Refusing to remove unexpected runtime path: ${config.runtimeDir}`)
   }
   await fs.rm(config.runtimeDir, {

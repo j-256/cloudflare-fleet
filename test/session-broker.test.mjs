@@ -28,7 +28,9 @@ import {
   OPERATION_ACTIVITY_STATUS,
 } from "../src/operation-history.mjs"
 import {
+  readAndRemoveBrokerConfig,
   startSessionBroker,
+  validateBrokerConfig,
 } from "../src/session-broker.mjs"
 import {
   makeInventory,
@@ -88,6 +90,50 @@ async function brokerFixture(options = {}) {
     stateFile,
   }
 }
+
+test("session broker removes its one-time config before parsing it", async (context) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "cloudflare-fleet-broker-config-test."),
+  )
+  context.after(() => fs.rm(root, { force: true, recursive: true }))
+  const validPath = path.join(root, "valid.json")
+  const invalidPath = path.join(root, "invalid.json")
+  await fs.writeFile(validPath, '{"apiToken":"secret"}\n', { mode: 0o600 })
+  await fs.writeFile(invalidPath, '{"apiToken":', { mode: 0o600 })
+
+  assert.deepEqual(
+    await readAndRemoveBrokerConfig(validPath),
+    { apiToken: "secret" },
+  )
+  await assert.rejects(readAndRemoveBrokerConfig(invalidPath), SyntaxError)
+  await assert.rejects(fs.stat(validPath), { code: "ENOENT" })
+  await assert.rejects(fs.stat(invalidPath), { code: "ENOENT" })
+})
+
+test("session broker binds runtime cleanup to its service session", () => {
+  const config = {
+    runtimeBase: "/tmp",
+    runtimeDir: "/tmp/cloudflare-fleet.abc123",
+    serviceTarget: "gui/501/com.j256.cloudflare-fleet.broker.abc123",
+    sessionId: "abc123",
+  }
+
+  assert.doesNotThrow(() => validateBrokerConfig(config))
+  assert.throws(
+    () => validateBrokerConfig({
+      ...config,
+      runtimeDir: "/tmp/cloudflare-fleet.other",
+    }),
+    /runtime path is invalid/,
+  )
+  assert.throws(
+    () => validateBrokerConfig({
+      ...config,
+      serviceTarget: "gui/501/com.j256.cloudflare-fleet.broker.other",
+    }),
+    /service target is invalid/,
+  )
+})
 
 async function closeFixture(fixture) {
   if (fixture.broker.server.listening) {
@@ -154,6 +200,140 @@ test("session broker serves assets and proxies authorized same-origin API calls"
       "Bearer cloudflare-token",
     )
   } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker rejects proxy targets outside the Cloudflare API boundary", async () => {
+  const fixture = await brokerFixture()
+  try {
+    const response = await fetch(
+      new URL(
+        "api/cloudflare/https://attacker.example/collect",
+        fixture.broker.sessionUrl,
+      ),
+      {
+        headers: {
+          [BROKER_SESSION_HEADER]: "session-secret",
+          Origin: fixture.broker.origin,
+        },
+      },
+    )
+
+    assert.equal(response.status, 400)
+    assert.match(
+      (await response.json()).errors[0].message,
+      /outside the API boundary/,
+    )
+    assert.equal(fixture.calls.length, 0)
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker rejects oversized request bodies explicitly", async () => {
+  const fixture = await brokerFixture()
+  try {
+    const response = await fetch(
+      new URL("api/intent", fixture.broker.sessionUrl),
+      {
+        body: "x".repeat((2 * 1024 * 1024) + 1),
+        headers: {
+          "Content-Type": "application/json",
+          [BROKER_SESSION_HEADER]: "session-secret",
+          Origin: fixture.broker.origin,
+        },
+        method: "PUT",
+      },
+    )
+    const envelope = await response.json()
+
+    assert.equal(response.status, 413)
+    assert.equal(envelope.errors[0].message, "Request body is too large")
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker times out stalled Cloudflare requests", async () => {
+  let upstreamSignal
+  const fixture = await brokerFixture({
+    cloudflareFetch: async (_url, request) => {
+      upstreamSignal = request.signal
+      await new Promise((resolve, reject) => {
+        request.signal.addEventListener("abort", () => {
+          reject(new Error("aborted"))
+        }, { once: true })
+      })
+    },
+    cloudflareRequestTimeoutMs: 20,
+  })
+  try {
+    const response = await fetch(
+      new URL("api/cloudflare/zones", fixture.broker.sessionUrl),
+      {
+        headers: {
+          [BROKER_SESSION_HEADER]: "session-secret",
+          Origin: fixture.broker.origin,
+        },
+      },
+    )
+
+    assert.equal(response.status, 504)
+    assert.match(
+      (await response.json()).errors[0].message,
+      /Cloudflare request timed out/,
+    )
+    assert.equal(upstreamSignal.aborted, true)
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
+test("session broker aborts Cloudflare work after the browser request closes", async () => {
+  let resolveAborted
+  let resolveStarted
+  const aborted = new Promise((resolve) => {
+    resolveAborted = resolve
+  })
+  const started = new Promise((resolve) => {
+    resolveStarted = resolve
+  })
+  const fixture = await brokerFixture({
+    cloudflareFetch: async (_url, request) => {
+      resolveStarted()
+      await new Promise((resolve, reject) => {
+        request.signal.addEventListener("abort", () => {
+          resolveAborted()
+          reject(new Error("aborted"))
+        }, { once: true })
+      })
+    },
+    cloudflareRequestTimeoutMs: 1000,
+  })
+  const controller = new AbortController()
+  try {
+    const request = fetch(
+      new URL("api/cloudflare/zones", fixture.broker.sessionUrl),
+      {
+        headers: {
+          [BROKER_SESSION_HEADER]: "session-secret",
+          Origin: fixture.broker.origin,
+        },
+        signal: controller.signal,
+      },
+    ).catch(() => null)
+    await started
+    controller.abort()
+    await Promise.race([
+      aborted,
+      new Promise((resolve, reject) => {
+        setTimeout(() => reject(new Error("Upstream request was not aborted")), 500)
+      }),
+    ])
+    await request
+  } finally {
+    controller.abort()
     await closeFixture(fixture)
   }
 })

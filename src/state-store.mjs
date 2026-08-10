@@ -1,11 +1,14 @@
 import { promises as fs } from "node:fs"
 import path from "node:path"
 
+import { atomicWriteFile } from "./atomic-file.mjs"
 import {
   createEmptyFleetStateDocument,
   isFleetStateDocument,
   migrateFleetStateDocument,
 } from "./fleet-state.mjs"
+
+export { atomicWriteFile } from "./atomic-file.mjs"
 
 const LOCK_ATTEMPTS = 80
 const LOCK_RETRY_MS = 25
@@ -55,16 +58,6 @@ async function acquireStateLock(lockPath) {
     }
   }
   throw new Error("Fleet state store is busy")
-}
-
-export async function atomicWriteFile(filePath, content) {
-  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
-  await fs.writeFile(temporaryPath, content, {
-    encoding: "utf8",
-    mode: 0o600,
-  })
-  await fs.rename(temporaryPath, filePath)
-  await fs.chmod(filePath, 0o600)
 }
 
 async function readExistingStateFile(stateFile, accountId) {

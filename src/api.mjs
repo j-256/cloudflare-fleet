@@ -7,6 +7,40 @@ import {
 
 export const BROKER_SESSION_HEADER = "X-Cloudflare-Fleet-Session"
 
+const API_BASE = new URL(API_BASE_URL)
+const SESSION_MONITOR_RETRY_MS = 1000
+
+export function resolveCloudflareApiUrl(path) {
+  const relativePath = String(path).replace(/^\/+/, "")
+  const url = new URL(relativePath, API_BASE)
+  if (url.origin !== API_BASE.origin
+    || !url.pathname.startsWith(API_BASE.pathname)) {
+    throw new TypeError("Cloudflare path is outside the API boundary")
+  }
+  return url
+}
+
+function apiRelativeUrl(url) {
+  return `${url.pathname.slice(API_BASE.pathname.length)}${url.search}`
+}
+
+function abortableDelay(delayMs, signal) {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    let timer
+    const finish = () => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", finish)
+      resolve()
+    }
+    timer = setTimeout(finish, delayMs)
+    signal.addEventListener("abort", finish, { once: true })
+  })
+}
+
 export class CloudflareApiError extends Error {
   constructor(message, options = {}) {
     super(message)
@@ -59,10 +93,9 @@ export class CloudflareApi {
 
   async request(path, options = {}) {
     const method = options.method || HTTP_METHOD.GET
-    const relativePath = String(path).replace(/^\/+/, "")
-    const cloudflareUrl = new URL(relativePath, API_BASE_URL)
+    const cloudflareUrl = resolveCloudflareApiUrl(path)
     const url = this.usesBroker
-      ? new URL(`cloudflare/${relativePath}`, this.brokerBaseUrl)
+      ? new URL(`cloudflare/${apiRelativeUrl(cloudflareUrl)}`, this.brokerBaseUrl)
       : cloudflareUrl
     const headers = {
       Accept: "application/json",
@@ -307,6 +340,10 @@ export class CloudflareApi {
   startSessionMonitor(handlers = {}) {
     if (!this.usesBroker) return () => {}
     const controller = new AbortController()
+    const retryMs = Number.isFinite(handlers.retryMs) && handlers.retryMs >= 0
+      ? handlers.retryMs
+      : SESSION_MONITOR_RETRY_MS
+    let activeReader = null
     let connected = null
     const updateConnection = (next) => {
       if (connected === next) return
@@ -315,35 +352,44 @@ export class CloudflareApi {
       else handlers.onDisconnected?.()
     }
     const monitor = async () => {
-      try {
-        const response = await this.fetchImpl(new URL("liveness", this.brokerBaseUrl), {
-          headers: {
-            Accept: "text/event-stream",
-            [BROKER_SESSION_HEADER]: this.brokerSecret,
-          },
-          signal: controller.signal,
-        })
-        if (!response.ok || !response.body) {
-          throw new Error(`Session liveness returned HTTP ${response.status}`)
+      while (!controller.signal.aborted) {
+        try {
+          const response = await this.fetchImpl(new URL("liveness", this.brokerBaseUrl), {
+            headers: {
+              Accept: "text/event-stream",
+              [BROKER_SESSION_HEADER]: this.brokerSecret,
+            },
+            signal: controller.signal,
+          })
+          if (!response.ok || !response.body) {
+            throw new Error(`Session liveness returned HTTP ${response.status}`)
+          }
+          updateConnection(true)
+          activeReader = response.body.getReader()
+          while (!controller.signal.aborted) {
+            const { done } = await activeReader.read()
+            if (done) break
+          }
+        } catch {
+          if (controller.signal.aborted) return
+        } finally {
+          activeReader = null
         }
-        updateConnection(true)
-        const reader = response.body.getReader()
-        while (!controller.signal.aborted) {
-          const { done } = await reader.read()
-          if (done) break
-        }
-      } catch {
         if (controller.signal.aborted) return
+        updateConnection(false)
+        await abortableDelay(retryMs, controller.signal)
       }
-      updateConnection(false)
     }
-    monitor()
-    return () => controller.abort()
+    void monitor()
+    return () => {
+      controller.abort()
+      if (activeReader) void activeReader.cancel().catch(() => {})
+    }
   }
 
   async list(path, options = {}) {
     const perPage = options.perPage || DEFAULT_PAGE_SIZE
-    const url = new URL(String(path).replace(/^\/+/, ""), API_BASE_URL)
+    const url = resolveCloudflareApiUrl(path)
     const combined = []
     let page = 1
     let totalPages = 1
@@ -351,7 +397,7 @@ export class CloudflareApi {
     do {
       url.searchParams.set("page", String(page))
       url.searchParams.set("per_page", String(perPage))
-      const response = await this.request(`${url.pathname.replace("/client/v4/", "")}${url.search}`, {
+      const response = await this.request(apiRelativeUrl(url), {
         signal: options.signal,
       })
 

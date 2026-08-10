@@ -124,6 +124,32 @@ test("broker transport keeps the Cloudflare token out of browser requests", asyn
   assert.equal(Object.hasOwn(captured.request.headers, "Authorization"), false)
 })
 
+test("request rejects paths outside the Cloudflare API boundary before sending auth", async () => {
+  let calls = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => {
+      calls += 1
+      throw new Error("Unexpected request")
+    },
+  })
+
+  for (const path of [
+    "https://attacker.example/collect",
+    "../user/tokens/verify",
+    "%2e%2e/user/tokens/verify",
+    "\\\\attacker.example/collect",
+  ]) {
+    await assert.rejects(
+      api.request(path),
+      /Cloudflare path is outside the API boundary/,
+    )
+  }
+
+  assert.equal(calls, 0)
+})
+
 test("broker monitor reports connection and terminal disconnection", async () => {
   let closeStream
   const stream = new ReadableStream({
@@ -167,6 +193,136 @@ test("broker monitor reports connection and terminal disconnection", async () =>
   await disconnectedPromise
   stop()
   assert.deepEqual(events, ["connected", "disconnected"])
+})
+
+test("broker monitor reconnects after a transient liveness disconnect", async () => {
+  let closeFirstStream
+  let fetchCount = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async () => {
+      fetchCount += 1
+      const attempt = fetchCount
+      const stream = new ReadableStream({
+        start(controller) {
+          if (attempt === 1) closeFirstStream = () => controller.close()
+        },
+      })
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+        },
+      })
+    },
+  })
+  const events = []
+  let firstConnected
+  let reconnected
+  const firstConnectedPromise = new Promise((resolve) => {
+    firstConnected = resolve
+  })
+  const reconnectedPromise = new Promise((resolve) => {
+    reconnected = resolve
+  })
+
+  const stop = api.startSessionMonitor({
+    onConnected() {
+      events.push("connected")
+      if (events.length === 1) firstConnected()
+      else reconnected()
+    },
+    onDisconnected() {
+      events.push("disconnected")
+    },
+    retryMs: 0,
+  })
+
+  await firstConnectedPromise
+  closeFirstStream()
+  await reconnectedPromise
+  stop()
+  assert.equal(fetchCount, 2)
+  assert.deepEqual(events, ["connected", "disconnected", "connected"])
+})
+
+test("broker monitor cancels its active stream without reporting a failure", async () => {
+  let cancelStream
+  let fetchCount = 0
+  const cancelled = new Promise((resolve) => {
+    cancelStream = resolve
+  })
+  const stream = new ReadableStream({
+    cancel() {
+      cancelStream()
+    },
+  })
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async () => {
+      fetchCount += 1
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+        },
+      })
+    },
+  })
+  const events = []
+  let connected
+  const connectedPromise = new Promise((resolve) => {
+    connected = resolve
+  })
+
+  const stop = api.startSessionMonitor({
+    onConnected() {
+      events.push("connected")
+      connected()
+    },
+    onDisconnected() {
+      events.push("disconnected")
+    },
+  })
+
+  await connectedPromise
+  stop()
+  await cancelled
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fetchCount, 1)
+  assert.deepEqual(events, ["connected"])
+})
+
+test("broker monitor stops cleanly from its initial retry boundary", async () => {
+  let fetchCount = 0
+  let stop
+  let disconnected
+  const disconnectedPromise = new Promise((resolve) => {
+    disconnected = resolve
+  })
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    brokerBaseUrl: "http://127.0.0.1:43123/session/test/api/",
+    brokerSecret: "session-secret",
+    fetchImpl: async () => {
+      fetchCount += 1
+      throw new Error("offline")
+    },
+  })
+
+  stop = api.startSessionMonitor({
+    onDisconnected() {
+      stop()
+      disconnected()
+    },
+    retryMs: 1000,
+  })
+
+  await disconnectedPromise
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fetchCount, 1)
 })
 
 test("broker transport loads and persists fleet intent", async () => {
