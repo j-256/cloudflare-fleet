@@ -5,7 +5,9 @@ import {
   DEFAULT_VIEW_STATE,
   decodeViewState,
   encodeViewState,
+  VIEW_PANEL,
 } from "../src/url-state.mjs"
+import { INTENT_WORKFLOW_SCREEN } from "../src/intent-workflow.mjs"
 import {
   MATRIX_INTENT_FILTER,
   MATRIX_SCOPE,
@@ -48,6 +50,7 @@ test("round-trips representative states", () => {
     { ...DEFAULT_VIEW_STATE, query: "email dmarc", category: "DNS records" },
     { ...DEFAULT_VIEW_STATE, selectedZoneIds: ["zone-a", "zone-b"], selectedColumnsOnly: true },
     { ...DEFAULT_VIEW_STATE, scope: "zone-specific", sort: "category", recordType: "TXT", intentStatus: MATRIX_INTENT_FILTER.DRIFT, differencesOnly: false, changeableOnly: true, targetHolesOnly: true },
+    { ...DEFAULT_VIEW_STATE, panel: VIEW_PANEL.INTENT, intentScreen: INTENT_WORKFLOW_SCREEN.POLICY },
   ]
   for (const state of states) {
     assert.deepEqual(decodeViewState(encodeViewState(state)), state)
@@ -95,6 +98,11 @@ test("an unrecognized enum filter or sort falls back to the default", () => {
     decodeViewState("intent=bogus").intentStatus,
     DEFAULT_VIEW_STATE.intentStatus,
   )
+  assert.equal(decodeViewState("panel=bogus").panel, VIEW_PANEL.NONE)
+  assert.equal(
+    decodeViewState("panel=intent&screen=bogus").intentScreen,
+    INTENT_WORKFLOW_SCREEN.MANAGER,
+  )
 })
 
 test("every valid scope, intent filter, and sort value round-trips through decode", () => {
@@ -111,4 +119,33 @@ test("every valid scope, intent filter, and sort value round-trips through decod
 
 test("free-form string filters pass through verbatim", () => {
   assert.equal(decodeViewState("category=NoSuchCat").category, "NoSuchCat")
+})
+
+test("intent workflow routes use a canonical manager default", () => {
+  assert.equal(
+    encodeViewState({
+      ...DEFAULT_VIEW_STATE,
+      panel: VIEW_PANEL.INTENT,
+    }),
+    "panel=intent",
+  )
+  assert.equal(
+    encodeViewState({
+      ...DEFAULT_VIEW_STATE,
+      panel: VIEW_PANEL.INTENT,
+      intentScreen: INTENT_WORKFLOW_SCREEN.ADOPTION,
+    }),
+    "panel=intent&screen=adoption",
+  )
+  assert.equal(
+    decodeViewState("screen=policy").intentScreen,
+    INTENT_WORKFLOW_SCREEN.MANAGER,
+  )
+  assert.equal(
+    encodeViewState({
+      ...DEFAULT_VIEW_STATE,
+      intentScreen: INTENT_WORKFLOW_SCREEN.POLICY,
+    }),
+    "",
+  )
 })

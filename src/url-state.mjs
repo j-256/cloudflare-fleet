@@ -6,6 +6,12 @@ import {
   MATRIX_SCOPE,
   MATRIX_SORT,
 } from "./matrix-filter.mjs"
+import { INTENT_WORKFLOW_SCREEN } from "./intent-workflow.mjs"
+
+export const VIEW_PANEL = Object.freeze({
+  INTENT: "intent",
+  NONE: "",
+})
 
 export const DEFAULT_VIEW_STATE = Object.freeze({
   query: DEFAULT_MATRIX_FILTERS.query,
@@ -21,6 +27,8 @@ export const DEFAULT_VIEW_STATE = Object.freeze({
   differencesOnly: DEFAULT_MATRIX_FILTERS.differencesOnly,
   selectedZoneIds: Object.freeze([]),
   selectedColumnsOnly: false,
+  panel: VIEW_PANEL.NONE,
+  intentScreen: INTENT_WORKFLOW_SCREEN.MANAGER,
 })
 
 const TRUE = "1"
@@ -43,6 +51,8 @@ const FIELDS = [
   { key: "review", field: "differencesOnly", kind: "bool-on" },
   { key: "zones", field: "selectedZoneIds", kind: "list" },
   { key: "cols", field: "selectedColumnsOnly", kind: "bool-off" },
+  { key: "panel", field: "panel", kind: "string", allowed: new Set(Object.values(VIEW_PANEL)) },
+  { key: "screen", field: "intentScreen", kind: "string", allowed: new Set(Object.values(INTENT_WORKFLOW_SCREEN)) },
 ]
 
 function freshDefault() {
@@ -52,7 +62,9 @@ function freshDefault() {
 export function encodeViewState(view) {
   const params = new URLSearchParams()
   for (const { key, field, kind } of FIELDS) {
-    const value = view[field]
+    const value = field === "intentScreen" && view.panel !== VIEW_PANEL.INTENT
+      ? INTENT_WORKFLOW_SCREEN.MANAGER
+      : view[field]
     if (kind === "string") {
       const text = String(value ?? "")
       if (text !== DEFAULT_VIEW_STATE[field]) params.set(key, text)
@@ -83,6 +95,9 @@ export function decodeViewState(search) {
     } else if (kind === "list") {
       view[field] = raw.split(",").map((id) => id.trim()).filter(Boolean)
     }
+  }
+  if (view.panel !== VIEW_PANEL.INTENT) {
+    view.intentScreen = INTENT_WORKFLOW_SCREEN.MANAGER
   }
   return view
 }

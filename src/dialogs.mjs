@@ -69,8 +69,9 @@ export function installDismissibleDialog(dialog) {
   })
 }
 
-export function installDismissibleDialogs(root) {
+export function installDismissibleDialogs(root, options = {}) {
   for (const dialog of root.querySelectorAll("dialog")) {
+    if (options.exclude && dialog.matches(options.exclude)) continue
     installDismissibleDialog(dialog)
   }
 }

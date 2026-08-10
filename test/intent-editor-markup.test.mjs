@@ -126,7 +126,7 @@ test("intent manager keeps navigation and exit controls outside its scrolling se
   assert.match(styles, /\.intent-dialog \{[\s\S]+overflow: hidden;/)
   assert.match(
     styles,
-    /\.intent-workspace \{[\s\S]+grid-template-rows: auto auto auto minmax\(0, 1fr\) auto;/,
+    /\.intent-workspace \{[\s\S]+grid-template-rows: auto auto auto auto minmax\(0, 1fr\) auto;/,
   )
   assert.match(
     styles,
@@ -136,6 +136,37 @@ test("intent manager keeps navigation and exit controls outside its scrolling se
     styles,
     /@media \(max-height: 640px\), \(max-width: 359px\), \(max-width: 420px\) and \(max-height: 760px\) \{[\s\S]+\.intent-manager-nav \{[\s\S]+grid-template-columns: repeat\(4, max-content\);/,
   )
+})
+
+test("intent editors behave as one routed workspace", () => {
+  for (const screen of [
+    "manager",
+    "adoption",
+    "coverage",
+    "group",
+    "policy",
+    "acknowledgement",
+    "delete",
+  ]) {
+    assert.match(html, new RegExp(`data-intent-workflow-screen="${screen}"`))
+  }
+  assert.match(html, /data-intent-workflow-back/)
+  assert.match(html, /data-intent-workflow-path/)
+  assert.match(html, /data-intent-workflow-close/)
+  assert.match(styles, /\.intent-workflow-dialog \{[\s\S]+height: min\(860px, calc\(100dvh - 34px\)\);/)
+  assert.match(styles, /\.intent-workflow-dialog \.dialog-close \{[\s\S]+z-index: 5;/)
+  assert.match(appSource, /presentIntentWorkflowScreen\(/)
+  assert.match(appSource, /suspendIntentWorkflowEntry\(active\)/)
+  assert.match(appSource, /installDismissibleDialogs\(document, \{ exclude: INTENT_WORKFLOW_DIALOG_SELECTOR \}\)/)
+  assert.match(appSource, /window\.addEventListener\("popstate"/)
+  assert.match(appSource, /syncUrlState\(\{ history: INTENT_WORKFLOW_HISTORY_MODE\.PUSH \}\)/)
+})
+
+test("saved intent without an observed row explains why matrix navigation is unavailable", () => {
+  assert.match(appSource, /available \? "Show in matrix" : "Not in matrix"/)
+  assert.match(appSource, /disabled: !available/)
+  assert.match(appSource, /absent from every loaded zone/)
+  assert.match(appSource, /intentPolicyMatrixButton\(policy, row, actionContext\)/)
 })
 
 test("facet intent actions stay in the focused policy editor", () => {

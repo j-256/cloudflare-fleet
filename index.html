@@ -593,9 +593,13 @@
     </form>
   </dialog>
 
-  <dialog class="intent-dialog" id="intent-dialog" aria-labelledby="intent-title" aria-describedby="intent-summary">
+  <dialog class="intent-dialog intent-workflow-dialog" id="intent-dialog" data-intent-workflow-screen="manager" aria-labelledby="intent-title" aria-describedby="intent-summary">
     <div class="intent-workspace">
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close fleet intent">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent</span>
+      </nav>
+      <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close fleet intent">&times;</button>
       <header class="intent-heading">
         <div>
           <p class="dialog-kicker">Desired state</p>
@@ -682,14 +686,18 @@
         <div class="intent-list" id="intent-acknowledgement-list"></div>
       </section>
       <div class="dialog-actions">
-        <button class="button button-primary" type="button" data-dialog-close>Done</button>
+        <button class="button button-primary" type="button" data-intent-workflow-close>Done</button>
       </div>
     </div>
   </dialog>
 
-  <dialog class="intent-adoption-dialog" id="intent-adoption-dialog" aria-labelledby="intent-adoption-title" aria-describedby="intent-adoption-summary intent-adoption-impact-summary">
+  <dialog class="intent-adoption-dialog intent-workflow-dialog" id="intent-adoption-dialog" data-intent-workflow-screen="adoption" aria-labelledby="intent-adoption-title" aria-describedby="intent-adoption-summary intent-adoption-impact-summary">
     <div class="intent-adoption-workspace">
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close guided intent adoption">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent / Review ungoverned drift</span>
+      </nav>
+      <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close guided intent adoption">&times;</button>
       <header class="intent-adoption-heading">
         <div>
           <p class="dialog-kicker">Guided intent adoption</p>
@@ -729,16 +737,20 @@
         <div class="intent-adoption-impact-metrics" id="intent-adoption-impact-metrics" aria-label="Selected intent effect"></div>
         <p class="field-error" id="intent-adoption-error" role="alert" aria-live="assertive" hidden></p>
         <div class="dialog-actions intent-adoption-actions">
-          <button class="button button-quiet" type="button" data-dialog-close>Cancel</button>
+          <button class="button button-quiet" type="button" data-intent-workflow-back-or-close>Cancel</button>
           <button class="button button-primary" id="intent-adoption-save" type="button" data-intent-write disabled>Save selected intents</button>
         </div>
       </section>
     </div>
   </dialog>
 
-  <dialog id="coverage-intent-dialog" aria-labelledby="coverage-intent-title" aria-describedby="coverage-intent-target coverage-intent-preview">
+  <dialog class="intent-workflow-dialog" id="coverage-intent-dialog" data-intent-workflow-screen="coverage" aria-labelledby="coverage-intent-title" aria-describedby="coverage-intent-target coverage-intent-preview">
+    <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close expected coverage editor">&times;</button>
     <form method="dialog" id="coverage-intent-form" novalidate>
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close expected coverage editor">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent / Expected coverage</span>
+      </nav>
       <p class="dialog-kicker">Inventory coverage intent</p>
       <h2 id="coverage-intent-title">Mark expected</h2>
       <p id="coverage-intent-target"></p>
@@ -749,15 +761,19 @@
       <div class="dialog-actions coverage-intent-actions">
         <button class="button button-danger" id="coverage-intent-remove" value="remove" hidden>Remove expectation</button>
         <span class="dialog-action-spacer"></span>
-        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-quiet" type="button" data-intent-workflow-back-or-close>Cancel</button>
         <button class="button button-primary" id="coverage-intent-save" value="save" data-intent-write>Mark expected</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="intent-group-dialog" aria-labelledby="intent-group-title" aria-describedby="intent-group-help">
+  <dialog class="intent-workflow-dialog" id="intent-group-dialog" data-intent-workflow-screen="group" aria-labelledby="intent-group-title" aria-describedby="intent-group-help">
+    <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close saved scope editor">&times;</button>
     <form method="dialog" id="intent-group-form" novalidate>
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close saved scope editor">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent / Saved scope</span>
+      </nav>
       <p class="dialog-kicker">Fleet intent coverage</p>
       <h2 id="intent-group-title">New saved scope</h2>
       <p id="intent-group-help">Choose exactly where policies using this saved scope apply. Membership is stored by zone identifier, with the current domain retained for review.</p>
@@ -785,15 +801,19 @@
       </section>
       <p class="field-error" id="intent-group-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
-        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-quiet" type="button" data-intent-workflow-back-or-close>Cancel</button>
         <button class="button button-primary" id="intent-group-save" value="save" data-intent-write>Save scope</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="intent-policy-dialog" aria-labelledby="intent-policy-title" aria-describedby="intent-policy-target">
+  <dialog class="intent-workflow-dialog" id="intent-policy-dialog" data-intent-workflow-screen="policy" aria-labelledby="intent-policy-title" aria-describedby="intent-policy-target">
+    <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close facet policy editor">&times;</button>
     <form method="dialog" id="intent-policy-form" novalidate>
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close facet policy editor">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent / Facet policy</span>
+      </nav>
       <p class="dialog-kicker">Fleet intent policy</p>
       <h2 id="intent-policy-title">Set facet intent</h2>
       <p id="intent-policy-target"></p>
@@ -923,15 +943,19 @@
       </section>
       <p class="field-error" id="intent-policy-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
-        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-quiet" type="button" data-intent-workflow-back-or-close>Cancel</button>
         <button class="button button-primary" id="intent-policy-save" value="save" data-intent-write>Save intent</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="intent-acknowledgement-dialog" aria-labelledby="intent-acknowledgement-title" aria-describedby="intent-acknowledgement-target">
+  <dialog class="intent-workflow-dialog" id="intent-acknowledgement-dialog" data-intent-workflow-screen="acknowledgement" aria-labelledby="intent-acknowledgement-title" aria-describedby="intent-acknowledgement-target">
+    <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close acknowledgement editor">&times;</button>
     <form method="dialog" id="intent-acknowledgement-form" novalidate>
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close acknowledgement editor">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent / Acknowledge exact state</span>
+      </nav>
       <p class="dialog-kicker">Intentional difference</p>
       <h2 id="intent-acknowledgement-title">Acknowledge exact state</h2>
       <p id="intent-acknowledgement-target"></p>
@@ -941,20 +965,24 @@
       <textarea id="intent-acknowledgement-reason" aria-errormessage="intent-acknowledgement-error" required></textarea>
       <p class="field-error" id="intent-acknowledgement-error" role="alert" aria-live="assertive" hidden></p>
       <div class="dialog-actions">
-        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-quiet" type="button" data-intent-workflow-back-or-close>Cancel</button>
         <button class="button button-primary" id="intent-acknowledgement-save" value="save" data-intent-write>Acknowledge state</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="intent-delete-dialog" aria-labelledby="intent-delete-title" aria-describedby="intent-delete-summary">
+  <dialog class="intent-workflow-dialog" id="intent-delete-dialog" data-intent-workflow-screen="delete" aria-labelledby="intent-delete-title" aria-describedby="intent-delete-summary">
+    <button class="dialog-close" type="button" data-intent-workflow-close aria-label="Close removal confirmation">&times;</button>
     <form method="dialog" id="intent-delete-form">
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close removal confirmation">&times;</button>
+      <nav class="intent-workflow-navigation" aria-label="Fleet intent path">
+        <button class="button button-quiet" type="button" data-intent-workflow-back hidden>Back</button>
+        <span data-intent-workflow-path>Fleet intent / Confirm removal</span>
+      </nav>
       <p class="dialog-kicker">Fleet intent</p>
       <h2 id="intent-delete-title">Remove intent item</h2>
       <p id="intent-delete-summary"></p>
       <div class="dialog-actions">
-        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-quiet" type="button" data-intent-workflow-back-or-close>Cancel</button>
         <button class="button button-danger" id="intent-delete-apply" value="remove" data-intent-write>Remove</button>
       </div>
     </form>

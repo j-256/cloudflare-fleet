@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   DIALOG_DISMISS_VALUE,
   installDismissibleDialog,
+  installDismissibleDialogs,
   showDialog,
 } from "../src/dialogs.mjs"
 
@@ -159,6 +160,20 @@ test("showDialog restores focus after the browser finishes closing a dialog", ()
   assert.equal(typeof scheduledRestore, "function")
   scheduledRestore()
   assert.equal(openerFocusCount, 1)
+})
+
+test("bulk dialog installation can exclude routed workflow dialogs", () => {
+  const regular = new FakeDialog()
+  regular.matches = () => false
+  const workflow = new FakeDialog()
+  workflow.matches = (selector) => selector === "[data-workflow]"
+
+  installDismissibleDialogs({
+    querySelectorAll: () => [regular, workflow],
+  }, { exclude: "[data-workflow]" })
+
+  assert.equal(regular.handlers.has("click"), true)
+  assert.equal(workflow.handlers.has("click"), false)
 })
 
 test("dialogs dismiss from their close control and backdrop", () => {

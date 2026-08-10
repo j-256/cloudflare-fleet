@@ -169,7 +169,16 @@ import {
   matrixVisibleCountText,
   sortMatrixRows,
 } from "./matrix-filter.mjs"
-import { decodeViewState, encodeViewState } from "./url-state.mjs"
+import {
+  createIntentWorkflowNavigation,
+  INTENT_WORKFLOW_SCREEN,
+  intentWorkflowPath,
+} from "./intent-workflow.mjs"
+import {
+  decodeViewState,
+  encodeViewState,
+  VIEW_PANEL,
+} from "./url-state.mjs"
 import {
   buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
@@ -336,6 +345,12 @@ const INTENT_MANAGER_SECTION = Object.freeze({
   COVERAGE: "coverage",
   GROUPS: "groups",
   POLICIES: "policies",
+})
+const INTENT_WORKFLOW_DIALOG_SELECTOR = "[data-intent-workflow-screen]"
+const INTENT_WORKFLOW_HISTORY_STATE_KEY = "cloudflareFleetIntentWorkspace"
+const INTENT_WORKFLOW_HISTORY_MODE = Object.freeze({
+  PUSH: "push",
+  RESTORE: "restore",
 })
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
@@ -507,6 +522,8 @@ const state = {
   valueComparisonRowKey: null,
   wafPolicies: null,
 }
+const intentWorkflow = createIntentWorkflowNavigation()
+const suspendedIntentWorkflowDialogs = new WeakSet()
 const editActionByCell = new WeakMap()
 const fillActionByCell = new WeakMap()
 const bulkFillRowByButton = new WeakMap()
@@ -3441,7 +3458,7 @@ function focusMatrixAction(action) {
 
 function intentManagerReturnFocus() {
   if (!elements.intentDialog.open) return null
-  return elements.intentDialog.querySelector("[data-dialog-close]")
+  return elements.intentDialog.querySelector("[data-intent-workflow-close]")
 }
 
 function matrixIntentReturnFocus(row, selector, zoneId = "") {
@@ -3996,9 +4013,16 @@ function currentMatrixFilters() {
 
 let pendingUrlView = null
 let urlStateReady = false
+let applyingUrlState = false
+let intentWorkflowOwnsHistoryEntry = false
+let intentWorkflowRootFocus = null
 
 function captureViewState() {
   const filters = currentMatrixFilters()
+  const intentVisible = intentWorkflow.isVisible()
+  const activeIntentScreen = intentVisible
+    ? intentWorkflow.active()?.screen || INTENT_WORKFLOW_SCREEN.MANAGER
+    : INTENT_WORKFLOW_SCREEN.MANAGER
   return {
     query: filters.query,
     category: filters.category,
@@ -4013,14 +4037,331 @@ function captureViewState() {
     differencesOnly: filters.differencesOnly,
     selectedZoneIds: [...state.selectedZoneIds],
     selectedColumnsOnly: state.selectedColumnsOnly,
+    panel: intentVisible ? VIEW_PANEL.INTENT : VIEW_PANEL.NONE,
+    intentScreen: activeIntentScreen,
   }
 }
 
-function syncUrlState() {
-  if (!urlStateReady) return
+function syncUrlState(options = {}) {
+  if (!urlStateReady || applyingUrlState) return
   const query = encodeViewState(captureViewState())
   const url = query ? `${window.location.pathname}?${query}` : window.location.pathname
-  window.history.replaceState(null, "", url)
+  if (`${window.location.pathname}${window.location.search}` === url) return
+  const method = options.history === INTENT_WORKFLOW_HISTORY_MODE.PUSH
+    ? "pushState"
+    : "replaceState"
+  const historyState = method === "pushState"
+    ? {
+        ...(window.history.state && typeof window.history.state === "object"
+          ? window.history.state
+          : {}),
+        [INTENT_WORKFLOW_HISTORY_STATE_KEY]: true,
+      }
+    : window.history.state
+  window.history[method](historyState, "", url)
+}
+
+function clearIntentWorkflowDraft(screen) {
+  if (screen === INTENT_WORKFLOW_SCREEN.ACKNOWLEDGEMENT) {
+    state.intentAcknowledgementDraft = null
+  } else if (screen === INTENT_WORKFLOW_SCREEN.ADOPTION) {
+    state.intentAdoptionDraft = null
+  } else if (screen === INTENT_WORKFLOW_SCREEN.COVERAGE) {
+    state.coverageIntentDraft = null
+  } else if (screen === INTENT_WORKFLOW_SCREEN.DELETE) {
+    state.intentDeleteDraft = null
+  } else if (screen === INTENT_WORKFLOW_SCREEN.GROUP) {
+    state.intentGroupDraft = null
+  } else if (screen === INTENT_WORKFLOW_SCREEN.POLICY) {
+    state.intentPolicyDraft = null
+  }
+}
+
+function intentWorkflowEntryIsDirty(entry) {
+  if (!entry) return false
+  if (entry.screen === INTENT_WORKFLOW_SCREEN.POLICY) {
+    return Boolean(state.intentPolicyDraft?.formDirty)
+  }
+  if (entry.screen === INTENT_WORKFLOW_SCREEN.GROUP) {
+    return Boolean(state.intentGroupDraft?.dirty)
+  }
+  if (entry.screen === INTENT_WORKFLOW_SCREEN.ADOPTION) {
+    return [...(state.intentAdoptionDraft?.selections?.values() || [])].some(
+      (selection) => selection.selected || selection.constraintsDirty,
+    )
+  }
+  if (entry.screen === INTENT_WORKFLOW_SCREEN.ACKNOWLEDGEMENT) {
+    const initialReason = state.intentAcknowledgementDraft?.existing?.reason || ""
+    return Boolean(state.intentAcknowledgementDraft)
+      && elements.intentAcknowledgementReason.value !== initialReason
+  }
+  if (entry.screen === INTENT_WORKFLOW_SCREEN.COVERAGE) {
+    const initialReason = state.coverageIntentDraft?.expectation?.reason || ""
+    return Boolean(state.coverageIntentDraft)
+      && elements.coverageIntentReason.value !== initialReason
+  }
+  return false
+}
+
+function confirmIntentWorkflowDiscard(entries) {
+  const dirtyEntries = entries.filter(intentWorkflowEntryIsDirty)
+  if (dirtyEntries.length === 0) return true
+  const path = intentWorkflowPath(dirtyEntries)
+  return window.confirm(`Discard unsaved changes in ${path}?`)
+}
+
+function updateIntentWorkflowChrome() {
+  const entries = intentWorkflow.entries()
+  const active = intentWorkflow.active()
+  const path = intentWorkflowPath(entries)
+  const canGoBack = entries.length > 1
+  for (const dialog of document.querySelectorAll(INTENT_WORKFLOW_DIALOG_SELECTOR)) {
+    const back = dialog.querySelector("[data-intent-workflow-back]")
+    const backOrClose = dialog.querySelector("[data-intent-workflow-back-or-close]")
+    const pathElement = dialog.querySelector("[data-intent-workflow-path]")
+    if (back) back.hidden = !canGoBack || dialog !== active?.dialog
+    if (backOrClose) backOrClose.textContent = canGoBack ? "Back" : "Cancel"
+    if (pathElement) pathElement.textContent = path
+  }
+}
+
+function showIntentWorkflowEntry(entry) {
+  if (!entry) return
+  if (entry.screen === INTENT_WORKFLOW_SCREEN.MANAGER) renderIntentManager()
+  updateIntentWorkflowChrome()
+  const resumeFocus = entry.resumeFocus?.isConnected ? entry.resumeFocus : null
+  entry.resumeFocus = null
+  showDialog(entry.dialog, {
+    ...entry.dialogOptions,
+    initialFocus: resumeFocus || entry.dialogOptions.initialFocus,
+  })
+}
+
+function suspendIntentWorkflowEntry(entry) {
+  if (!entry?.dialog.open) return
+  if (entry.dialog.contains(document.activeElement)) {
+    entry.resumeFocus = document.activeElement
+  }
+  suspendedIntentWorkflowDialogs.add(entry.dialog)
+  entry.dialog.close()
+}
+
+function discardIntentWorkflowEntries(entries) {
+  for (const entry of entries) {
+    if (entry.dialog.open) {
+      suspendedIntentWorkflowDialogs.add(entry.dialog)
+      entry.dialog.close()
+    }
+    clearIntentWorkflowDraft(entry.screen)
+  }
+}
+
+function restoreIntentWorkflowRootFocus() {
+  const focusTarget = intentWorkflowRootFocus
+  intentWorkflowRootFocus = null
+  if (!focusTarget?.isConnected || focusTarget.disabled) return
+  requestAnimationFrame(() => focusTarget.focus({ preventScroll: true }))
+}
+
+function presentIntentWorkflowScreen(
+  screen,
+  dialog,
+  dialogOptions = {},
+  navigationOptions = {},
+) {
+  const entry = {
+    dialog,
+    dialogOptions,
+    resumeFocus: null,
+    screen,
+  }
+  const active = intentWorkflow.active()
+  if (intentWorkflow.isVisible() && active) {
+    suspendIntentWorkflowEntry(active)
+    intentWorkflow.push(entry)
+    showIntentWorkflowEntry(entry)
+    syncUrlState()
+    return
+  }
+  if (intentWorkflow.depth() > 0
+    && screen === INTENT_WORKFLOW_SCREEN.MANAGER) {
+    intentWorkflowRootFocus = document.activeElement
+    intentWorkflow.restore()
+    intentWorkflowOwnsHistoryEntry = true
+    showIntentWorkflowEntry(intentWorkflow.active())
+    syncUrlState({ history: INTENT_WORKFLOW_HISTORY_MODE.PUSH })
+    return
+  }
+  if (intentWorkflow.depth() > 0) {
+    discardIntentWorkflowEntries(intentWorkflow.clear())
+  }
+  intentWorkflowRootFocus = document.activeElement
+  intentWorkflow.begin(entry)
+  const restoringHistory = navigationOptions.history
+    === INTENT_WORKFLOW_HISTORY_MODE.RESTORE
+  intentWorkflowOwnsHistoryEntry = restoringHistory
+    ? Boolean(window.history.state?.[INTENT_WORKFLOW_HISTORY_STATE_KEY])
+    : true
+  showIntentWorkflowEntry(entry)
+  if (!restoringHistory) {
+    syncUrlState({ history: INTENT_WORKFLOW_HISTORY_MODE.PUSH })
+  }
+}
+
+function backIntentWorkflow() {
+  const active = intentWorkflow.active()
+  if (!active) return
+  if (intentWorkflow.depth() <= 1) {
+    closeIntentWorkflow()
+    return
+  }
+  if (!confirmIntentWorkflowDiscard([active])) return
+  const popped = intentWorkflow.pop()
+  if (!popped) return
+  if (popped.removed.dialog.open) popped.removed.dialog.close()
+  clearIntentWorkflowDraft(popped.removed.screen)
+  showIntentWorkflowEntry(popped.active)
+  syncUrlState()
+}
+
+function discardIntentWorkflow(options = {}) {
+  discardIntentWorkflowEntries(intentWorkflow.clear())
+  intentWorkflowOwnsHistoryEntry = false
+  if (options.restoreFocus !== false) restoreIntentWorkflowRootFocus()
+  else intentWorkflowRootFocus = null
+}
+
+function exitIntentWorkflowToMatrix() {
+  discardIntentWorkflow({ restoreFocus: false })
+  syncUrlState()
+}
+
+function closeIntentWorkflow(options = {}) {
+  const entries = intentWorkflow.entries()
+  if (entries.length === 0) return
+  if (!options.skipConfirmation && !confirmIntentWorkflowDiscard(entries)) return
+  const ownsHistoryEntry = intentWorkflowOwnsHistoryEntry
+  discardIntentWorkflow()
+  if (ownsHistoryEntry) {
+    window.history.back()
+  } else {
+    syncUrlState()
+  }
+}
+
+function completeIntentWorkflowScreen(dialog) {
+  const active = intentWorkflow.active()
+  if (!active || active.dialog !== dialog) {
+    if (dialog.open) dialog.close()
+    return
+  }
+  if (intentWorkflow.depth() <= 1) {
+    closeIntentWorkflow({ skipConfirmation: true })
+    return
+  }
+  const popped = intentWorkflow.pop()
+  if (popped.removed.dialog.open) popped.removed.dialog.close()
+  clearIntentWorkflowDraft(popped.removed.screen)
+  showIntentWorkflowEntry(popped.active)
+  syncUrlState()
+}
+
+function hideIntentWorkflowForHistory() {
+  const active = intentWorkflow.active()
+  if (!intentWorkflow.isVisible() || !active) return
+  suspendIntentWorkflowEntry(active)
+  intentWorkflow.hide()
+  restoreIntentWorkflowRootFocus()
+}
+
+function restoreIntentWorkflowFromView(view) {
+  if (view.panel !== VIEW_PANEL.INTENT) {
+    hideIntentWorkflowForHistory()
+    return false
+  }
+  const active = intentWorkflow.active()
+  if (!intentWorkflow.isVisible()
+    && active
+    && active.screen === view.intentScreen) {
+    intentWorkflowRootFocus = document.activeElement
+    intentWorkflow.restore()
+    showIntentWorkflowEntry(active)
+    return false
+  }
+  if (intentWorkflow.isVisible() && active?.screen === view.intentScreen) {
+    return false
+  }
+  if (intentWorkflow.depth() > 0) {
+    discardIntentWorkflowEntries(intentWorkflow.clear())
+  }
+  openIntentManager({
+    workflowHistory: INTENT_WORKFLOW_HISTORY_MODE.RESTORE,
+  })
+  return view.intentScreen !== INTENT_WORKFLOW_SCREEN.MANAGER
+}
+
+function applyUrlViewState(view) {
+  if (!state.inventory) {
+    pendingUrlView = view
+    return
+  }
+  const liveZoneIds = new Set(state.inventory.zones.map((zone) => zone.meta.id))
+  let canonicalizeIntentRoute = false
+  applyingUrlState = true
+  try {
+    state.selectedZoneIds = new Set(
+      view.selectedZoneIds.filter((zoneId) => liveZoneIds.has(zoneId)),
+    )
+    state.selectedColumnsOnly = view.selectedColumnsOnly
+    applyViewFilters(view)
+    filterRows()
+    syncSelectionControls()
+    canonicalizeIntentRoute = restoreIntentWorkflowFromView(view)
+  } finally {
+    applyingUrlState = false
+  }
+  if (canonicalizeIntentRoute) syncUrlState()
+}
+
+function temporarilySuspendIntentWorkflow() {
+  const active = intentWorkflow.active()
+  if (!intentWorkflow.isVisible() || !active) return false
+  suspendIntentWorkflowEntry(active)
+  return true
+}
+
+function resumeTemporarilySuspendedIntentWorkflow() {
+  const active = intentWorkflow.active()
+  if (!intentWorkflow.isVisible() || !active || active.dialog.open) return
+  showIntentWorkflowEntry(active)
+}
+
+function installIntentWorkflowDialogs() {
+  for (const dialog of document.querySelectorAll(INTENT_WORKFLOW_DIALOG_SELECTOR)) {
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog
+        || event.target.closest?.("[data-intent-workflow-close]")) {
+        closeIntentWorkflow()
+        return
+      }
+      if (event.target.closest?.("[data-intent-workflow-back]")) {
+        backIntentWorkflow()
+        return
+      }
+      if (event.target.closest?.("[data-intent-workflow-back-or-close]")) {
+        if (intentWorkflow.depth() > 1) backIntentWorkflow()
+        else closeIntentWorkflow()
+      }
+    })
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault()
+      closeIntentWorkflow()
+    })
+    dialog.addEventListener("close", () => {
+      if (suspendedIntentWorkflowDialogs.delete(dialog)) return
+      clearIntentWorkflowDraft(dialog.dataset.intentWorkflowScreen)
+    })
+  }
 }
 
 function syncResponsiveFilterPanel() {
@@ -4541,10 +4882,14 @@ function openCoverageIntentEditor(issue, expectation = null) {
     ? changed ? "Update expectation" : "Save expectation"
     : "Mark expected"
   clearFieldError(elements.coverageIntentReason, elements.coverageIntentError)
-  showDialog(elements.coverageIntentDialog, {
-    fallbackFocus: coverageIntentReturnFocus,
-    initialFocus: elements.coverageIntentReason,
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.COVERAGE,
+    elements.coverageIntentDialog,
+    {
+      fallbackFocus: coverageIntentReturnFocus,
+      initialFocus: elements.coverageIntentReason,
+    },
+  )
   elements.coverageIntentReason.select()
 }
 
@@ -4556,8 +4901,8 @@ async function saveCoverageIntent(event) {
   if (event.submitter?.value === "remove") {
     const expectation = draft.expectation
     if (!expectation) return
-    elements.coverageIntentDialog.close()
     requestIntentRemoval({
+      completeParentOnSuccess: elements.coverageIntentDialog,
       fallbackFocus: coverageIntentReturnFocus,
       remove: (document) => removeFleetIntentCoverageExpectation(
         document,
@@ -4616,7 +4961,7 @@ async function saveCoverageIntent(event) {
     `Expected coverage saved for ${coverageTargetLabel(expectation)}`,
     { saveButton: event.submitter },
   )
-  if (saved) elements.coverageIntentDialog.close()
+  if (saved) completeIntentWorkflowScreen(elements.coverageIntentDialog)
 }
 
 async function syncFleetIntent(options = {}) {
@@ -5455,13 +5800,17 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
   renderIntentPolicyGroupOptions(selectedGroupId, policies)
   elements.intentPolicyZonePicker.open = true
   loadIntentPolicyGroupContext(selectedGroupId, options)
-  showDialog(elements.intentPolicyDialog, {
-    fallbackFocus: () => matrixIntentReturnFocus(
-      row,
-      ".intent-set-policy",
-    ),
-    initialFocus: elements.intentPolicyZoneSearch,
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.POLICY,
+    elements.intentPolicyDialog,
+    {
+      fallbackFocus: () => matrixIntentReturnFocus(
+        row,
+        ".intent-set-policy",
+      ),
+      initialFocus: elements.intentPolicyZoneSearch,
+    },
+  )
 }
 
 async function saveIntentPolicy(event) {
@@ -5519,7 +5868,7 @@ async function saveIntentPolicy(event) {
     `${draft.row.label} intent saved for ${group.name}`,
     { saveButton: event.submitter },
   )
-  if (saved) elements.intentPolicyDialog.close()
+  if (saved) completeIntentWorkflowScreen(elements.intentPolicyDialog)
 }
 
 function createIntentZoneSelectionOptions(group) {
@@ -5871,6 +6220,7 @@ function openIntentGroupEditor(group = null, options = {}) {
   state.intentGroupDraft = {
     adoptionCandidateId: options.adoptionCandidateId || null,
     baseRevision: state.intent.revision,
+    dirty: false,
     group,
     returnToAdoption: Boolean(options.returnToAdoption),
   }
@@ -5884,9 +6234,11 @@ function openIntentGroupEditor(group = null, options = {}) {
   const initialFocus = elements.intentGroupMembers.querySelector("input:checked")
     || elements.intentGroupMembers.querySelector("input")
     || elements.intentGroupName
-  showDialog(elements.intentGroupDialog, {
-    initialFocus,
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.GROUP,
+    elements.intentGroupDialog,
+    { initialFocus },
+  )
 }
 
 async function saveIntentGroup(event) {
@@ -5942,7 +6294,7 @@ async function saveIntentGroup(event) {
         groupDraft.adoptionCandidateId,
       )?.groupSelect || null
     }
-    if (elements.intentGroupDialog.open) elements.intentGroupDialog.close()
+    completeIntentWorkflowScreen(elements.intentGroupDialog)
     if (adoptionGroupSelect) {
       requestAnimationFrame(() => adoptionGroupSelect.focus({ preventScroll: true }))
     }
@@ -5995,14 +6347,18 @@ function openIntentAcknowledgement(action) {
   elements.intentAcknowledgementReason.value = existing?.reason || ""
   elements.intentAcknowledgementError.hidden = true
   elements.intentAcknowledgementError.textContent = ""
-  showDialog(elements.intentAcknowledgementDialog, {
-    fallbackFocus: () => matrixIntentReturnFocus(
-      action.row,
-      ".remove-acknowledgement, .acknowledge-intent",
-      action.zone.meta.id,
-    ),
-    initialFocus: elements.intentAcknowledgementReason,
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.ACKNOWLEDGEMENT,
+    elements.intentAcknowledgementDialog,
+    {
+      fallbackFocus: () => matrixIntentReturnFocus(
+        action.row,
+        ".remove-acknowledgement, .acknowledge-intent",
+        action.zone.meta.id,
+      ),
+      initialFocus: elements.intentAcknowledgementReason,
+    },
+  )
 }
 
 async function saveIntentAcknowledgement(event) {
@@ -6053,7 +6409,7 @@ async function saveIntentAcknowledgement(event) {
     `${draft.row.label} acknowledged on ${draft.zone.meta.name}`,
     { saveButton: event.submitter },
   )
-  if (saved) elements.intentAcknowledgementDialog.close()
+  if (saved) completeIntentWorkflowScreen(elements.intentAcknowledgementDialog)
 }
 
 function requestIntentRemoval(options) {
@@ -6064,10 +6420,16 @@ function requestIntentRemoval(options) {
   }
   elements.intentDeleteTitle.textContent = options.title
   elements.intentDeleteSummary.textContent = options.summary
-  showDialog(elements.intentDeleteDialog, {
-    fallbackFocus: options.fallbackFocus || intentManagerReturnFocus,
-    initialFocus: elements.intentDeleteDialog.querySelector("[data-dialog-close]"),
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.DELETE,
+    elements.intentDeleteDialog,
+    {
+      fallbackFocus: options.fallbackFocus || intentManagerReturnFocus,
+      initialFocus: elements.intentDeleteDialog.querySelector(
+        "[data-intent-workflow-back-or-close]",
+      ),
+    },
+  )
 }
 
 async function applyIntentRemoval(event) {
@@ -6076,7 +6438,7 @@ async function applyIntentRemoval(event) {
   const draft = state.intentDeleteDraft
   if (!draft) return
   if (draft.baseRevision !== state.intent.revision) {
-    elements.intentDeleteDialog.close()
+    completeIntentWorkflowScreen(elements.intentDeleteDialog)
     toast("Fleet intent changed while this confirmation was open. Review the latest state and try again.", "error")
     return
   }
@@ -6084,7 +6446,7 @@ async function applyIntentRemoval(event) {
   try {
     document = draft.remove(state.intent)
   } catch (error) {
-    elements.intentDeleteDialog.close()
+    completeIntentWorkflowScreen(elements.intentDeleteDialog)
     toast(error instanceof Error ? error.message : String(error), "error")
     return
   }
@@ -6093,7 +6455,11 @@ async function applyIntentRemoval(event) {
     draft.successMessage,
     { saveButton: event.submitter },
   )
-  if (saved) elements.intentDeleteDialog.close()
+  if (!saved) return
+  completeIntentWorkflowScreen(elements.intentDeleteDialog)
+  if (draft.completeParentOnSuccess) {
+    completeIntentWorkflowScreen(draft.completeParentOnSuccess)
+  }
 }
 
 function showIntentPolicyInMatrix(policy) {
@@ -6102,7 +6468,7 @@ function showIntentPolicyInMatrix(policy) {
     toast("This intent facet is not present in the loaded matrix", "error")
     return
   }
-  elements.intentDialog.close()
+  exitIntentWorkflowToMatrix()
   elements.search.value = ""
   elements.category.value = row.category
   elements.phase.value = row.phase || ""
@@ -6145,7 +6511,7 @@ function intentActionButton(label, action, options = {}) {
     text: label,
   })
   button.type = "button"
-  button.disabled = Boolean(options.write && !intentWritable())
+  button.disabled = Boolean(options.disabled || (options.write && !intentWritable()))
   if (options.write) button.dataset.intentWrite = ""
   if (options.context) {
     button.setAttribute("aria-label", contextualActionLabel(label, options.context))
@@ -6153,6 +6519,21 @@ function intentActionButton(label, action, options = {}) {
   if (options.title) button.title = options.title
   button.addEventListener("click", action)
   return button
+}
+
+function intentPolicyMatrixButton(policy, row, context) {
+  const available = Boolean(row)
+  return intentActionButton(
+    available ? "Show in matrix" : "Not in matrix",
+    () => showIntentPolicyInMatrix(policy),
+    {
+      context,
+      disabled: !available,
+      title: available
+        ? "Close fleet intent and focus this facet in the matrix"
+        : "This saved facet is absent from every loaded zone, so the matrix has no observed row to show",
+    },
+  )
 }
 
 function renderIntentGroups() {
@@ -6617,11 +6998,7 @@ function renderIntentPolicies() {
     )
     item.append(matchingDetails)
     const actions = intentItemActions()
-    actions.append(
-      intentActionButton("Show", () => showIntentPolicyInMatrix(policy), {
-        context: actionContext,
-      }),
-    )
+    actions.append(intentPolicyMatrixButton(policy, row, actionContext))
     if (correction?.available) {
       const correctionCount = correction.targets.length
       actions.append(intentActionButton(
@@ -6693,7 +7070,7 @@ function showCoverageExpectation(expectationState) {
     : COVERAGE_SECTION.EXPECTED
   state.coverageExpanded[section] = true
   syncCoverageVisibility()
-  elements.intentDialog.close()
+  exitIntentWorkflowToMatrix()
   const toggle = section === COVERAGE_SECTION.UNEXPECTED
     ? elements.coverageUnexpectedToggle
     : elements.coverageExpectedToggle
@@ -6810,9 +7187,11 @@ function renderIntentAcknowledgements() {
     )
     const actions = intentItemActions()
     if (policy) {
-      actions.append(intentActionButton("Show", () => showIntentPolicyInMatrix(policy), {
-        context: actionContext,
-      }))
+      actions.append(intentPolicyMatrixButton(
+        policy,
+        intentPolicyRow(policy),
+        actionContext,
+      ))
     }
     actions.append(intentActionButton("Remove", () => requestIntentRemoval({
       remove: (document) => removeFleetIntentAcknowledgement(document, acknowledgement.id),
@@ -7381,9 +7760,11 @@ function openIntentAdoption() {
   )
   elements.intentAdoptionCategory.firstElementChild.value = ""
   renderIntentAdoptionCandidates()
-  showDialog(elements.intentAdoptionDialog, {
-    initialFocus: elements.intentAdoptionSearch,
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.ADOPTION,
+    elements.intentAdoptionDialog,
+    { initialFocus: elements.intentAdoptionSearch },
+  )
 }
 
 function selectClearIntentAdoptionCandidates() {
@@ -7427,9 +7808,7 @@ async function saveIntentAdoption() {
     `${policyCount} fleet intent polic${policyCount === 1 ? "y" : "ies"} saved`,
     { saveButton: elements.intentAdoptionSave },
   )
-  if (saved && elements.intentAdoptionDialog.open) {
-    elements.intentAdoptionDialog.close()
-  }
+  if (saved) completeIntentWorkflowScreen(elements.intentAdoptionDialog)
 }
 
 function renderIntentManager() {
@@ -7518,13 +7897,18 @@ function openIntentManager(options = {}) {
   const section = options.section || state.intentManagerSection
   setIntentManagerSection(section)
   filterIntentPolicies()
-  showDialog(elements.intentDialog, {
-    initialFocus: section === INTENT_MANAGER_SECTION.POLICIES
-      ? elements.intentPolicySearch
-      : elements.intentManagerSectionButtons.find(
-        (button) => button.dataset.intentManagerSection === section,
-      ),
-  })
+  presentIntentWorkflowScreen(
+    INTENT_WORKFLOW_SCREEN.MANAGER,
+    elements.intentDialog,
+    {
+      initialFocus: section === INTENT_MANAGER_SECTION.POLICIES
+        ? elements.intentPolicySearch
+        : elements.intentManagerSectionButtons.find(
+          (button) => button.dataset.intentManagerSection === section,
+        ),
+    },
+    { history: options.workflowHistory },
+  )
   syncFleetIntent({ silent: true })
 }
 
@@ -8569,8 +8953,10 @@ function updateSelectionStyles() {
 }
 
 function syncSelectionControls() {
-  for (const checkbox of document.querySelectorAll("input[data-zone-id]")) {
-    checkbox.checked = state.selectedZoneIds.has(checkbox.dataset.zoneId)
+  for (const container of [elements.matrixHead, elements.targetOptions]) {
+    for (const checkbox of container.querySelectorAll("input[data-zone-id]")) {
+      checkbox.checked = state.selectedZoneIds.has(checkbox.dataset.zoneId)
+    }
   }
   updateSelectionStyles()
 }
@@ -9543,7 +9929,7 @@ async function reviewDnssecIntentCorrection(correction, title = "Align DNSSEC wi
     correction.targets.map((target) => [target.zoneId, target.desiredStatus]),
   )
   const zoneIds = correction.targets.map((target) => target.zoneId)
-  const intentWasOpen = elements.intentDialog.open
+  let intentWasSuspended = false
   try {
     const liveData = await runWritePreflight(
       "DNSSEC intent",
@@ -9563,8 +9949,8 @@ async function reviewDnssecIntentCorrection(correction, title = "Align DNSSEC wi
       }
       return buildDnssecStatusPlan(zone, desiredStatus)
     })
-    if (intentWasOpen) elements.intentDialog.close()
-    const applied = await applyPlans(
+    intentWasSuspended = temporarilySuspendIntentWorkflow()
+    return await applyPlans(
       title,
       createLivePlanSet(plans),
       {
@@ -9572,11 +9958,11 @@ async function reviewDnssecIntentCorrection(correction, title = "Align DNSSEC wi
         successMessage: "DNSSEC correction requests succeeded and live state was re-read",
       },
     )
-    if (intentWasOpen) openIntentManager()
-    return applied
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error), "error")
     return false
+  } finally {
+    if (intentWasSuspended) resumeTemporarilySuspendedIntentWorkflow()
   }
 }
 
@@ -11694,6 +12080,7 @@ async function reviewEditorChange(event) {
 }
 
 function renderInventory(inventory, source) {
+  const requestedView = pendingUrlView
   const observedMatrix = buildMatrix(inventory)
   const evaluation = evaluateFleetIntent(
     state.intent,
@@ -11727,11 +12114,11 @@ function renderInventory(inventory, source) {
   state.intentEvaluation = evaluation
 
   const liveZoneIds = new Set(inventory.zones.map((zone) => zone.meta.id))
-  if (pendingUrlView) {
+  if (requestedView) {
     state.selectedZoneIds = new Set(
-      pendingUrlView.selectedZoneIds.filter((zoneId) => liveZoneIds.has(zoneId)),
+      requestedView.selectedZoneIds.filter((zoneId) => liveZoneIds.has(zoneId)),
     )
-    state.selectedColumnsOnly = pendingUrlView.selectedColumnsOnly
+    state.selectedColumnsOnly = requestedView.selectedColumnsOnly
   } else {
     state.selectedZoneIds = new Set(
       [...state.selectedZoneIds].filter((zoneId) => liveZoneIds.has(zoneId)),
@@ -11745,17 +12132,17 @@ function renderInventory(inventory, source) {
     renderMatrixFilters()
     renderMatrix()
   }
-  if (pendingUrlView) {
-    applyViewFilters(pendingUrlView)
-    pendingUrlView = null
-    filterRows()
-  }
   renderCoverage()
   if (elements.intentDialog.open) renderIntentManager()
   if (elements.rulesetComparisonDialog.open) renderRulesetComparison()
   if (elements.valueComparisonDialog.open) renderValueComparison()
   if (elements.facetEquivalenceDialog.open) renderFacetEquivalenceDialog()
-  updateSelectionStyles()
+  if (requestedView) {
+    pendingUrlView = null
+    applyUrlViewState(requestedView)
+  } else {
+    updateSelectionStyles()
+  }
   return matrixChanged
 }
 
@@ -11880,7 +12267,8 @@ api.startSessionMonitor({
   },
 })
 
-installDismissibleDialogs(document)
+installDismissibleDialogs(document, { exclude: INTENT_WORKFLOW_DIALOG_SELECTOR })
+installIntentWorkflowDialogs()
 elements.refresh.addEventListener("click", () => refreshInventory({ preserveSelection: true }))
 elements.search.addEventListener("input", filterRows)
 elements.category.addEventListener("change", () => {
@@ -12253,9 +12641,6 @@ elements.intentAdoptionSelectClear.addEventListener(
 )
 elements.intentAdoptionClear.addEventListener("click", clearIntentAdoptionSelection)
 elements.intentAdoptionSave.addEventListener("click", saveIntentAdoption)
-elements.intentAdoptionDialog.addEventListener("close", () => {
-  state.intentAdoptionDraft = null
-})
 elements.coverageIntentReason.addEventListener("input", () => {
   clearFieldError(
     elements.coverageIntentReason,
@@ -12263,11 +12648,11 @@ elements.coverageIntentReason.addEventListener("input", () => {
   )
 })
 elements.coverageIntentForm.addEventListener("submit", saveCoverageIntent)
-elements.coverageIntentDialog.addEventListener("close", () => {
-  state.coverageIntentDraft = null
-})
 elements.intentAddGroup.addEventListener("click", () => openIntentGroupEditor())
-elements.intentGroupMembers.addEventListener("change", updateIntentGroupSelectionSummary)
+elements.intentGroupMembers.addEventListener("change", () => {
+  if (state.intentGroupDraft) state.intentGroupDraft.dirty = true
+  updateIntentGroupSelectionSummary()
+})
 elements.intentGroupSearch.addEventListener("input", filterIntentGroupMembers)
 elements.intentGroupSelectedOnly.addEventListener("click", () => {
   const selectedOnly = elements.intentGroupSelectedOnly.getAttribute("aria-pressed")
@@ -12276,29 +12661,33 @@ elements.intentGroupSelectedOnly.addEventListener("click", () => {
   filterIntentGroupMembers()
 })
 elements.intentGroupSelectAll.addEventListener("click", () => {
+  let changed = false
   for (const checkbox of elements.intentGroupMembers.querySelectorAll(
     ".target-option:not([hidden]) input",
   )) {
+    if (!checkbox.checked) changed = true
     checkbox.checked = true
   }
+  if (changed && state.intentGroupDraft) state.intentGroupDraft.dirty = true
   updateIntentGroupSelectionSummary()
 })
 elements.intentGroupClear.addEventListener("click", () => {
+  let changed = false
   for (const checkbox of elements.intentGroupMembers.querySelectorAll(
     ".target-option:not([hidden]) input",
   )) {
+    if (checkbox.checked) changed = true
     checkbox.checked = false
   }
+  if (changed && state.intentGroupDraft) state.intentGroupDraft.dirty = true
   updateIntentGroupSelectionSummary()
 })
 elements.intentGroupName.addEventListener("input", () => {
+  if (state.intentGroupDraft) state.intentGroupDraft.dirty = true
   clearFieldError(elements.intentGroupName, elements.intentGroupError)
   renderIntentGroupImpact()
 })
 elements.intentGroupForm.addEventListener("submit", saveIntentGroup)
-elements.intentGroupDialog.addEventListener("close", () => {
-  state.intentGroupDraft = null
-})
 elements.intentPolicyZoneMembers.addEventListener("change", updateIntentPolicyZoneSelection)
 elements.intentPolicyZoneSearch.addEventListener("input", filterIntentPolicyZoneMembers)
 elements.intentPolicyZoneSelectedOnly.addEventListener("click", () => {
@@ -12360,9 +12749,6 @@ elements.intentPolicyCustomFields.addEventListener("change", changeIntentPolicyC
 elements.intentPolicyCustomFields.addEventListener("change", renameIntentPolicyCustomObjectKey)
 elements.intentPolicyCustomFields.addEventListener("click", handleIntentPolicyCustomAction)
 elements.intentPolicyForm.addEventListener("submit", saveIntentPolicy)
-elements.intentPolicyDialog.addEventListener("close", () => {
-  state.intentPolicyDraft = null
-})
 elements.intentAcknowledgementReason.addEventListener("input", () => {
   clearFieldError(
     elements.intentAcknowledgementReason,
@@ -12373,14 +12759,11 @@ elements.intentAcknowledgementForm.addEventListener(
   "submit",
   saveIntentAcknowledgement,
 )
-elements.intentAcknowledgementDialog.addEventListener("close", () => {
-  state.intentAcknowledgementDraft = null
-})
 elements.intentDeleteForm.addEventListener("submit", applyIntentRemoval)
-elements.intentDeleteDialog.addEventListener("close", () => {
-  state.intentDeleteDraft = null
-})
 elements.emailPolicyExceptions.addEventListener("click", openPolicyExceptionDialog)
+window.addEventListener("popstate", () => {
+  applyUrlViewState(decodeViewState(window.location.search))
+})
 window.addEventListener("focus", () => {
   syncFleetIntent({ silent: true })
   if (elements.activityDialog.open) loadOperationActivity({ silent: true })

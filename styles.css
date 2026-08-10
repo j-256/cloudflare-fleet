@@ -2802,13 +2802,26 @@ dialog form {
 .intent-dialog {
   --intent-policy-card-min-width: 400px;
   --intent-value-preview-max-height: 240px;
-  width: min(1040px, calc(100vw - 24px));
+  width: min(1120px, calc(100vw - 24px));
   overflow: hidden;
 }
 
 #intent-policy-dialog {
   --intent-value-preview-max-height: 240px;
-  width: min(980px, calc(100vw - 24px));
+  width: min(1120px, calc(100vw - 24px));
+}
+
+.intent-workflow-dialog {
+  width: min(1120px, calc(100vw - 24px));
+  height: min(860px, calc(100dvh - 34px));
+  max-height: calc(100dvh - 34px);
+  overflow: hidden;
+}
+
+.intent-workflow-dialog > form {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
 }
 
 .activity-dialog {
@@ -3098,7 +3111,7 @@ dialog form {
 .intent-workspace {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 14px;
   height: min(860px, calc(100dvh - 34px));
   max-height: calc(100dvh - 34px);
@@ -3115,18 +3128,59 @@ dialog form {
 }
 
 .intent-adoption-dialog {
-  width: min(1180px, calc(100vw - 24px));
+  width: min(1120px, calc(100vw - 24px));
   overflow: hidden;
 }
 
 .intent-adoption-workspace {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(180px, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(180px, 1fr) auto;
   gap: 12px;
   height: min(860px, calc(100dvh - 34px));
   max-height: calc(100dvh - 34px);
   padding: 20px;
+}
+
+.intent-workflow-navigation {
+  z-index: 4;
+  display: flex;
+  gap: 10px;
+  min-height: 34px;
+  align-items: center;
+  padding-right: 48px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  background: #111923;
+  font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.intent-workflow-dialog .dialog-close {
+  z-index: 5;
+}
+
+.intent-workflow-dialog > form > .intent-workflow-navigation {
+  position: sticky;
+  top: -24px;
+  margin: -24px -24px 18px;
+  padding: 14px 56px 10px 24px;
+}
+
+.intent-workspace > .intent-workflow-navigation,
+.intent-adoption-workspace > .intent-workflow-navigation {
+  margin-top: -4px;
+  padding-bottom: 8px;
+}
+
+.intent-workflow-navigation .button {
+  flex: 0 0 auto;
+}
+
+.intent-workflow-navigation [data-intent-workflow-path] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .intent-adoption-heading {
