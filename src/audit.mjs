@@ -8,6 +8,7 @@ import { CloudflareApi } from "./api.mjs"
 import { collectDeepAuditFindings } from "./audit-deep.mjs"
 import {
   buildFleetAudit,
+  FLEET_AUDIT_SEVERITY,
   renderFleetAuditMarkdown,
 } from "./audit-report.mjs"
 import { isMainModule } from "./entrypoint.mjs"
@@ -18,6 +19,17 @@ const AUDIT_FORMAT = Object.freeze({
   JSON: "json",
   MARKDOWN: "markdown",
 })
+export const FLEET_AUDIT_EXIT_CODE = Object.freeze({
+  ERROR: 1,
+  FINDINGS: 2,
+  SUCCESS: 0,
+})
+const FLEET_AUDIT_SEVERITY_ORDER = Object.freeze([
+  FLEET_AUDIT_SEVERITY.CRITICAL,
+  FLEET_AUDIT_SEVERITY.WARNING,
+  FLEET_AUDIT_SEVERITY.REVIEW,
+  FLEET_AUDIT_SEVERITY.INFO,
+])
 const DEFAULT_STATE_FILE = fileURLToPath(new URL("../state.json", import.meta.url))
 
 export function fleetAuditUsage() {
@@ -26,10 +38,11 @@ export function fleetAuditUsage() {
     "  cloudflare-fleet-audit - inspect live Cloudflare fleet configuration without writing",
     "",
     "SYNOPSIS",
-    "  node src/audit.mjs [--deep] [--format markdown|json] [--state-file PATH]",
+    "  node src/audit.mjs [--deep] [--format markdown|json] [--fail-on LEVEL] [--state-file PATH]",
     "",
     "OPTIONS",
     "  --deep             Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
+    "  --fail-on LEVEL    Exit 2 for findings at or above critical, warning, review, or info",
     "  --format FORMAT    Render markdown or JSON (default: markdown)",
     "  --state-file PATH  Read fleet intent and coverage expectations from PATH",
     "  -h, --help         Show this help text",
@@ -44,6 +57,7 @@ export function fleetAuditUsage() {
 export function parseFleetAuditArguments(argv) {
   const options = {
     deep: false,
+    failOn: null,
     format: AUDIT_FORMAT.MARKDOWN,
     help: false,
     stateFile: null,
@@ -58,14 +72,19 @@ export function parseFleetAuditArguments(argv) {
       options.deep = true
       continue
     }
-    if (argument === "--format" || argument === "--state-file") {
+    if (["--fail-on", "--format", "--state-file"].includes(argument)) {
       const value = argv[index + 1]
       if (!value || value.startsWith("--")) {
         throw new Error(`${argument} requires a value`)
       }
       index += 1
-      if (argument === "--format") options.format = value
+      if (argument === "--fail-on") options.failOn = value
+      else if (argument === "--format") options.format = value
       else options.stateFile = value
+      continue
+    }
+    if (argument.startsWith("--fail-on=")) {
+      options.failOn = argument.slice("--fail-on=".length)
       continue
     }
     if (argument.startsWith("--format=")) {
@@ -81,7 +100,27 @@ export function parseFleetAuditArguments(argv) {
   if (!Object.values(AUDIT_FORMAT).includes(options.format)) {
     throw new Error(`Unsupported audit format: ${options.format}`)
   }
+  if (options.failOn !== null
+    && !FLEET_AUDIT_SEVERITY_ORDER.includes(options.failOn)) {
+    throw new Error(`Unsupported audit fail threshold: ${options.failOn}`)
+  }
   return options
+}
+
+export function fleetAuditExitCode(report, failOn) {
+  if (!failOn) return FLEET_AUDIT_EXIT_CODE.SUCCESS
+  const threshold = FLEET_AUDIT_SEVERITY_ORDER.indexOf(failOn)
+  if (threshold < 0) throw new TypeError(`Unsupported audit fail threshold: ${failOn}`)
+  const thresholdMet = (report?.findings || []).some((entry) => {
+    const severity = FLEET_AUDIT_SEVERITY_ORDER.indexOf(entry.severity)
+    if (severity < 0) {
+      throw new TypeError(`Unsupported audit finding severity: ${entry.severity}`)
+    }
+    return severity <= threshold
+  })
+  return thresholdMet
+    ? FLEET_AUDIT_EXIT_CODE.FINDINGS
+    : FLEET_AUDIT_EXIT_CODE.SUCCESS
 }
 
 function progressReporter(stderr) {
@@ -145,12 +184,21 @@ export async function runFleetAuditCommand(options = {}) {
     ? `${JSON.stringify(report, null, 2)}\n`
     : renderFleetAuditMarkdown(report))
   stderr.write(`[audit] Complete: ${report.summary.findings} findings across ${report.summary.zones} zones\n`)
+  const exitCode = fleetAuditExitCode(report, parsed.failOn)
+  if (parsed.failOn) {
+    stderr.write(`[audit] Fail threshold ${parsed.failOn}: ${exitCode === FLEET_AUDIT_EXIT_CODE.FINDINGS ? "met" : "clear"} (exit ${exitCode})\n`)
+  }
+  options.onExitCode?.(exitCode)
   return report
 }
 
 if (isMainModule(import.meta.url)) {
-  runFleetAuditCommand().catch((error) => {
+  runFleetAuditCommand({
+    onExitCode(exitCode) {
+      process.exitCode = exitCode
+    },
+  }).catch((error) => {
     process.stderr.write(`[audit] ${error instanceof Error ? error.message : String(error)}\n`)
-    process.exitCode = 1
+    process.exitCode = FLEET_AUDIT_EXIT_CODE.ERROR
   })
 }
