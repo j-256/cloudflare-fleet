@@ -422,13 +422,13 @@ h1 {
 }
 
 .toolbar {
-  position: sticky;
-  z-index: 30;
-  top: 0;
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  width: calc(100% + var(--page-gutter) + var(--page-gutter));
+  margin-left: calc(0px - var(--page-gutter));
   padding: 8px var(--page-gutter);
   border-bottom: 1px solid var(--line);
   background: rgba(10, 17, 24, 0.93);
@@ -2729,6 +2729,7 @@ body.matrix-focus footer {
 body.matrix-focus .toolbar {
   position: relative;
   top: auto;
+  width: 100%;
   margin: 0;
 }
 
