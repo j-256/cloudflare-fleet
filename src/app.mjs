@@ -160,6 +160,7 @@ import {
   matrixEmptyMessage,
   matrixFilterChangeCount,
   matrixRowMatchesFilters,
+  matrixVisibleCountText,
   sortMatrixRows,
 } from "./matrix-filter.mjs"
 import { decodeViewState, encodeViewState } from "./url-state.mjs"
@@ -339,6 +340,15 @@ const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 const RULESET_RULE_PREVIEW_LIMIT = 220
 const TOAST_SUCCESS_TIMEOUT_MS = 7000
 const INTENT_SYNC_INTERVAL_MS = 5000
+const SESSION_RECONNECT_ESCALATION_MS = 10000
+const SESSION_RECONNECT_DETAIL = "The loaded matrix remains available while the dashboard reconnects automatically; live reads and writes are locked"
+const SESSION_RECONNECT_EMPTY_DETAIL = "No fleet inventory is loaded. The dashboard is reconnecting automatically; live reads and writes are locked"
+const SESSION_RECONNECT_WRITE_STATUS = "Reconnecting to the session broker; writes remain locked"
+const SESSION_RECONNECT_LOCK_REASON = "Session broker offline; waiting to reconnect before live writes"
+const SESSION_RELAUNCH_DETAIL = "The loaded matrix remains available, but automatic reconnection has not succeeded. Relaunch the dashboard to restore live reads and writes"
+const SESSION_RELAUNCH_EMPTY_DETAIL = "No fleet inventory is available because automatic reconnection did not succeed. Relaunch the dashboard to load live state"
+const SESSION_RELAUNCH_WRITE_STATUS = "Session broker still offline; relaunch the dashboard to restore live changes"
+const SESSION_RELAUNCH_LOCK_REASON = "Session broker still offline; relaunch the dashboard to restore live writes"
 const ACTIVITY_FILTER = Object.freeze({
   ALL: "all",
   FAILED: "failed",
@@ -485,6 +495,8 @@ const state = {
   startupCacheLoadedAt: null,
   toastTimer: null,
   transportAvailable: true,
+  transportReconnectEscalated: false,
+  transportReconnectTimer: null,
   valueComparisonRowKey: null,
   wafPolicies: null,
 }
@@ -499,6 +511,7 @@ const intentPolicyRowByButton = new WeakMap()
 const rulesetComparisonRowByButton = new WeakMap()
 const valueComparisonRowByButton = new WeakMap()
 const activityEntryByButton = new WeakMap()
+let matrixRowElements = []
 
 const elements = {
   activityCount: document.querySelector("#activity-count"),
@@ -725,9 +738,10 @@ const elements = {
   refresh: document.querySelector("#refresh"),
   refreshDetail: document.querySelector("#refresh-detail"),
   redirectType: document.querySelector("#redirect-type"),
-  reviewNeedsAttention: document.querySelector("#review-needs-attention"),
+  reviewIntentDrift: document.querySelector("#review-intent-drift"),
   reviewIntentCount: document.querySelector("#review-intent-count"),
   reviewIntentLabel: document.querySelector("#review-intent-label"),
+  reviewUngovernedDifferences: document.querySelector("#review-ungoverned-differences"),
   reviewUngovernedCount: document.querySelector("#review-ungoverned-count"),
   renameCurrent: document.querySelector("#rename-current"),
   renameDialog: document.querySelector("#rename-dialog"),
@@ -847,6 +861,13 @@ function setRefreshDetail(message = "", mode = "") {
 
 function updateTransportDependentControls() {
   elements.refresh.disabled = state.busy || !state.transportAvailable
+  elements.refresh.title = !state.transportAvailable
+    ? state.transportReconnectEscalated
+      ? "Session broker still offline; relaunch the dashboard to restore refresh"
+      : "Session broker offline; refresh returns after reconnection"
+    : state.busy
+      ? "Another fleet operation is in progress"
+      : "Run a complete live fleet audit"
   updateActionButtons()
   updateRulesetActionAvailability()
   renderIntentSaveStatus()
@@ -884,11 +905,52 @@ function setWriteReadiness(message, mode = "") {
   elements.writeReadiness.classList.toggle("cached", mode === "cached")
 }
 
+function sessionOfflineLockReason() {
+  return state.transportReconnectEscalated
+    ? SESSION_RELAUNCH_LOCK_REASON
+    : SESSION_RECONNECT_LOCK_REASON
+}
+
+function sessionOfflineDetail() {
+  if (state.transportReconnectEscalated) {
+    return state.inventory
+      ? SESSION_RELAUNCH_DETAIL
+      : SESSION_RELAUNCH_EMPTY_DETAIL
+  }
+  return state.inventory
+    ? SESSION_RECONNECT_DETAIL
+    : SESSION_RECONNECT_EMPTY_DETAIL
+}
+
+function clearSessionReconnectEscalation() {
+  clearTimeout(state.transportReconnectTimer)
+  state.transportReconnectTimer = null
+  state.transportReconnectEscalated = false
+}
+
+function beginSessionReconnectEscalation() {
+  clearSessionReconnectEscalation()
+  state.transportReconnectTimer = setTimeout(() => {
+    state.transportReconnectTimer = null
+    if (state.transportAvailable) return
+    state.transportReconnectEscalated = true
+    restoreInventoryStatus()
+    updateTransportDependentControls()
+  }, SESSION_RECONNECT_ESCALATION_MS)
+}
+
 function restoreInventoryStatus() {
   if (!state.transportAvailable) {
     setStatus("Session broker offline", "error")
-    setRefreshDetail("The loaded matrix remains available; relaunch to restore live reads and writes", "error")
-    setWriteReadiness("Session broker offline; the loaded dashboard is read-only")
+    setRefreshDetail(
+      sessionOfflineDetail(),
+      "error",
+    )
+    setWriteReadiness(
+      state.transportReconnectEscalated
+        ? SESSION_RELAUNCH_WRITE_STATUS
+        : SESSION_RECONNECT_WRITE_STATUS,
+    )
     return
   }
   if (!state.inventory) {
@@ -1435,7 +1497,7 @@ function updateRulesetActionAvailability() {
   if (!workspace) return
   const locked = workspaceWriteLocked()
   const lockReason = !state.transportAvailable
-    ? "Session broker offline; relaunch to restore live writes"
+    ? sessionOfflineLockReason()
     : workspace.loading
       ? "Ruleset details are refreshing"
       : state.busy
@@ -3292,9 +3354,11 @@ function followSkipLink(event) {
 }
 
 function matrixActionIsAvailable(action) {
-  return !action.disabled
-    && !action.closest("tr")?.classList.contains("hidden-row")
-    && action.getClientRects().length > 0
+  if (!action.isConnected || action.disabled) return false
+  if (action.closest("[hidden], .hidden-row, .matrix-column-hidden")) return false
+  const cell = action.closest(".matrix-cell")
+  return !(cell?.classList.contains("inline-editing")
+    && action.closest(".cell-actions"))
 }
 
 function visibleEnabledMatrixActions() {
@@ -3691,6 +3755,7 @@ function renderCategoryCapability() {
 function renderTaskSummaries() {
   const intentSummary = state.intentEvaluation?.summary || {}
   const actionableCells = intentSummary.actionableCells || 0
+  const driftRows = intentSummary.driftRows || 0
   const ungovernedRows = intentSummary.ungovernedRows || 0
   const capabilityCounts = matrixCapabilityCounts(state.matrix)
   elements.reviewIntentCount.textContent = String(actionableCells)
@@ -3701,6 +3766,20 @@ function renderTaskSummaries() {
     ? "Intent mismatch"
     : "Intent mismatches"
   elements.reviewUngovernedCount.textContent = String(ungovernedRows)
+  const intentQueueLabel = driftRows === 1
+    ? "Review 1 drifted facet"
+    : `Review ${driftRows} drifted facets`
+  elements.reviewIntentDrift.textContent = intentQueueLabel
+  elements.reviewIntentDrift.setAttribute(
+    "aria-label",
+    contextualActionLabel(
+      intentQueueLabel,
+      `${actionableCells} intent mismatch${actionableCells === 1 ? "" : "es"}`,
+    ),
+  )
+  elements.reviewUngovernedDifferences.textContent = ungovernedRows === 1
+    ? "Review 1 ungoverned difference"
+    : `Review ${ungovernedRows} ungoverned differences`
   elements.supportedChangeCount.textContent = String(capabilityCounts.changeableRows)
   elements.supportedChangeLabel.textContent = capabilityCounts.changeableRows === 1
     ? "facet has a matrix change path"
@@ -3908,14 +3987,18 @@ function syncMatrixFilterControls(filters = currentMatrixFilters()) {
   const label = changeCount === 0
     ? "Filters & sort"
     : `Filters & sort (${changeCount})`
-  elements.filterReset.hidden = changeCount === 0
-  elements.filterReset.disabled = changeCount === 0
-  elements.filterPanelToggle.textContent = state.filterPanelExpanded
+  const visibleLabel = state.filterPanelExpanded
     ? "Hide filters & sort"
     : label
+  elements.filterReset.hidden = changeCount === 0
+  elements.filterReset.disabled = changeCount === 0
+  elements.filterPanelToggle.textContent = visibleLabel
   elements.filterPanelToggle.setAttribute(
     "aria-label",
-    `${state.filterPanelExpanded ? "Hide" : "Show"} secondary filters and sort. ${changeCount} non-default control${changeCount === 1 ? "" : "s"}.`,
+    contextualActionLabel(
+      visibleLabel,
+      `${state.filterPanelExpanded ? "Hide" : "Show"} secondary controls; ${changeCount} non-default control${changeCount === 1 ? "" : "s"}`,
+    ),
   )
   elements.filterPanelToggle.classList.toggle("active", changeCount > 0)
   syncResponsiveFilterPanel()
@@ -7702,6 +7785,7 @@ function renderMatrix() {
   elements.matrixHead.replaceChildren(headerRow)
 
   const fragment = document.createDocumentFragment()
+  const rowElements = []
   for (const [defaultOrder, row] of state.matrix.rows.entries()) {
     const rulesetComparison = compareDetailedRulesetRow(
       row,
@@ -7948,8 +8032,10 @@ function renderMatrix() {
     if (facetActions.children.length > 0) facetCell.append(facetActions)
     tr.append(categoryCell, facetCell)
     for (const zone of state.inventory.zones) tr.append(matrixCell(row, zone))
+    rowElements.push(tr)
     fragment.append(tr)
   }
+  matrixRowElements = rowElements
   elements.matrixBody.replaceChildren(fragment)
   filterRows()
 }
@@ -8179,18 +8265,14 @@ function renderCoverage() {
 
 function filterRows() {
   const filters = currentMatrixFilters()
-  const currentRows = [...elements.matrixBody.querySelectorAll("tr")]
-  const rows = sortMatrixRows(currentRows.map((row) => ({
+  const rows = sortMatrixRows(matrixRowElements.map((row) => ({
     category: row.dataset.category,
     defaultOrder: Number(row.dataset.defaultOrder),
     label: row.dataset.facetLabel,
     phase: row.dataset.phase,
     row,
   })), filters.sort).map((entry) => entry.row)
-  if (rows.some((row, index) => row !== currentRows[index])) {
-    elements.matrixBody.append(...rows)
-  }
-  let visible = 0
+  const visibleRows = []
 
   for (const row of rows) {
     row.classList.remove("matrix-navigation-target")
@@ -8208,17 +8290,30 @@ function filterRows() {
       search: row.dataset.search,
     }, filters)
     row.classList.toggle("hidden-row", !show)
-    if (show) visible += 1
+    if (show) visibleRows.push(row)
   }
+  elements.matrixBody.replaceChildren(...visibleRows)
 
-  elements.visibleCount.textContent = `${visible} / ${rows.length} facets`
-  const emptyMessage = matrixEmptyMessage(rows.length, visible)
+  elements.visibleCount.textContent = matrixVisibleCountText(
+    rows.length,
+    visibleRows.length,
+    filters,
+  )
+  const emptyMessage = matrixEmptyMessage(rows.length, visibleRows.length)
   elements.matrixEmpty.textContent = emptyMessage
   elements.matrixEmpty.hidden = emptyMessage.length === 0
   elements.matrixTable.hidden = emptyMessage.length > 0
   syncMatrixFilterControls(filters)
   syncMatrixActionTabStop()
   syncUrlState()
+}
+
+function matrixAwareQuery(selector) {
+  const matches = new Set(document.querySelectorAll(selector))
+  for (const row of matrixRowElements) {
+    for (const element of row.querySelectorAll(selector)) matches.add(element)
+  }
+  return [...matches]
 }
 
 function updateSelectionStyles() {
@@ -8233,7 +8328,7 @@ function updateSelectionStyles() {
   elements.writeSelectionSummary.textContent = count === 0
     ? "No target zones chosen"
     : `${count} target zone${count === 1 ? "" : "s"} chosen`
-  for (const element of document.querySelectorAll("[data-zone-id]")) {
+  for (const element of matrixAwareQuery("[data-zone-id]")) {
     const selected = state.selectedZoneIds.has(element.dataset.zoneId)
     if (element.classList.contains("zone-heading")) element.classList.toggle("selected", selected)
     if (element.classList.contains("matrix-cell")) element.classList.toggle("selected-column", selected)
@@ -8340,7 +8435,7 @@ function updateActionButtons() {
   const writeLockReason = readOnly
     ? "This session is read-only"
     : !state.transportAvailable
-      ? "Session broker offline; relaunch to restore live writes"
+      ? sessionOfflineLockReason()
       : state.busy
         ? "Another fleet operation is in progress"
         : "Fleet inventory is unavailable"
@@ -8359,38 +8454,47 @@ function updateActionButtons() {
     ? "Choose at least one target zone first"
     : "Live-validates shared WAF rules before confirmation"
   elements.chooseTargets.disabled = state.busy || !state.inventory
-  elements.reviewNeedsAttention.disabled = !state.matrix
-    || state.matrix.summary.differences === 0
+  const intentSummary = state.intentEvaluation?.summary || {}
+  elements.reviewIntentDrift.disabled = !state.matrix
+    || (intentSummary.driftRows || 0) === 0
+  elements.reviewIntentDrift.title = elements.reviewIntentDrift.disabled
+    ? "No loaded zone is outside saved fleet intent"
+    : "Show only facets with zones that do not satisfy saved fleet intent"
+  elements.reviewUngovernedDifferences.disabled = !state.matrix
+    || (intentSummary.ungovernedRows || 0) === 0
+  elements.reviewUngovernedDifferences.title = elements.reviewUngovernedDifferences.disabled
+    ? "No differing facets are waiting for an intent decision"
+    : "Show only differing facets that have no saved fleet intent"
   elements.showSupportedChanges.disabled = !state.matrix
     || matrixCapabilityCounts(state.matrix).changeableRows === 0
   elements.showDnssecWorkflow.disabled = !state.matrix?.rows.some(
     rowSupportsDnssecIntentCorrection,
   )
 
-  for (const cell of document.querySelectorAll(".editable-cell, .fillable-hole")) {
+  for (const cell of matrixAwareQuery(".editable-cell, .fillable-hole")) {
     cell.classList.toggle("write-locked", writeLocked)
     cell.title = writeLocked
       ? writeLockReason
       : cell.dataset.editTitle
   }
-  for (const button of document.querySelectorAll(".edit-cell")) {
+  for (const button of matrixAwareQuery(".edit-cell")) {
     button.disabled = writeLocked
   }
-  for (const button of document.querySelectorAll(".activity-undo")) {
+  for (const button of matrixAwareQuery(".activity-undo")) {
     const entry = activityEntryByButton.get(button)
     button.disabled = writeLocked || !entry || !activityUndoable(entry)
     button.title = writeLocked
       ? writeLockReason
       : "Fresh-read the affected resources before reviewing the inverse writes"
   }
-  for (const button of document.querySelectorAll(".fill-hole")) {
+  for (const button of matrixAwareQuery(".fill-hole")) {
     button.disabled = writeLocked
     if (writeLocked) button.title = writeLockReason
   }
   if (state.inlineEditor) {
     setInlineEditorDisabled(state.inlineEditor, writeLocked)
   }
-  for (const button of document.querySelectorAll(".bulk-fill")) {
+  for (const button of matrixAwareQuery(".bulk-fill")) {
     const row = bulkFillRowByButton.get(button)
     const batch = row
       ? intentCompatibleDnsTargetFillBatch(row)
@@ -8417,7 +8521,7 @@ function updateActionButtons() {
         : `Bulk fill unavailable for ${row?.label || "this DNS facet"}. ${batch.reason}`,
     )
   }
-  for (const button of document.querySelectorAll(".copy-rule")) {
+  for (const button of matrixAwareQuery(".copy-rule")) {
     const targetCount = state.selectedZoneIds.size
       - (state.selectedZoneIds.has(button.dataset.sourceZoneId) ? 1 : 0)
     button.disabled = writeLocked || targetCount === 0
@@ -8427,16 +8531,16 @@ function updateActionButtons() {
         ? "Choose at least one destination zone other than the source"
         : `Copy this rule to ${targetCount} selected destination zone${targetCount === 1 ? "" : "s"} after live validation`
   }
-  for (const button of document.querySelectorAll(".rename-rule")) {
+  for (const button of matrixAwareQuery(".rename-rule")) {
     button.disabled = writeLocked
     button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
   }
-  for (const button of document.querySelectorAll(".apply-intent-correction")) {
+  for (const button of matrixAwareQuery(".apply-intent-correction")) {
     button.disabled = writeLocked
     button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
   }
   const intentLocked = !intentWritable()
-  for (const button of document.querySelectorAll(
+  for (const button of matrixAwareQuery(
     ".intent-set-policy, .acknowledge-intent, .remove-acknowledgement, #intent-add-group, [data-intent-write]",
   )) {
     button.disabled = intentLocked || button.dataset.intentBlocked === "true"
@@ -8522,9 +8626,17 @@ function showExplorerView(options = {}) {
   focusConfigurationExplorer()
 }
 
-function showNeedsAttention() {
+function showIntentDrift() {
+  showExplorerView({
+    intentStatus: MATRIX_INTENT_FILTER.DRIFT,
+    scope: MATRIX_SCOPE.ALL,
+  })
+}
+
+function showUngovernedDifferences() {
   showExplorerView({
     differencesOnly: true,
+    intentStatus: MATRIX_INTENT_FILTER.UNGOVERNED,
     scope: MATRIX_SCOPE.ALL,
   })
 }
@@ -8651,6 +8763,31 @@ function activityVerificationList(entry) {
   return section
 }
 
+function activityJournalList(entry) {
+  const section = createElement("section", { className: "activity-detail-section" })
+  section.append(createElement("h4", { text: "Journal record" }))
+  const list = document.createElement("ul")
+  const fields = [
+    ["ID", entry.id],
+    ["Validated", formatActivityTime(entry.validatedAt)],
+    ["Started", formatActivityTime(entry.startedAt)],
+    ["Completed", entry.completedAt
+      ? formatActivityTime(entry.completedAt)
+      : "Not recorded"],
+  ]
+  if (entry.undoOf) fields.push(["Undo of", entry.undoOf])
+  for (const [label, value] of fields) {
+    const item = document.createElement("li")
+    item.append(
+      createElement("code", { text: label }),
+      document.createTextNode(value),
+    )
+    list.append(item)
+  }
+  section.append(list)
+  return section
+}
+
 function activityRawPreview(entry) {
   return entry.plans.flatMap((plan) => plan.operations.map((operation) => ({
     body: operation.body,
@@ -8723,7 +8860,7 @@ function renderActivityEntry(entry) {
   title.append(
     createElement("h3", { text: entry.title }),
     createElement("p", {
-      text: `${formatActivityTime(entry.startedAt)} | ${entry.id}`,
+      text: formatActivityTime(entry.startedAt),
     }),
   )
   heading.append(
@@ -8774,6 +8911,7 @@ function renderActivityEntry(entry) {
   detailGrid.append(
     activityOperationList(entry),
     activityVerificationList(entry),
+    activityJournalList(entry),
   )
   const raw = createElement("details")
   raw.append(
@@ -11530,15 +11668,15 @@ async function initialize() {
 
 api.startSessionMonitor({
   onConnected: () => {
+    clearSessionReconnectEscalation()
     state.transportAvailable = true
     restoreInventoryStatus()
     updateTransportDependentControls()
   },
   onDisconnected: () => {
     state.transportAvailable = false
-    setStatus("Session broker offline", "error")
-    setRefreshDetail("The loaded matrix remains available; relaunch to restore live reads and writes", "error")
-    setWriteReadiness("Session broker offline; the loaded dashboard is read-only")
+    beginSessionReconnectEscalation()
+    restoreInventoryStatus()
     updateTransportDependentControls()
   },
 })
@@ -11702,7 +11840,8 @@ elements.selectedColumnsOnly.addEventListener("click", () => {
   state.selectedColumnsOnly = !state.selectedColumnsOnly
   updateSelectionStyles()
 })
-elements.reviewNeedsAttention.addEventListener("click", showNeedsAttention)
+elements.reviewIntentDrift.addEventListener("click", showIntentDrift)
+elements.reviewUngovernedDifferences.addEventListener("click", showUngovernedDifferences)
 elements.showSupportedChanges.addEventListener("click", showSupportedChanges)
 elements.showDnssecWorkflow.addEventListener("click", showDnssecWorkflow)
 elements.showActivity.addEventListener("click", openOperationActivity)

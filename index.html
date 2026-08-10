@@ -75,7 +75,10 @@
               <span class="task-card-status-metric intent"><strong id="review-intent-count">0</strong><span id="review-intent-label">Intent mismatches</span></span>
               <span class="task-card-status-metric"><strong id="review-ungoverned-count">0</strong><span>Not governed</span></span>
             </div>
-            <button class="button button-primary" id="review-needs-attention" type="button">Open review queue</button>
+            <div class="review-task-actions">
+              <button class="button button-primary" id="review-intent-drift" type="button">Review intent mismatches</button>
+              <button class="button" id="review-ungoverned-differences" type="button">Review ungoverned differences</button>
+            </div>
           </article>
 
           <article class="task-card intent-task-card">
@@ -957,8 +960,10 @@
         </select>
         <span id="activity-visible-count" role="status" aria-live="polite">0 operations</span>
       </div>
-      <p class="activity-load-error" id="activity-load-error" role="alert" hidden></p>
-      <div class="activity-list" id="activity-list"></div>
+      <div class="activity-scroll-region">
+        <p class="activity-load-error" id="activity-load-error" role="alert" hidden></p>
+        <div class="activity-list" id="activity-list"></div>
+      </div>
       <div class="dialog-actions">
         <button class="button button-primary" type="button" data-dialog-close>Done</button>
       </div>

@@ -11,6 +11,7 @@ import {
   matrixEmptyMessage,
   matrixFilterChangeCount,
   matrixRowMatchesFilters,
+  matrixVisibleCountText,
   sortMatrixRows,
 } from "../src/matrix-filter.mjs"
 
@@ -18,6 +19,30 @@ test("matrix empty messages distinguish filters from empty inventory", () => {
   assert.equal(matrixEmptyMessage(251, 61), "")
   assert.match(matrixEmptyMessage(251, 0), /current filters/)
   assert.match(matrixEmptyMessage(0, 0), /fleet snapshot/)
+})
+
+test("matrix visible counts keep the active review context explicit", () => {
+  assert.equal(
+    matrixVisibleCountText(255, 4, {
+      differencesOnly: false,
+      intentStatus: MATRIX_INTENT_FILTER.DRIFT,
+    }),
+    "4 of 255 facets | Intent drift",
+  )
+  assert.equal(
+    matrixVisibleCountText(255, 161, {
+      differencesOnly: true,
+      intentStatus: MATRIX_INTENT_FILTER.UNGOVERNED,
+    }),
+    "161 of 255 facets | Ungoverned differences",
+  )
+  assert.equal(
+    matrixVisibleCountText(1, 1, {
+      changeableOnly: true,
+      differencesOnly: false,
+    }),
+    "1 of 1 facet | Supported changes",
+  )
 })
 
 test("fleet pattern scope separates shared and zone-specific facets", () => {

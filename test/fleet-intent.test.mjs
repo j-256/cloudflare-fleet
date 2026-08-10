@@ -932,6 +932,7 @@ test("evaluation separates intent matches, variants, and missing cells", () => {
   assert.equal(rowState.status, FLEET_INTENT_ROW_STATUS.DRIFT)
   assert.equal(evaluation.summary.actionableCells, 2)
   assert.equal(evaluation.summary.actionableRows, 1)
+  assert.equal(evaluation.summary.driftRows, 1)
 })
 
 test("facet intent match includes exact acknowledged states", () => {
@@ -1057,6 +1058,7 @@ test("custom group limits policy scope while raw ungoverned rows retain drift", 
     true,
   )
   assert.equal(nextEvaluation.summary.actionableZones, 1)
+  assert.equal(nextEvaluation.summary.driftRows, 1)
   assert.equal(nextEvaluation.summary.matchingZones, 2)
   assert.equal(nextEvaluation.summary.ungovernedRows, 1)
   assert.equal(nextEvaluation.summary.zones, 3)

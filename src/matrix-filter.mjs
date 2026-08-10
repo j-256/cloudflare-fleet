@@ -56,6 +56,22 @@ export function matrixEmptyMessage(totalCount, visibleCount) {
   return "No comparable facets are available in this fleet snapshot."
 }
 
+export function matrixVisibleCountText(totalCount, visibleCount, filters = {}) {
+  const base = `${visibleCount} of ${totalCount} facet${totalCount === 1 ? "" : "s"}`
+  const contexts = []
+  const intentStatus = String(filters.intentStatus || "")
+  if (intentStatus === MATRIX_INTENT_FILTER.DRIFT) contexts.push("Intent drift")
+  else if (intentStatus === MATRIX_INTENT_FILTER.MATCH) contexts.push("Matches intent")
+  else if (intentStatus === MATRIX_INTENT_FILTER.REVIEW) contexts.push("Intent needs review")
+  else if (intentStatus === MATRIX_INTENT_FILTER.UNGOVERNED) {
+    contexts.push(filters.differencesOnly
+      ? "Ungoverned differences"
+      : "Intent not set")
+  } else if (filters.differencesOnly) contexts.push("Needs review")
+  if (filters.changeableOnly) contexts.push("Supported changes")
+  return contexts.length > 0 ? `${base} | ${contexts.join(" + ")}` : base
+}
+
 export function facetMatchesScope(presentCount, zoneCount, scope) {
   if (scope === MATRIX_SCOPE.ALL) return true
   if (scope === MATRIX_SCOPE.FLEET_PATTERNS) return presentCount >= 2

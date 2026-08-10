@@ -4,6 +4,7 @@ import test from "node:test"
 
 const html = await readFile(new URL("../index.html", import.meta.url), "utf8")
 const appSource = await readFile(new URL("../src/app.mjs", import.meta.url), "utf8")
+const styles = await readFile(new URL("../styles.css", import.meta.url), "utf8")
 
 test("intent editor exposes exact comparison values and their observed sources", () => {
   assert.match(html, /<fieldset[^>]+id="intent-policy-observed-fields"/)
@@ -62,6 +63,16 @@ test("matrix exposes facet-level intent results and filtering", () => {
   assert.match(appSource, /intentStatus: row\.dataset\.intentStatus/)
 })
 
+test("review hub separates intent drift from ungoverned differences", () => {
+  assert.match(html, /id="review-intent-drift"/)
+  assert.match(html, /id="review-ungoverned-differences"/)
+  assert.match(appSource, /function showIntentDrift\(\)/)
+  assert.match(appSource, /function showUngovernedDifferences\(\)/)
+  assert.match(appSource, /`Review \$\{driftRows\} drifted facets`/)
+  assert.match(appSource, /`\$\{actionableCells\} intent mismatch/)
+  assert.doesNotMatch(html, /id="review-needs-attention"/)
+})
+
 test("intent manager explains baseline and refinement composition", () => {
   assert.match(
     html,
@@ -74,6 +85,10 @@ test("matching controls retain their visible label in the accessible name", () =
   assert.match(
     appSource,
     /contextualActionLabel\(\s*"How matching works",\s*row\.label/,
+  )
+  assert.match(
+    appSource,
+    /contextualActionLabel\(\s*visibleLabel,\s*`\$\{state\.filterPanelExpanded/,
   )
 })
 
@@ -98,6 +113,22 @@ test("intent manager is sectioned, filterable, and compact by default", () => {
   }
   assert.match(appSource, /function filterIntentPolicies\(\)/)
   assert.match(appSource, /matchingDetails\.className = "intent-item-details"/)
+})
+
+test("intent manager keeps navigation and exit controls outside its scrolling section", () => {
+  assert.match(styles, /\.intent-dialog \{[\s\S]+overflow: hidden;/)
+  assert.match(
+    styles,
+    /\.intent-workspace \{[\s\S]+grid-template-rows: auto auto auto minmax\(0, 1fr\) auto;/,
+  )
+  assert.match(
+    styles,
+    /\.intent-workspace > \.intent-section \{[\s\S]+min-height: 0;[\s\S]+overflow: auto;/,
+  )
+  assert.match(
+    styles,
+    /@media \(max-height: 640px\), \(max-width: 359px\), \(max-width: 420px\) and \(max-height: 760px\) \{[\s\S]+\.intent-manager-nav \{[\s\S]+grid-template-columns: repeat\(4, max-content\);/,
+  )
 })
 
 test("facet intent actions stay in the focused policy editor", () => {

@@ -752,6 +752,12 @@ dialog h2 {
   margin-top: auto;
 }
 
+.review-task-actions {
+  display: grid;
+  gap: 7px;
+  margin-top: auto;
+}
+
 .task-card-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2796,6 +2802,7 @@ dialog form {
   --intent-policy-card-min-width: 400px;
   --intent-value-preview-max-height: 240px;
   width: min(1040px, calc(100vw - 24px));
+  overflow: hidden;
 }
 
 #intent-policy-dialog {
@@ -2805,12 +2812,16 @@ dialog form {
 
 .activity-dialog {
   width: min(920px, calc(100vw - 24px));
+  overflow: hidden;
 }
 
 .activity-workspace {
   position: relative;
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
+  height: min(820px, calc(100dvh - 34px));
+  max-height: calc(100dvh - 34px);
   padding: 22px;
 }
 
@@ -2877,11 +2888,25 @@ dialog form {
   background: rgba(255, 107, 120, 0.08);
 }
 
+.activity-scroll-region {
+  display: grid;
+  min-height: 0;
+  overflow: auto;
+}
+
+.activity-scroll-region:has(.activity-load-error:not([hidden])) {
+  align-content: start;
+  gap: 9px;
+}
+
 .activity-list {
   display: grid;
   gap: 9px;
-  max-height: min(62dvh, 650px);
-  overflow: auto;
+  align-content: start;
+}
+
+.activity-workspace > .dialog-actions {
+  margin-top: 0;
 }
 
 .activity-empty {
@@ -3072,8 +3097,20 @@ dialog form {
 .intent-workspace {
   position: relative;
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 14px;
+  height: min(860px, calc(100dvh - 34px));
+  max-height: calc(100dvh - 34px);
   padding: 22px;
+}
+
+.intent-workspace > .intent-section {
+  min-height: 0;
+  overflow: auto;
+}
+
+.intent-workspace > .dialog-actions {
+  margin-top: 0;
 }
 
 .intent-adoption-dialog {
@@ -6088,6 +6125,51 @@ dialog details > summary {
     margin-bottom: 7px;
   }
 
+}
+
+@media (max-height: 640px), (max-width: 359px), (max-width: 420px) and (max-height: 760px) {
+  .intent-workspace {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .intent-heading {
+    gap: 6px;
+  }
+
+  .intent-heading-status {
+    display: flex;
+    gap: 7px;
+    min-width: 0;
+    align-items: center;
+    overflow-x: auto;
+  }
+
+  .intent-heading-status .intent-save-actions,
+  .intent-metrics {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .intent-verdict-dialog {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 8px 10px;
+  }
+
+  .intent-verdict-dialog .intent-verdict-mark {
+    display: none;
+  }
+
+  .intent-manager-nav {
+    grid-template-columns: repeat(4, max-content);
+    gap: 4px;
+    padding: 5px;
+    overflow-x: auto;
+  }
+
+  .intent-manager-nav .button {
+    white-space: nowrap;
+  }
 }
 
 @media (hover: none) {

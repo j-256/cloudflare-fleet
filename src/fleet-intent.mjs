@@ -1317,6 +1317,9 @@ export function evaluateFleetIntent(document, inventory, matrix) {
   const actionableRows = [...rowStates.values()].filter(
     (rowState) => rowState.actionable,
   )
+  const driftRows = actionableRows.filter(
+    (rowState) => rowState.governed,
+  )
   const ungovernedRows = actionableRows.filter(
     (rowState) => !rowState.governed,
   )
@@ -1331,6 +1334,7 @@ export function evaluateFleetIntent(document, inventory, matrix) {
       actionableCells: actionableCells.length,
       actionableRows: actionableRows.length,
       actionableZones: actionableZoneIds.size,
+      driftRows: driftRows.length,
       governedRows: [...rowStates.values()].filter((rowState) => rowState.governed).length,
       matchingZones: inventory.zones.length - actionableZoneIds.size,
       policies: policyStates.length,
