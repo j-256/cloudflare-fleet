@@ -709,7 +709,7 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
     operations.push(operation)
   }
 
-  if (email?.enabled && !currentSpf.matches && !spfDifferenceAcknowledged) {
+  if (!currentSpf.matches && !spfDifferenceAcknowledged) {
     if (currentSpf.records.length > 1) {
       throw new Error(`Multiple SPF records on ${zoneName} require manual review`)
     }

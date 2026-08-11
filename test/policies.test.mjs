@@ -318,6 +318,37 @@ test("email policy rejects extra catch-all destinations", () => {
   assert.equal(buildEmailAlignmentPlan(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY).operations.length, 1)
 })
 
+test("email alignment fixes a mismatched SPF record even when Email Routing is disabled", () => {
+  const zone = makeZone("alpha.example", {
+    email: { enabled: false, skip_wizard: true, status: "unlocked", support_subaddress: true },
+    dns: [
+      {
+        content: "\"v=spf1 -all\"",
+        id: "spf-id",
+        name: "alpha.example",
+        ttl: 60,
+        type: "TXT",
+      },
+      dmarcRecord("alpha.example"),
+    ],
+  })
+
+  // The audit reports SPF drift regardless of whether Email Routing is enabled
+  assert.ok(
+    emailIssues(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY).some((issue) => /SPF/.test(issue)),
+  )
+  // ...so the alignment plan must actually include the SPF fix, matching the DMARC branch
+  const spfFix = buildEmailAlignmentPlan(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY)
+    .operations.find((operation) => operation.label === "Match the fleet SPF value and TTL")
+  assert.ok(spfFix, "expected an SPF fix operation when SPF drifts")
+  assert.equal(spfFix.method, "PATCH")
+  assert.match(spfFix.path, /\/dns_records\/spf-id$/)
+  assert.equal(
+    spfFix.body.content,
+    "\"v=spf1 include:_spf.google.com include:_spf.mx.cloudflare.net -all\"",
+  )
+})
+
 test("email policy compares required DNS records using DNS TXT semantics", () => {
   const expectedDkim = "\"v=DKIM1; p=abcdefgh\""
   const zone = makeZone("alpha.example", {
