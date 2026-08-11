@@ -3588,6 +3588,20 @@ dialog form {
   background: rgba(11, 19, 28, 0.62);
 }
 
+.intent-group-list-controls {
+  position: sticky;
+  z-index: 2;
+  top: -11px;
+  margin: -11px -12px 0;
+  padding: 11px 12px 9px;
+  border-bottom: 1px solid var(--line);
+  background: #0b131c;
+}
+
+.intent-group-manager-toolbar {
+  grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(150px, 190px)) auto auto;
+}
+
 .intent-manager-toolbar input,
 .intent-manager-toolbar select,
 .intent-group-tools input,
@@ -3602,6 +3616,7 @@ dialog form {
 }
 
 #intent-policy-visible-count,
+#intent-group-list-visible-count,
 #intent-group-visible,
 #intent-policy-zone-visible {
   color: var(--muted);
@@ -5828,7 +5843,8 @@ dialog details > summary {
   }
 
   .intent-manager-toolbar input,
-  #intent-policy-visible-count {
+  #intent-policy-visible-count,
+  #intent-group-list-visible-count {
     grid-column: 1 / -1;
   }
 

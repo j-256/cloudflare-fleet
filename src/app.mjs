@@ -347,6 +347,14 @@ const INTENT_MANAGER_SECTION = Object.freeze({
   GROUPS: "groups",
   POLICIES: "policies",
 })
+const INTENT_GROUP_SORT = Object.freeze({
+  NAME: "name",
+  POLICY_COUNT: "policy-count",
+})
+const INTENT_LIVE_VALIDATION = Object.freeze({
+  GROUP_MEMBERSHIP_COLLISION: "group-membership-collision",
+  GROUP_NAME_COLLISION: "group-name-collision",
+})
 const INTENT_WORKFLOW_DIALOG_SELECTOR = "[data-intent-workflow-screen]"
 const INTENT_WORKFLOW_HISTORY_STATE_KEY = "cloudflareFleetIntentWorkspace"
 const INTENT_WORKFLOW_HISTORY_MODE = Object.freeze({
@@ -662,15 +670,21 @@ const elements = {
   intentGroupImpactMetrics: document.querySelector("#intent-group-impact-metrics"),
   intentGroupImpactSummary: document.querySelector("#intent-group-impact-summary"),
   intentGroupImpactTitle: document.querySelector("#intent-group-impact-title"),
+  intentGroupFilterReset: document.querySelector("#intent-group-filter-reset"),
   intentGroupList: document.querySelector("#intent-group-list"),
+  intentGroupListSearch: document.querySelector("#intent-group-list-search"),
+  intentGroupListVisibleCount: document.querySelector("#intent-group-list-visible-count"),
   intentGroupNameHelp: document.querySelector("#intent-group-label-help"),
   intentGroupMembers: document.querySelector("#intent-group-members"),
   intentGroupName: document.querySelector("#intent-group-name"),
+  intentGroupNameSourceFilter: document.querySelector("#intent-group-name-source-filter"),
+  intentGroupSave: document.querySelector("#intent-group-save"),
   intentGroupSearch: document.querySelector("#intent-group-search"),
   intentGroupSelectAll: document.querySelector("#intent-group-select-all"),
   intentGroupSelectedOnly: document.querySelector("#intent-group-selected-only"),
   intentGroupSelectionAnnouncement: document.querySelector("#intent-group-selection-announcement"),
   intentGroupSelectionSummary: document.querySelector("#intent-group-selection-summary"),
+  intentGroupSort: document.querySelector("#intent-group-sort"),
   intentGroupTitle: document.querySelector("#intent-group-title"),
   intentGroupVisible: document.querySelector("#intent-group-visible"),
   intentGovernedCount: document.querySelector("#intent-governed-count"),
@@ -1048,13 +1062,52 @@ function clearFieldError(input, errorElement) {
   input.removeAttribute("aria-invalid")
   errorElement.hidden = true
   errorElement.textContent = ""
+  delete errorElement.dataset.intentLiveValidation
 }
 
 function showFieldError(input, errorElement, error) {
   errorElement.textContent = error instanceof Error ? error.message : String(error)
   errorElement.hidden = false
+  delete errorElement.dataset.intentLiveValidation
   input.setAttribute("aria-invalid", "true")
   input.focus()
+}
+
+function intentGroupNameCollision(name, excludeGroupId = null) {
+  const normalizedName = name.trim().toLowerCase()
+  if (!normalizedName) return null
+  return state.intent.groups.find((group) => (
+    group.id !== excludeGroupId
+      && group.name.trim().toLowerCase() === normalizedName
+  )) || null
+}
+
+function updateIntentGroupNameCollision(input, errorElement, excludeGroupId) {
+  const collision = intentGroupNameCollision(input.value, excludeGroupId)
+  if (!collision) {
+    if (errorElement.dataset.intentLiveValidation
+      === INTENT_LIVE_VALIDATION.GROUP_NAME_COLLISION) {
+      clearFieldError(input, errorElement)
+    }
+    return null
+  }
+  errorElement.textContent = `A saved scope already uses the name "${collision.name}". Choose a different custom name or leave it blank for the automatic name.`
+  errorElement.hidden = false
+  errorElement.dataset.intentLiveValidation = INTENT_LIVE_VALIDATION.GROUP_NAME_COLLISION
+  input.setAttribute("aria-invalid", "true")
+  return collision
+}
+
+function intentGroupMembershipCollision(excludeGroupId) {
+  const selectedZoneIds = selectedIntentZoneMembers(elements.intentGroupMembers)
+    .map((member) => member.zoneId)
+  if (selectedZoneIds.length === 0) return null
+  const loadedZoneIds = (state.inventory?.zones || []).map((zone) => zone.meta.id)
+  return state.intent.groups.find((group) => (
+    group.id !== excludeGroupId
+      && group.mode === FLEET_INTENT_GROUP_MODE.MEMBERS
+      && intentGroupMatchesZoneSelection(group, selectedZoneIds, loadedZoneIds)
+  )) || null
 }
 
 function zoneById(zoneId) {
@@ -1133,6 +1186,16 @@ function intentGroupPrimaryText(group, scope = intentGroupScope(group)) {
     : intentZoneSummary(scope.applies)
 }
 
+function intentGroupNameSourceLabel(group) {
+  if (group?.nameSource === FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC) {
+    return "Automatic name"
+  }
+  if (group?.nameSource === FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM) {
+    return "Custom name"
+  }
+  return "Built in"
+}
+
 function intentZoneScopeRow(label, zones, emptyText) {
   const row = createElement("div", { className: "intent-zone-scope-row" })
   row.append(
@@ -1199,6 +1262,7 @@ function intentPolicyGroupOptionText(group, policies, status = "") {
     : `${scope.applies.length} zone${scope.applies.length === 1 ? "" : "s"}`
   return [
     compactIntentScopeName(group.name),
+    intentGroupNameSourceLabel(group),
     coverage,
     status || (policy ? intentPolicyConstraintLabel(policy) : "No intent yet"),
   ].join(" | ")
@@ -5987,7 +6051,7 @@ function setIntentAutomaticNameHint(input, help, automaticName) {
     : `Leave blank to use the automatic name "${automaticName}".`
 }
 
-function updateIntentPolicyZoneSelection() {
+function updateIntentPolicyZoneSelection(options = {}) {
   const inputs = intentZoneSelectionInputs(elements.intentPolicyZoneMembers)
   const members = selectedIntentZoneMembers(elements.intentPolicyZoneMembers)
   const selectedZoneIds = inputs
@@ -6012,6 +6076,7 @@ function updateIntentPolicyZoneSelection() {
     loadedZoneIds,
   )
   const selectedCount = selectedZoneIds.length
+  let automaticName = ""
   elements.intentPolicyScopeName.disabled = matchingSavedGroups.length > 0
   if (savedScopeIsAmbiguous) {
     elements.intentPolicyScopeName.placeholder = "Choose a matching saved scope"
@@ -6020,7 +6085,7 @@ function updateIntentPolicyZoneSelection() {
     elements.intentPolicyScopeName.placeholder = `Saved as ${savedGroup.name}`
     elements.intentPolicyScopeNameHelp.textContent = `This membership already uses the saved scope "${savedGroup.name}".`
   } else if (members.length > 0) {
-    const automaticName = generatedIntentScopeName(members, state.intent.groups)
+    automaticName = generatedIntentScopeName(members, state.intent.groups)
     setIntentAutomaticNameHint(
       elements.intentPolicyScopeName,
       elements.intentPolicyScopeNameHelp,
@@ -6030,21 +6095,36 @@ function updateIntentPolicyZoneSelection() {
     elements.intentPolicyScopeName.placeholder = "Select zones to preview the automatic name"
     elements.intentPolicyScopeNameHelp.textContent = "A new combination is saved with the policy. Select at least one zone to preview its automatic name."
   }
+  let nameCollision = null
+  if (matchingSavedGroups.length === 0) {
+    nameCollision = updateIntentGroupNameCollision(
+      elements.intentPolicyScopeName,
+      elements.intentPolicyError,
+    )
+  } else if (elements.intentPolicyError.dataset.intentLiveValidation
+    === INTENT_LIVE_VALIDATION.GROUP_NAME_COLLISION) {
+    clearFieldError(elements.intentPolicyScopeName, elements.intentPolicyError)
+  }
   elements.intentPolicyUseZoneSelection.disabled = selectedCount === 0
     || selectionIsActive
     || savedScopeIsAmbiguous
+    || Boolean(nameCollision)
   elements.intentPolicyUseZoneSelection.textContent = selectedCount === 0
     ? "Select at least one zone"
     : selectionIsActive
       ? "Selection in use"
       : savedScopeIsAmbiguous
         ? "Choose a matching saved scope above"
-        : `Use ${selectedCount} zone${selectedCount === 1 ? "" : "s"}`
-  elements.intentPolicyZoneAnnouncement.textContent = savedScopeIsAmbiguous
-    ? `${selectedCount} zones selected; matches ${matchingSavedGroups.length} saved scopes, so choose one from the shortcut`
-    : savedGroup
-      ? `${selectedCount} zone${selectedCount === 1 ? "" : "s"} selected; matches saved scope ${savedGroup.name}`
-      : `${selectedCount} zone${selectedCount === 1 ? "" : "s"} selected; new scope`
+        : nameCollision
+          ? "Choose a different name"
+          : `Use ${selectedCount} zone${selectedCount === 1 ? "" : "s"}`
+  if (options.announce !== false) {
+    elements.intentPolicyZoneAnnouncement.textContent = savedScopeIsAmbiguous
+      ? `${selectedCount} zones selected; matches ${matchingSavedGroups.length} saved scopes, so choose one from the shortcut`
+      : savedGroup
+        ? `${selectedCount} zone${selectedCount === 1 ? "" : "s"} selected; matches saved scope ${savedGroup.name}`
+        : `${selectedCount} zone${selectedCount === 1 ? "" : "s"} selected; new scope${automaticName && !elements.intentPolicyScopeName.value.trim() ? `; automatic name ${automaticName}` : ""}`
+  }
   filterIntentPolicyZoneMembers()
 }
 
@@ -6154,7 +6234,7 @@ function updateIntentGroupNameHint() {
   if (!draft || members.length === 0) {
     elements.intentGroupName.placeholder = "Select zones to preview the automatic name"
     elements.intentGroupNameHelp.textContent = "Leave blank to use an automatic name derived from the selected domains."
-    return
+    return ""
   }
   const automaticName = generatedIntentScopeName(members, state.intent.groups, {
     excludeGroupId: draft.group?.id,
@@ -6164,6 +6244,32 @@ function updateIntentGroupNameHint() {
     elements.intentGroupNameHelp,
     automaticName,
   )
+  return automaticName
+}
+
+function updateIntentGroupValidation() {
+  const nameCollision = updateIntentGroupNameCollision(
+    elements.intentGroupName,
+    elements.intentGroupError,
+    state.intentGroupDraft?.group?.id,
+  )
+  const membershipCollision = intentGroupMembershipCollision(
+    state.intentGroupDraft?.group?.id,
+  )
+  if (!nameCollision && membershipCollision) {
+    elements.intentGroupError.textContent = `This zone selection already uses the saved scope "${membershipCollision.name}". Edit that scope instead of creating a duplicate.`
+    elements.intentGroupError.hidden = false
+    elements.intentGroupError.dataset.intentLiveValidation
+      = INTENT_LIVE_VALIDATION.GROUP_MEMBERSHIP_COLLISION
+  } else if (!nameCollision
+    && elements.intentGroupError.dataset.intentLiveValidation
+      === INTENT_LIVE_VALIDATION.GROUP_MEMBERSHIP_COLLISION) {
+    clearFieldError(elements.intentGroupName, elements.intentGroupError)
+  }
+  const blocked = Boolean(nameCollision || membershipCollision)
+  elements.intentGroupSave.dataset.intentBlocked = String(blocked)
+  elements.intentGroupSave.disabled = blocked || !intentWritable()
+  return blocked
 }
 
 function renderIntentGroupImpact() {
@@ -6253,12 +6359,13 @@ function updateIntentGroupSelectionSummary() {
     applies,
     excludes,
   })
-  elements.intentGroupSelectionAnnouncement.textContent = `${applies.length} zone${applies.length === 1 ? "" : "s"} included; ${excludes.length} loaded zone${excludes.length === 1 ? "" : "s"} excluded`
+  const automaticName = updateIntentGroupNameHint()
+  elements.intentGroupSelectionAnnouncement.textContent = `${applies.length} zone${applies.length === 1 ? "" : "s"} included; ${excludes.length} loaded zone${excludes.length === 1 ? "" : "s"} excluded${automaticName && !elements.intentGroupName.value.trim() ? `; automatic name ${automaticName}` : ""}`
   if (elements.intentGroupError.textContent === "Select at least one zone") {
     elements.intentGroupError.hidden = true
     elements.intentGroupError.textContent = ""
   }
-  updateIntentGroupNameHint()
+  updateIntentGroupValidation()
   filterIntentGroupMembers()
   renderIntentGroupImpact()
 }
@@ -6307,6 +6414,7 @@ async function saveIntentGroup(event) {
     )
     return
   }
+  if (updateIntentGroupValidation()) return
   const previewGroup = currentIntentGroupDraftGroup()
   if (!previewGroup) {
     elements.intentGroupError.textContent = "Select at least one zone"
@@ -6590,12 +6698,132 @@ function intentPolicyMatrixButton(policy, row, context) {
   )
 }
 
+function intentGroupPolicyCounts() {
+  const counts = new Map(state.intent.groups.map((group) => [group.id, 0]))
+  for (const policy of state.intent.policies) {
+    counts.set(policy.groupId, (counts.get(policy.groupId) || 0) + 1)
+  }
+  return counts
+}
+
+function orderedIntentGroups(policyCounts) {
+  const sort = Object.values(INTENT_GROUP_SORT).includes(elements.intentGroupSort.value)
+    ? elements.intentGroupSort.value
+    : INTENT_GROUP_SORT.NAME
+  return [...state.intent.groups].sort((left, right) => {
+    const systemCompared = Number(left.id !== FLEET_INTENT_ALL_ZONES_GROUP_ID)
+      - Number(right.id !== FLEET_INTENT_ALL_ZONES_GROUP_ID)
+    if (systemCompared !== 0) return systemCompared
+    if (sort === INTENT_GROUP_SORT.POLICY_COUNT) {
+      const policyCompared = (policyCounts.get(right.id) || 0)
+        - (policyCounts.get(left.id) || 0)
+      if (policyCompared !== 0) return policyCompared
+    }
+    return left.name.localeCompare(right.name) || left.id.localeCompare(right.id)
+  })
+}
+
+function filterIntentGroups() {
+  const terms = elements.intentGroupListSearch.value.trim().toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+  const nameSource = elements.intentGroupNameSourceFilter.value
+  const cards = [...elements.intentGroupList.querySelectorAll(
+    "[data-intent-group-card]",
+  )]
+  let visibleCount = 0
+  for (const card of cards) {
+    const visible = (!nameSource || card.dataset.nameSource === nameSource)
+      && terms.every((term) => card.dataset.search.includes(term))
+    card.hidden = !visible
+    if (visible) visibleCount += 1
+  }
+  const empty = elements.intentGroupList.querySelector(
+    "[data-intent-group-filter-empty]",
+  )
+  if (empty) {
+    empty.textContent = cards.length === 0
+      ? "No saved scopes are available."
+      : "No saved scopes match these filters."
+    empty.hidden = visibleCount > 0
+  }
+  elements.intentGroupListVisibleCount.textContent = `${visibleCount} of ${cards.length} scope${cards.length === 1 ? "" : "s"} shown`
+}
+
+function resetIntentGroupFilters() {
+  elements.intentGroupListSearch.value = ""
+  elements.intentGroupNameSourceFilter.value = ""
+  elements.intentGroupSort.value = INTENT_GROUP_SORT.NAME
+  renderIntentGroups()
+}
+
+function refreshedAutomaticIntentGroup(group) {
+  const currentMembersById = new Map(
+    intentGroupScope(group).applies.map((member) => [member.zoneId, member]),
+  )
+  const members = group.members.map((member) => ({
+    zoneId: member.zoneId,
+    zoneName: currentMembersById.get(member.zoneId)?.zoneName || member.zoneName,
+  }))
+  return {
+    ...group,
+    members,
+    name: generatedIntentScopeName(members, state.intent.groups, {
+      excludeGroupId: group.id,
+    }),
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC,
+  }
+}
+
+function automaticIntentGroupNeedsRefresh(group, refreshedGroup) {
+  return group.name !== refreshedGroup.name
+    || group.members.some((member, index) => (
+      member.zoneName !== refreshedGroup.members[index].zoneName
+    ))
+}
+
+async function refreshAutomaticIntentGroupName(groupId, event) {
+  const group = intentGroupById(groupId)
+  if (!group || group.nameSource !== FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC) {
+    return
+  }
+  const refreshedGroup = refreshedAutomaticIntentGroup(group)
+  if (!automaticIntentGroupNeedsRefresh(group, refreshedGroup)) {
+    toast(`${group.name} already uses the current automatic name`)
+    return
+  }
+  let document
+  try {
+    document = replaceFleetIntentGroup(state.intent, refreshedGroup)
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error), "error")
+    return
+  }
+  await persistIntentDocument(
+    document,
+    `Automatic name refreshed to ${refreshedGroup.name}`,
+    {
+      saveButton: event.currentTarget,
+      savingLabel: "Refreshing...",
+    },
+  )
+}
+
 function renderIntentGroups() {
   const fragment = document.createDocumentFragment()
   const loadedZoneIds = state.inventory
     ? new Set(state.inventory.zones.map((zone) => zone.meta.id))
     : null
-  for (const group of state.intent.groups) {
+  const policiesByGroup = new Map(
+    state.intent.groups.map((group) => [group.id, []]),
+  )
+  for (const policy of state.intent.policies) {
+    if (policiesByGroup.has(policy.groupId)) {
+      policiesByGroup.get(policy.groupId).push(policy)
+    }
+  }
+  const policyCounts = intentGroupPolicyCounts()
+  for (const group of orderedIntentGroups(policyCounts)) {
     const unavailableMembers = group.mode === FLEET_INTENT_GROUP_MODE.MEMBERS
       && loadedZoneIds
       ? group.members.filter((member) => !loadedZoneIds.has(member.zoneId))
@@ -6604,17 +6832,17 @@ function renderIntentGroups() {
     const item = createElement("article", {
       className: `intent-item ${unavailableMembers.length > 0 ? "unresolved" : "active"}`,
     })
-    const policies = state.intent.policies.filter(
-      (policy) => policy.groupId === group.id,
-    )
+    const policies = policiesByGroup.get(group.id) || []
+    const nameSourceLabel = intentGroupNameSourceLabel(group)
+    item.dataset.intentGroupCard = ""
+    item.dataset.nameSource = group.nameSource
+    item.dataset.search = [
+      group.name,
+      nameSourceLabel,
+      ...scope.applies.flatMap((zone) => [zone.zoneName, zone.zoneId]),
+    ].join(" ").toLowerCase()
     const heading = createElement("div", { className: "intent-item-heading" })
     const badges = createElement("div", { className: "intent-item-badges" })
-    const nameSourceLabel = group.nameSource
-      === FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC
-      ? "Automatic name"
-      : group.nameSource === FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM
-        ? "Custom name"
-        : "Built in"
     badges.append(intentStatusBadge(nameSourceLabel))
     if (unavailableMembers.length > 0) {
       badges.append(intentStatusBadge(
@@ -6633,17 +6861,16 @@ function renderIntentGroups() {
       }),
       badges,
     )
-    const membershipDescription = group.mode === FLEET_INTENT_GROUP_MODE.ALL
-      ? "Membership follows the loaded inventory"
-      : "Membership stays fixed until edited"
     const summary = createElement("p", {
       className: "intent-item-summary",
-      text: `${group.mode === FLEET_INTENT_GROUP_MODE.ALL ? "Applies to every loaded zone" : `Applies to ${intentGroupPrimaryText(group, scope)}`} | ${membershipDescription}`,
+      text: group.mode === FLEET_INTENT_GROUP_MODE.ALL
+        ? "Applies to every loaded zone"
+        : `Applies to ${intentGroupPrimaryText(group, scope)}`,
     })
     item.append(heading, summary)
-    if (group.mode === FLEET_INTENT_GROUP_MODE.ALL
-      || scope.applies.length > INTENT_ZONE_SUMMARY_LIMIT
-      || unavailableMembers.length > 0) {
+    if (group.mode === FLEET_INTENT_GROUP_MODE.MEMBERS
+      && (scope.applies.length > INTENT_ZONE_SUMMARY_LIMIT
+        || unavailableMembers.length > 0)) {
       const scopeDetails = createElement("div", {
         className: "intent-zone-scope intent-item-scope",
       })
@@ -6661,13 +6888,27 @@ function renderIntentGroups() {
       ))
     }
     if (group.mode === FLEET_INTENT_GROUP_MODE.MEMBERS) {
-      const inUse = policies.length > 0
-      actions.append(
-        intentActionButton("Edit", () => openIntentGroupEditor(group), {
-          context: group.name,
-          write: true,
-        }),
-        intentActionButton("Remove", () => requestIntentRemoval({
+      if (group.nameSource === FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC) {
+        const refreshedGroup = refreshedAutomaticIntentGroup(group)
+        if (automaticIntentGroupNeedsRefresh(group, refreshedGroup)) {
+          actions.append(intentActionButton(
+            "Refresh automatic name",
+            (event) => refreshAutomaticIntentGroupName(group.id, event),
+            {
+              context: group.name,
+              title: `Update this automatic name to "${refreshedGroup.name}" using current zone domains`,
+              write: true,
+            },
+          ))
+        }
+      }
+      actions.append(intentActionButton(
+        "Edit",
+        () => openIntentGroupEditor(group),
+        { context: group.name, write: true },
+      ))
+      if (policies.length === 0) {
+        actions.append(intentActionButton("Remove", () => requestIntentRemoval({
           remove: (document) => removeFleetIntentGroup(document, group.id),
           successMessage: `${group.name} scope removed`,
           summary: `Remove ${group.name}? Its saved membership will be discarded.`,
@@ -6675,17 +6916,22 @@ function renderIntentGroups() {
         }), {
           context: group.name,
           danger: true,
-          title: inUse ? "Remove policies that use this scope first" : "",
           write: true,
-        }),
-      )
-      actions.lastElementChild.dataset.intentBlocked = String(inUse)
-      actions.lastElementChild.disabled = inUse || !intentWritable()
+        }))
+      }
     }
     if (actions.childElementCount > 0) item.append(actions)
     fragment.append(item)
   }
+  const empty = createElement("p", {
+    className: "intent-empty",
+    text: "No saved scopes match these filters.",
+  })
+  empty.dataset.intentGroupFilterEmpty = ""
+  empty.hidden = true
+  fragment.append(empty)
   elements.intentGroupList.replaceChildren(fragment)
+  filterIntentGroups()
 }
 
 function orderedIntentPolicies(layers) {
@@ -6883,7 +7129,7 @@ function renderIntentPolicies() {
       .filter((group) => groupCounts.has(group.id))
       .map((group) => [
         group.id,
-        `${group.name} (${groupCounts.get(group.id)})`,
+        `${group.name} | ${intentGroupNameSourceLabel(group)} (${groupCounts.get(group.id)})`,
       ]),
     "All groups",
   )
@@ -7384,7 +7630,7 @@ function renderIntentAdoptionImpact() {
 function intentAdoptionGroupOption(group) {
   const scope = intentGroupScope(group)
   const option = createElement("option", {
-    text: `${compactIntentScopeName(group.name)} | ${group.mode === FLEET_INTENT_GROUP_MODE.ALL ? "Every loaded zone" : `${scope.applies.length} zone${scope.applies.length === 1 ? "" : "s"}`}`,
+    text: `${compactIntentScopeName(group.name)} | ${intentGroupNameSourceLabel(group)} | ${group.mode === FLEET_INTENT_GROUP_MODE.ALL ? "Every loaded zone" : `${scope.applies.length} zone${scope.applies.length === 1 ? "" : "s"}`}`,
   })
   option.value = group.id
   return option
@@ -12688,6 +12934,10 @@ elements.intentPolicyStatusFilter.addEventListener("change", filterIntentPolicie
 elements.intentPolicyCategoryFilter.addEventListener("change", filterIntentPolicies)
 elements.intentPolicyGroupFilter.addEventListener("change", filterIntentPolicies)
 elements.intentPolicyFilterReset.addEventListener("click", resetIntentPolicyFilters)
+elements.intentGroupListSearch.addEventListener("input", filterIntentGroups)
+elements.intentGroupNameSourceFilter.addEventListener("change", filterIntentGroups)
+elements.intentGroupSort.addEventListener("change", renderIntentGroups)
+elements.intentGroupFilterReset.addEventListener("click", resetIntentGroupFilters)
 elements.intentReviewUngoverned.addEventListener("click", openIntentAdoption)
 elements.intentAdoptionAddGroup.addEventListener("click", () => {
   openIntentGroupEditor(null, { returnToAdoption: true })
@@ -12746,6 +12996,7 @@ elements.intentGroupName.addEventListener("input", () => {
   if (state.intentGroupDraft) state.intentGroupDraft.dirty = true
   clearFieldError(elements.intentGroupName, elements.intentGroupError)
   updateIntentGroupNameHint()
+  updateIntentGroupValidation()
   renderIntentGroupImpact()
 })
 elements.intentGroupForm.addEventListener("submit", saveIntentGroup)
@@ -12778,14 +13029,7 @@ elements.intentPolicyScopeName.addEventListener("input", () => {
   if (!draft) return
   draft.scopeName = elements.intentPolicyScopeName.value
   clearFieldError(elements.intentPolicyScopeName, elements.intentPolicyError)
-  const members = selectedIntentZoneMembers(elements.intentPolicyZoneMembers)
-  if (!elements.intentPolicyScopeName.disabled && members.length > 0) {
-    setIntentAutomaticNameHint(
-      elements.intentPolicyScopeName,
-      elements.intentPolicyScopeNameHelp,
-      generatedIntentScopeName(members, state.intent.groups),
-    )
-  }
+  updateIntentPolicyZoneSelection({ announce: false })
   const group = currentIntentPolicyScopeGroup()
   if (group && !intentGroupById(group.id)) {
     renderIntentPolicyGroupOptions(group.id, draft.policies, group)

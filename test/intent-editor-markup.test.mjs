@@ -110,6 +110,10 @@ test("intent manager is sectioned, filterable, and compact by default", () => {
     assert.match(html, new RegExp(`data-intent-manager-panel="${section}"`))
   }
   for (const id of [
+    "intent-group-list-search",
+    "intent-group-name-source-filter",
+    "intent-group-sort",
+    "intent-group-list-visible-count",
     "intent-policy-search",
     "intent-policy-status-filter",
     "intent-policy-category-filter",
@@ -118,6 +122,9 @@ test("intent manager is sectioned, filterable, and compact by default", () => {
   ]) {
     assert.match(html, new RegExp(`id="${id}"`))
   }
+  assert.match(styles, /\.intent-group-list-controls \{[\s\S]+position: sticky;/)
+  assert.match(appSource, /function filterIntentGroups\(\)/)
+  assert.match(appSource, /function orderedIntentGroups\(policyCounts\)/)
   assert.match(appSource, /function filterIntentPolicies\(\)/)
   assert.match(appSource, /matchingDetails\.className = "intent-item-details"/)
 })
@@ -217,6 +224,15 @@ test("facet intent can build an arbitrary zone scope without requiring a name", 
   assert.match(appSource, /Clear this field to use the automatic name/)
   assert.match(appSource, /Leave blank to use the automatic name/)
   assert.match(appSource, /className: "intent-group-card-name"/)
+  assert.match(appSource, /function intentGroupMembershipCollision\(/)
+  assert.match(appSource, /function updateIntentGroupNameCollision\(/)
+  assert.match(appSource, /automatic name \$\{automaticName\}/)
+  assert.match(appSource, /"Refresh automatic name"/)
+  assert.match(appSource, /intentGroupNameSourceLabel\(group\)/)
+  assert.match(
+    appSource,
+    /if \(policies\.length === 0\) \{[\s\S]+intentActionButton\("Remove"/,
+  )
   assert.match(
     appSource,
     /document = replaceFleetIntentGroup\(document, group\)[\s\S]+document = replaceFleetIntentPolicy\(document, policy\)/,
