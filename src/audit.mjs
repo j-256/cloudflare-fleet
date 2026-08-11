@@ -136,11 +136,14 @@ function progressReporter(stderr) {
   }
 }
 
-function resolveStateFile(argument, environment) {
-  const configured = argument || environment.CLOUDFLARE_FLEET_STATE_FILE
+export function resolveStateFile(argument, environment) {
+  // An explicit --state-file argument is documented to accept a relative path;
+  // only the environment variable is required to be absolute, so branch on the
+  // value's provenance rather than comparing the two values
+  if (argument) return path.resolve(argument)
+  const configured = environment.CLOUDFLARE_FLEET_STATE_FILE
   if (!configured) return DEFAULT_STATE_FILE
-  if (environment.CLOUDFLARE_FLEET_STATE_FILE === configured
-    && !path.isAbsolute(configured)) {
+  if (!path.isAbsolute(configured)) {
     throw new Error("CLOUDFLARE_FLEET_STATE_FILE must be an absolute path")
   }
   return path.resolve(configured)

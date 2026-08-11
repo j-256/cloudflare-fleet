@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import test from "node:test"
 
 import {
@@ -6,6 +7,7 @@ import {
   fleetAuditExitCode,
   fleetAuditUsage,
   parseFleetAuditArguments,
+  resolveStateFile,
 } from "../src/audit.mjs"
 
 test("fleet audit arguments default to a core markdown report", () => {
@@ -92,4 +94,23 @@ test("fleet audit usage labels the command as read-only", () => {
   assert.match(fleetAuditUsage(), /--deep/)
   assert.match(fleetAuditUsage(), /--fail-on LEVEL/)
   assert.match(fleetAuditUsage(), /markdown\|json\|html/)
+})
+
+test("resolveStateFile accepts an explicit relative --state-file even if it equals the env var", () => {
+  // Only the env var must be absolute; an explicit flag value may be relative
+  assert.equal(
+    resolveStateFile("shared/state.json", { CLOUDFLARE_FLEET_STATE_FILE: "shared/state.json" }),
+    path.resolve("shared/state.json"),
+  )
+})
+
+test("resolveStateFile still requires CLOUDFLARE_FLEET_STATE_FILE to be absolute", () => {
+  assert.throws(
+    () => resolveStateFile(undefined, { CLOUDFLARE_FLEET_STATE_FILE: "relative/state.json" }),
+    /CLOUDFLARE_FLEET_STATE_FILE must be an absolute path/,
+  )
+  assert.equal(
+    resolveStateFile(undefined, { CLOUDFLARE_FLEET_STATE_FILE: "/abs/state.json" }),
+    path.resolve("/abs/state.json"),
+  )
 })
