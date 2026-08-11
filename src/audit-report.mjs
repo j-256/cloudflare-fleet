@@ -58,6 +58,13 @@ const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
   RULESET_KIND.ZONE,
 ])
+const HTML_ESCAPE = Object.freeze({
+  "&": "&amp;",
+  "'": "&#39;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "\"": "&quot;",
+})
 
 function surfaceResult(zone, surfaceId) {
   const surface = zone.surfaces?.[surfaceId]
@@ -79,6 +86,10 @@ function finding(id, severity, category, title, detail, options = {}) {
 
 function plural(count, singular, pluralValue = `${singular}s`) {
   return count === 1 ? singular : pluralValue
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => HTML_ESCAPE[character])
 }
 
 function normalizedDnsName(name) {
@@ -823,6 +834,126 @@ export function renderFleetAuditMarkdown(report) {
     }
   }
   return `${lines.filter((line, index) => line !== "" || lines[index - 1] !== "").join("\n").trimEnd()}\n`
+}
+
+export function renderFleetAuditHtml(report) {
+  const severityMetrics = Object.values(FLEET_AUDIT_SEVERITY).map((severity) => (
+    `<article class="metric severity-${severity}"><strong>${report.summary.severity[severity]}</strong><span>${escapeHtml(severity)}</span></article>`
+  )).join("\n          ")
+  const findingSections = Object.values(FLEET_AUDIT_SEVERITY).map((severity) => {
+    const entries = report.findings.filter((entry) => entry.severity === severity)
+    if (entries.length === 0) return ""
+    const findings = entries.map((entry) => {
+      const zones = entry.zones.length > 0
+        ? `<p><strong>Zones:</strong> ${escapeHtml(entry.zones.join(", "))}</p>`
+        : ""
+      return `
+        <article class="finding severity-${severity}">
+          <header>
+            <span class="severity-label">${escapeHtml(severity)}</span>
+            <span class="category">${escapeHtml(entry.category)}</span>
+          </header>
+          <h3>${escapeHtml(entry.title)}</h3>
+          <p class="finding-id"><strong>ID:</strong> <code>${escapeHtml(entry.id)}</code></p>
+          ${zones}
+          <p>${escapeHtml(entry.detail)}</p>
+          <p><strong>Recommendation:</strong> ${escapeHtml(entry.recommendation)}</p>
+          <details>
+            <summary>Evidence</summary>
+            <pre>${escapeHtml(JSON.stringify(entry.evidence, null, 2))}</pre>
+          </details>
+        </article>`
+    }).join("\n")
+    const label = `${severity[0].toUpperCase()}${severity.slice(1)}`
+    return `
+      <section aria-labelledby="severity-${severity}">
+        <h2 id="severity-${severity}">${escapeHtml(label)} <span>${entries.length}</span></h2>
+        <div class="finding-list">${findings}
+        </div>
+      </section>`
+  }).filter(Boolean).join("\n")
+  const intentSummary = report.summary.intent
+    ? `<p><strong>Intent:</strong> ${report.summary.intent.actionableCells} actionable cells, ${report.summary.intent.unresolvedPolicies} unresolved policies, ${report.summary.intent.staleAcknowledgements} stale acknowledgements</p>`
+    : ""
+  const findings = findingSections || "<p class=\"empty\">No findings.</p>"
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <title>Cloudflare Fleet audit</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #07111f; color: #dce7f5; }
+    main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; }
+    .eyebrow { margin: 0 0 8px; color: #70d8ff; font-size: .78rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 0; color: #fff; font-size: clamp(2rem, 5vw, 3.75rem); letter-spacing: -.045em; }
+    h2 { display: flex; align-items: center; gap: 10px; margin: 40px 0 16px; color: #fff; font-size: 1.3rem; }
+    h2 span { border-radius: 999px; padding: 3px 9px; background: #1a2a3e; color: #a8bad0; font-size: .78rem; }
+    h3 { margin: 12px 0 8px; color: #fff; font-size: 1.05rem; }
+    p { line-height: 1.55; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    code { overflow-wrap: anywhere; color: #b9e7ff; }
+    .metadata { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 18px 0 28px; color: #9fb1c7; }
+    .metadata span { white-space: nowrap; }
+    .summary { padding: 22px; border: 1px solid #263a52; border-radius: 18px; background: #0d1a2a; box-shadow: 0 22px 70px rgb(0 0 0 / .22); }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+    .metric { padding: 14px; border: 1px solid #263a52; border-radius: 12px; background: #101f31; }
+    .metric strong, .metric span { display: block; }
+    .metric strong { color: #fff; font-size: 1.65rem; }
+    .metric span { margin-top: 3px; color: #9fb1c7; font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .finding-list { display: grid; min-width: 0; gap: 14px; }
+    .finding { min-width: 0; padding: 20px; border: 1px solid #263a52; border-left-width: 4px; border-radius: 14px; background: #0d1a2a; }
+    .finding header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .severity-label, .category { border-radius: 999px; padding: 4px 9px; font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .severity-label { color: #07111f; }
+    .category { background: #1a2a3e; color: #b7c8dc; }
+    .severity-critical { border-left-color: #ff5c7a; }
+    .severity-warning { border-left-color: #ffbd59; }
+    .severity-review { border-left-color: #70d8ff; }
+    .severity-info { border-left-color: #8e9db0; }
+    .severity-critical .severity-label { background: #ff5c7a; }
+    .severity-warning .severity-label { background: #ffbd59; }
+    .severity-review .severity-label { background: #70d8ff; }
+    .severity-info .severity-label { background: #aab8c8; }
+    .finding-id { color: #9fb1c7; }
+    details { min-width: 0; margin-top: 16px; border-top: 1px solid #263a52; padding-top: 12px; }
+    summary { width: fit-content; cursor: pointer; color: #70d8ff; font-weight: 700; }
+    pre { overflow: auto; max-width: 100%; margin: 12px 0 0; padding: 14px; border-radius: 10px; background: #07111f; color: #bdd0e5; font-size: .82rem; line-height: 1.5; }
+    .empty { padding: 24px; border: 1px solid #263a52; border-radius: 14px; background: #0d1a2a; }
+    @media (max-width: 600px) { main { width: min(100% - 20px, 1120px); padding-top: 28px; } .summary, .finding { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Read-only configuration review</p>
+      <h1>Cloudflare Fleet audit</h1>
+      <div class="metadata">
+        <span><strong>Generated:</strong> ${escapeHtml(report.generatedAt)}</span>
+        <span><strong>Mode:</strong> ${escapeHtml(report.mode)}</span>
+        <span><strong>Account:</strong> <code>${escapeHtml(report.accountId)}</code></span>
+      </div>
+    </header>
+    <section class="summary" aria-labelledby="summary-heading">
+      <h2 id="summary-heading">Summary</h2>
+      <div class="metrics">
+        <article class="metric"><strong>${report.summary.zones}</strong><span>zones</span></article>
+        <article class="metric"><strong>${report.summary.matrix.facets}</strong><span>matrix facets</span></article>
+        <article class="metric"><strong>${report.summary.findings}</strong><span>findings</span></article>
+          ${severityMetrics}
+      </div>
+      <p><strong>Raw matrix differences:</strong> ${report.summary.matrix.differences}</p>
+      ${intentSummary}
+    </section>
+    ${findings}
+  </main>
+</body>
+</html>
+`
 }
 
 export function auditFinding(options) {

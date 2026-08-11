@@ -9,6 +9,7 @@ import { collectDeepAuditFindings } from "./audit-deep.mjs"
 import {
   buildFleetAudit,
   FLEET_AUDIT_SEVERITY,
+  renderFleetAuditHtml,
   renderFleetAuditMarkdown,
 } from "./audit-report.mjs"
 import { isMainModule } from "./entrypoint.mjs"
@@ -16,6 +17,7 @@ import { loadInventory } from "./inventory.mjs"
 import { readFleetStateDocument } from "./state-store.mjs"
 
 const AUDIT_FORMAT = Object.freeze({
+  HTML: "html",
   JSON: "json",
   MARKDOWN: "markdown",
 })
@@ -38,12 +40,12 @@ export function fleetAuditUsage() {
     "  cloudflare-fleet-audit - inspect live Cloudflare fleet configuration without writing",
     "",
     "SYNOPSIS",
-    "  node src/audit.mjs [--deep] [--format markdown|json] [--fail-on LEVEL] [--state-file PATH]",
+    "  node src/audit.mjs [--deep] [--format markdown|json|html] [--fail-on LEVEL] [--state-file PATH]",
     "",
     "OPTIONS",
     "  --deep             Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
     "  --fail-on LEVEL    Exit 2 for findings at or above critical, warning, review, or info",
-    "  --format FORMAT    Render markdown or JSON (default: markdown)",
+    "  --format FORMAT    Render markdown, JSON, or self-contained HTML (default: markdown)",
     "  --state-file PATH  Read fleet intent and coverage expectations from PATH",
     "  -h, --help         Show this help text",
     "",
@@ -180,9 +182,12 @@ export async function runFleetAuditCommand(options = {}) {
     intent: state.intent,
     now,
   })
-  stdout.write(parsed.format === AUDIT_FORMAT.JSON
+  const output = parsed.format === AUDIT_FORMAT.JSON
     ? `${JSON.stringify(report, null, 2)}\n`
-    : renderFleetAuditMarkdown(report))
+    : parsed.format === AUDIT_FORMAT.HTML
+      ? renderFleetAuditHtml(report)
+      : renderFleetAuditMarkdown(report)
+  stdout.write(output)
   stderr.write(`[audit] Complete: ${report.summary.findings} findings across ${report.summary.zones} zones\n`)
   const exitCode = fleetAuditExitCode(report, parsed.failOn)
   if (parsed.failOn) {

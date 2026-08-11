@@ -34,6 +34,16 @@ test("fleet audit arguments accept deep JSON output and an explicit state file",
   })
 })
 
+test("fleet audit arguments accept a self-contained HTML report", () => {
+  assert.deepEqual(parseFleetAuditArguments(["--format=html"]), {
+    deep: false,
+    failOn: null,
+    format: "html",
+    help: false,
+    stateFile: null,
+  })
+})
+
 test("fleet audit arguments reject unsupported formats and unknown options", () => {
   assert.throws(
     () => parseFleetAuditArguments(["--format", "yaml"]),
@@ -81,4 +91,5 @@ test("fleet audit usage labels the command as read-only", () => {
   assert.match(fleetAuditUsage(), /without writing/)
   assert.match(fleetAuditUsage(), /--deep/)
   assert.match(fleetAuditUsage(), /--fail-on LEVEL/)
+  assert.match(fleetAuditUsage(), /markdown\|json\|html/)
 })

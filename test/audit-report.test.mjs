@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   buildFleetAudit,
   FLEET_AUDIT_SCHEMA_VERSION,
+  renderFleetAuditHtml,
   renderFleetAuditMarkdown,
 } from "../src/audit-report.mjs"
 import { SURFACES } from "../src/constants.mjs"
@@ -176,4 +177,49 @@ test("fleet audit markdown keeps the machine-stable finding identifier visible",
   assert.match(markdown, /^# Cloudflare Fleet audit/m)
   assert.match(markdown, /ID: `dnssec\.stalled:alpha\.example`/)
   assert.match(markdown, /Recommendation:/)
+})
+
+test("fleet audit HTML is self-contained and escapes finding evidence", () => {
+  const report = {
+    accountId: "account<&",
+    findings: [{
+      category: "DNS & TLS",
+      detail: "Unsafe <script>alert(1)</script>",
+      evidence: { value: "</pre><script>alert(2)</script>" },
+      id: "finding<&",
+      recommendation: "Review \"quoted\" input",
+      severity: "warning",
+      title: "Escaped <finding>",
+      zones: ["alpha&beta.example"],
+    }],
+    generatedAt: "2026-08-09T18:00:00.000Z",
+    inventoryLoadedAt: "2026-08-09T17:00:00.000Z",
+    mode: "core",
+    schemaVersion: FLEET_AUDIT_SCHEMA_VERSION,
+    summary: {
+      findings: 1,
+      intent: null,
+      matrix: {
+        differences: 1,
+        facets: 2,
+      },
+      severity: {
+        critical: 0,
+        info: 0,
+        review: 0,
+        warning: 1,
+      },
+      zones: 1,
+    },
+  }
+
+  const html = renderFleetAuditHtml(report)
+
+  assert.match(html, /^<!doctype html>/)
+  assert.match(html, /Content-Security-Policy/)
+  assert.match(html, /Escaped &lt;finding&gt;/)
+  assert.match(html, /alpha&amp;beta\.example/)
+  assert.match(html, /&lt;\/pre&gt;&lt;script&gt;alert\(2\)&lt;\/script&gt;/)
+  assert.equal(html.includes("<script>alert"), false)
+  assert.match(html, /<details>[\s\S]*<summary>Evidence<\/summary>/)
 })
