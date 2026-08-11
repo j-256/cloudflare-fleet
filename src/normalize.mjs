@@ -26,8 +26,23 @@ export function stableString(value) {
   return JSON.stringify(stableValue(value))
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+// Rewrite the zone name to {zone} only where it is not glued to an adjacent
+// alphanumeric, so an unrelated host that merely contains the zone name as a
+// substring (myexample.com, example.company) is left intact and an identical
+// value compares equal across zones. A hyphen is deliberately treated as a
+// separator, not a label character, so generated rule refs like
+// "protect-alpha.example" still normalize to "protect-{zone}"
 export function normalizeText(value, zoneName) {
-  return String(value).split(zoneName).join(ZONE_PLACEHOLDER)
+  if (!zoneName) return String(value)
+  const pattern = new RegExp(
+    `(?<![A-Za-z0-9])${escapeRegExp(zoneName)}(?![A-Za-z0-9])`,
+    "g",
+  )
+  return String(value).replace(pattern, ZONE_PLACEHOLDER)
 }
 
 export function materializeText(value, zoneName) {
