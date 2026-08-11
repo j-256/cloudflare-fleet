@@ -103,6 +103,17 @@ function normalizedTxtContent(content) {
     .replace(/"$/, "")
 }
 
+// Stable, order-independent hash (djb2) used to disambiguate finding
+// identifiers when the underlying records carry no server-assigned id
+function stableHash(value) {
+  let hash = 5381
+  const text = String(value)
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(index)) >>> 0
+  }
+  return hash.toString(36)
+}
+
 function coverageFindings(inventory, intent) {
   const issues = [
     ...coverageFor(inventory).flatMap((surface) => surface.failed),
@@ -534,10 +545,16 @@ function dnsRecordFindings(inventory) {
       if (!duplicates.has(canonical)) duplicates.set(canonical, [])
       duplicates.get(canonical).push(record)
     }
-    for (const duplicate of [...duplicates.values()].filter((entries) => entries.length > 1)) {
+    for (const [canonical, duplicate] of duplicates) {
+      if (duplicate.length <= 1) continue
       const record = duplicate[0]
+      // Prefer server-assigned record ids; fall back to a hash of the canonical
+      // value so two id-less duplicate groups at one host cannot collide
+      const idSuffix = duplicate.every((entry) => entry.id)
+        ? duplicate.map((entry) => entry.id).sort().join(",")
+        : `hash-${stableHash(canonical)}`
       findings.push(finding(
-        `dns.exact-duplicate:${zone.meta.name}:${record.type}:${normalizedDnsName(record.name)}:${duplicate.map((entry) => entry.id || "unknown").sort().join(",")}`,
+        `dns.exact-duplicate:${zone.meta.name}:${record.type}:${normalizedDnsName(record.name)}:${idSuffix}`,
         FLEET_AUDIT_SEVERITY.WARNING,
         "DNS",
         "Exact duplicate DNS records are present",

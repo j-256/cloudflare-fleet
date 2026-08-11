@@ -271,3 +271,19 @@ test("fleet audit does not expect DMARC when a zone publishes no SPF", () => {
   const ids = new Set(report.findings.map((entry) => entry.id))
   assert.ok(!ids.has("dns.spf-without-dmarc:no-mail.example"))
 })
+
+test("fleet audit distinguishes duplicate DNS groups that lack record identifiers", () => {
+  const aRecord = (content) => ({ content, name: "dup.alpha.example", ttl: 300, type: "A" })
+  const alpha = completeSurfaces(makeZone("alpha.example", {
+    // Two independent duplicate pairs at the same host/type, none carrying an id
+    dns: [aRecord("192.0.2.1"), aRecord("192.0.2.1"), aRecord("192.0.2.9"), aRecord("192.0.2.9")],
+  }))
+
+  // Must not crash on the finding-id collision, and must report both groups distinctly
+  const report = buildFleetAudit(makeInventory([alpha]), { now: NOW })
+  const dupIds = report.findings
+    .map((entry) => entry.id)
+    .filter((id) => id.startsWith("dns.exact-duplicate:alpha.example:A:dup.alpha.example:"))
+  assert.equal(dupIds.length, 2, "expected two distinct duplicate findings")
+  assert.equal(new Set(dupIds).size, 2, "duplicate finding identifiers must be unique")
+})
