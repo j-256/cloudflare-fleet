@@ -90,7 +90,7 @@ function dnsRecords(zoneName, options = {}) {
   ]
   if (options.includeDocs) {
     records.push({
-      content: "docs-host.example.net",
+      content: options.docsTarget || "docs-host.example.net",
       id: `docs-${zoneName}`,
       name: `docs.${zoneName}`,
       proxied: false,
@@ -106,6 +106,7 @@ function dashboardInventory() {
     makeDashboardZone(ZONE_NAMES[0], {
       dns: dnsRecords(ZONE_NAMES[0], {
         apexAddress: "192.0.2.10",
+        docsTarget: "docs-primary.example.net",
         includeDocs: true,
         spf: "v=spf1 include:_spf.example.net -all",
       }),
@@ -118,6 +119,7 @@ function dashboardInventory() {
     makeDashboardZone(ZONE_NAMES[1], {
       dns: dnsRecords(ZONE_NAMES[1], {
         apexAddress: "192.0.2.20",
+        docsTarget: "docs-secondary.example.net",
         includeDocs: true,
         spf: "v=spf1 include:_spf.example.net -all",
       }),
@@ -157,6 +159,7 @@ function jsonResponse(status, payload) {
 function fakeCloudflareTransport(inventory) {
   const requests = []
   const dnsByZone = new Map()
+  const failures = []
   const settings = new Map()
   let createdDnsRecord = 0
   for (const zone of inventory.zones) {
@@ -181,6 +184,18 @@ function fakeCloudflareTransport(inventory) {
       method,
       path: `${relativePath}${target.search}`,
     })
+
+    const failureIndex = failures.findIndex((failure) => (
+      failure.method === method
+      && (!failure.path || failure.path === relativePath)
+    ))
+    if (failureIndex !== -1) {
+      const [failure] = failures.splice(failureIndex, 1)
+      return jsonResponse(failure.status, {
+        errors: [{ message: failure.message }],
+        success: false,
+      })
+    }
 
     if (relativePath === ZONES_PATH && method === "GET") {
       return jsonResponse(200, {
@@ -302,6 +317,25 @@ function fakeCloudflareTransport(inventory) {
         dnsByZone.get(`zone-${zoneName}`) || [],
       )
     },
+    queueFailure(failure) {
+      failures.push({
+        message: failure.message || "Simulated upstream failure",
+        method: failure.method,
+        path: failure.path || "",
+        status: failure.status || 500,
+      })
+    },
+    setSettingValue(zoneName, settingId, value) {
+      const key = `zone-${zoneName}:${settingId}`
+      const current = settings.get(key)
+      if (!current) {
+        throw new Error(`Setting ${settingId} does not exist on ${zoneName}`)
+      }
+      settings.set(key, {
+        ...current,
+        value,
+      })
+    },
     settingValue(zoneName, settingId) {
       return settings.get(`zone-${zoneName}:${settingId}`)?.value
     },
@@ -391,9 +425,11 @@ export async function createDashboardSession(options = {}) {
   return {
     broker,
     dnsRecords: transport.dnsRecords,
+    queueFailure: transport.queueFailure,
     requests: transport.requests,
     root,
     sessionSecret: SESSION_SECRET,
+    setSettingValue: transport.setSettingValue,
     settingValue: transport.settingValue,
     stateFile,
     url: broker.sessionUrl,
@@ -420,6 +456,7 @@ export async function waitForDashboard(page) {
 }
 
 async function useDashboard(page, use, testInfo, options = {}) {
+  const allowedBrowserErrors = []
   const browserErrors = []
   page.on("console", (message) => {
     if (message.type() === "error") browserErrors.push(message.text())
@@ -430,18 +467,26 @@ async function useDashboard(page, use, testInfo, options = {}) {
   await waitForDashboard(page)
   await use({
     ...session,
+    allowBrowserError: (matcher) => allowedBrowserErrors.push(matcher),
     page,
     waitForReady: () => waitForDashboard(page),
   })
   await page.close()
   await closeDashboardSession(session)
-  if (browserErrors.length > 0) {
+  const unexpectedBrowserErrors = browserErrors.filter((message) => (
+    !allowedBrowserErrors.some((matcher) => (
+      matcher instanceof RegExp
+        ? matcher.test(message)
+        : message.includes(String(matcher))
+    ))
+  ))
+  if (unexpectedBrowserErrors.length > 0) {
     await testInfo.attach("browser-errors", {
-      body: browserErrors.join("\n"),
+      body: unexpectedBrowserErrors.join("\n"),
       contentType: "text/plain",
     })
     if (testInfo.status === testInfo.expectedStatus) {
-      throw new Error(`Unexpected browser errors:\n${browserErrors.join("\n")}`)
+      throw new Error(`Unexpected browser errors:\n${unexpectedBrowserErrors.join("\n")}`)
     }
   }
 }

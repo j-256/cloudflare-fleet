@@ -12,7 +12,7 @@ async function acceptCurrentWrite(page) {
   await confirmation.getByRole("button", { name: "Apply and verify" }).click()
 }
 
-async function applySettingChange(page, zoneName, desiredValue) {
+async function reviewSettingChange(page, zoneName, desiredValue) {
   await page.getByPlaceholder("Search facets, values, or zones").fill(
     "always_use_https",
   )
@@ -22,6 +22,11 @@ async function applySettingChange(page, zoneName, desiredValue) {
   const editor = page.locator("form.inline-value-editor")
   await editor.getByLabel("Desired value").fill(desiredValue)
   await editor.getByRole("button", { name: "Review" }).click()
+  return page.locator("#confirm-dialog")
+}
+
+async function applySettingChange(page, zoneName, desiredValue) {
+  await reviewSettingChange(page, zoneName, desiredValue)
   await acceptCurrentWrite(page)
   await expect(page.locator("#toast-message")).toHaveText(
     "Writes succeeded and live verification passed",
@@ -201,6 +206,18 @@ test("fills a missing DNS cell through live validation and guarded undo", async 
     name: `Fill CNAME docs on ${targetZone}`,
   }).click()
 
+  const chooser = page.locator("#hole-dialog")
+  await expect(chooser).toBeVisible()
+  await expect(chooser.locator("#hole-source option")).toHaveCount(2)
+  const sourceValue = await chooser.locator("#hole-source option")
+    .filter({ hasText: zoneNames[0] })
+    .getAttribute("value")
+  await chooser.locator("#hole-source").selectOption(sourceValue)
+  await expect(chooser.locator("#hole-preview")).toContainText(
+    "docs-primary.example.net",
+  )
+  await chooser.getByRole("button", { name: "Build live preview" }).click()
+
   const confirmation = page.locator("#confirm-dialog")
   await expect(confirmation).toContainText(`Fill CNAME docs on ${targetZone}`)
   await expect(confirmation).toContainText("POST")
@@ -210,6 +227,7 @@ test("fills a missing DNS cell through live validation and guarded undo", async 
     "Writes succeeded and live verification passed",
   )
   expect(targetRecords()).toHaveLength(1)
+  expect(targetRecords()[0].content).toBe("docs-primary.example.net")
   await expect(page.getByRole("button", {
     name: `Fill CNAME docs on ${targetZone}`,
   })).toHaveCount(0)
@@ -229,6 +247,127 @@ test("fills a missing DNS cell through live validation and guarded undo", async 
   })).toBeVisible()
   expect(requests.filter((request) => request.method === "POST")).toHaveLength(1)
   expect(requests.filter((request) => request.method === "DELETE")).toHaveLength(1)
+})
+
+test("cancels a reviewed setting change without writing", async ({ dashboard }) => {
+  const { page, requests, settingValue, zoneNames } = dashboard
+  const targetZone = zoneNames[1]
+
+  const confirmation = await reviewSettingChange(page, targetZone, "on")
+  await expect(confirmation).toBeVisible()
+  await expect(confirmation.getByRole("button", {
+    name: "Apply and verify",
+  })).toBeDisabled()
+  await confirmation.getByRole("button", { name: "Cancel" }).click()
+
+  await expect(confirmation).not.toBeVisible()
+  expect(settingValue(targetZone, "always_use_https")).toBe("off")
+  expect(requests.filter((request) => request.method === "PATCH")).toHaveLength(0)
+  await expect(page.getByRole("button", { name: /Activity 0:/ })).toBeVisible()
+})
+
+test("records an upstream write failure without changing live state", async ({ dashboard }) => {
+  const {
+    allowBrowserError,
+    page,
+    queueFailure,
+    requests,
+    settingValue,
+    zoneNames,
+  } = dashboard
+  const targetZone = zoneNames[1]
+
+  allowBrowserError(
+    /Failed to load resource: the server responded with a status of 500/,
+  )
+  queueFailure({
+    message: "Simulated write failure",
+    method: "PATCH",
+    path: `zones/zone-${targetZone}/settings/always_use_https`,
+    status: 500,
+  })
+  await reviewSettingChange(page, targetZone, "on")
+  await acceptCurrentWrite(page)
+
+  await expect(page.locator("#toast-message")).toContainText(
+    "Simulated write failure",
+  )
+  expect(settingValue(targetZone, "always_use_https")).toBe("off")
+  expect(requests.filter((request) => request.method === "PATCH")).toHaveLength(1)
+
+  await page.getByRole("button", { name: /Activity 1:/ }).click()
+  const activity = page.getByRole("dialog", { name: "Operation history" })
+  await expect(activity.locator(".activity-status.write-failed")).toHaveText(
+    "Write failed",
+  )
+  await expect(activity.locator(".activity-error")).toContainText(
+    "Simulated write failure",
+  )
+  await expect(activity.locator(".activity-undo")).toHaveCount(0)
+  await activity.getByLabel("Show").selectOption({ label: "Needs attention" })
+  await expect(activity.locator("#activity-visible-count")).toHaveText("1 operation")
+})
+
+test("blocks guarded undo after live state drifts", async ({ dashboard }) => {
+  const {
+    page,
+    requests,
+    setSettingValue,
+    zoneNames,
+  } = dashboard
+  const targetZone = zoneNames[1]
+
+  await applySettingChange(page, targetZone, "on")
+  setSettingValue(targetZone, "always_use_https", "off")
+  await page.getByRole("button", { name: /Activity 1:/ }).click()
+  const activity = page.getByRole("dialog", { name: "Operation history" })
+  await activity.getByRole("button", { name: "Review guarded undo" }).click()
+
+  await expect(page.locator("#toast-message")).toContainText(
+    "Live state no longer matches the recorded verified result",
+  )
+  await expect(activity).toBeVisible()
+  await expect(activity.locator(".activity-undo-state")).toContainText(
+    "Undo blocked",
+  )
+  await expect(page.locator("#confirm-dialog")).not.toBeVisible()
+  expect(requests.filter((request) => request.method === "PATCH")).toHaveLength(1)
+})
+
+test("keeps the loaded matrix usable when the broker disconnects", async ({ dashboard }) => {
+  const {
+    allowBrowserError,
+    broker,
+    page,
+    zoneNames,
+  } = dashboard
+  const rows = page.locator("#matrix-body tr")
+  const initialRowCount = await rows.count()
+
+  allowBrowserError(/Failed to load resource: net::ERR_CONNECTION_REFUSED/)
+  allowBrowserError(
+    /Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING/,
+  )
+  broker.close()
+  broker.server.closeAllConnections()
+  await broker.closed
+
+  await expect(page.locator("#status-text")).toHaveText(
+    "Session broker offline",
+  )
+  await expect(page.locator("#refresh-detail")).toContainText(
+    "The loaded matrix remains available",
+  )
+  await expect(page.locator("#refresh")).toBeDisabled()
+  const edit = page.getByRole("button", {
+    name: `Edit always_use_https on ${zoneNames[1]}`,
+  })
+  await expect(edit).toBeDisabled()
+  await expect(edit.locator("xpath=ancestor::td[1]")).toHaveAttribute(
+    "title",
+    /Session broker offline/,
+  )
+  await expect(rows).toHaveCount(initialRowCount)
 })
 
 test("persists an expected coverage decision and reverses it", async ({ dashboard }) => {
