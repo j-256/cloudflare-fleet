@@ -6367,6 +6367,30 @@ dialog details > summary {
 
 }
 
+@media (max-width: 359px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-state {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .summary-grid {
+    grid-row: 3;
+  }
+
+  .intent-verdict-main {
+    grid-row: 4;
+  }
+
+  .load-progress {
+    grid-row: 5;
+  }
+}
+
 @media (max-height: 640px), (max-width: 359px), (max-width: 420px) and (max-height: 760px) {
   .intent-workspace {
     gap: 8px;
