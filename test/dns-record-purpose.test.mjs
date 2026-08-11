@@ -107,6 +107,16 @@ test("TXT record identities align protocols and verification providers", () => {
   )
 })
 
+test("Zoom domain-verification records group across zones by provider marker", () => {
+  // Zoom uses a delimiter-less zoom_verify_<token> form; the per-zone token
+  // must not fragment the identity the way every other provider groups
+  const first = txtRecordIdentity(txt("alpha.example", "zoom_verify_abc123"), "alpha.example")
+  const second = txtRecordIdentity(txt("beta.example", "zoom_verify_xyz789"), "beta.example")
+  assert.equal(first.key, `${TXT_RECORD_PURPOSE.VERIFICATION}:zoom_verify`)
+  assert.equal(first.label, "Domain verification: zoom_verify")
+  assert.equal(first.key, second.key)
+})
+
 test("TXT purpose counts retain stable presentation order", () => {
   const counts = txtRecordPurposeCounts([
     txt("example.com", "custom value"),

@@ -80,7 +80,11 @@ export function txtRecordPurpose(record) {
 
 function txtRecordMarker(content) {
   const marker = content.match(/^([^:=\s]+)(?=[:=])/)?.[1]
-  return marker ? marker.toLowerCase() : ""
+  if (marker) return marker.toLowerCase()
+  // Some providers use a delimiter-less prefix_<token> form (e.g. Zoom); group
+  // by the fixed provider prefix so the per-zone token does not fragment identity
+  const prefixed = content.match(/^(zoom_verify)_/i)?.[1]
+  return prefixed ? prefixed.toLowerCase() : ""
 }
 
 export function txtRecordIdentity(record, zoneName) {
