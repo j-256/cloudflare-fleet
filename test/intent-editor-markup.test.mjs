@@ -208,11 +208,15 @@ test("facet intent can build an arbitrary zone scope without requiring a name", 
     assert.match(html, new RegExp(`id="${id}"`))
   }
   assert.match(html, /Saved scope shortcut/)
-  assert.match(html, /Scope name <span class="optional-field">\(optional\)<\/span>/)
+  assert.match(html, /Custom name <span class="optional-field">\(optional\)<\/span>/)
   assert.doesNotMatch(html, /id="intent-group-name"[^>]+required/)
   assert.doesNotMatch(html, /id="intent-policy-add-group"/)
   assert.match(appSource, /findIntentGroupForZoneSelection\(/)
   assert.match(appSource, /generatedIntentScopeName\(/)
+  assert.match(appSource, /FLEET_INTENT_GROUP_NAME_SOURCE\.AUTOMATIC/)
+  assert.match(appSource, /Clear this field to use the automatic name/)
+  assert.match(appSource, /Leave blank to use the automatic name/)
+  assert.match(appSource, /className: "intent-group-card-name"/)
   assert.match(
     appSource,
     /document = replaceFleetIntentGroup\(document, group\)[\s\S]+document = replaceFleetIntentPolicy\(document, policy\)/,

@@ -8,6 +8,7 @@ import {
   createAuthoredFleetIntentExpected,
   createEmptyFleetIntentDocument,
   FLEET_INTENT_DOCUMENT_GLOBAL,
+  FLEET_INTENT_GROUP_NAME_SOURCE,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_SCHEMA_VERSION,
   FLEET_INTENT_VALUE_CONSTRAINT,
@@ -56,6 +57,7 @@ test("intent store atomically persists a restrictive revisioned document", async
     members: [{ zoneId: "zone-a", zoneName: "a.example" }],
     mode: "members",
     name: "Primary zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
 
   const saved = await persistFleetIntentDocument(
@@ -259,6 +261,7 @@ test("serialized intent writers allow only one update from a shared revision", a
     members: [{ zoneId: "zone-a", zoneName: "a.example" }],
     mode: "members",
     name: "Left zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
   const right = structuredClone(original)
   right.groups.push({
@@ -266,6 +269,7 @@ test("serialized intent writers allow only one update from a shared revision", a
     members: [{ zoneId: "zone-b", zoneName: "b.example" }],
     mode: "members",
     name: "Right zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
 
   const outcomes = await Promise.allSettled([
@@ -301,6 +305,7 @@ test("intent store recovers an abandoned stale lock", async (context) => {
     members: [{ zoneId: "zone-a", zoneName: "a.example" }],
     mode: "members",
     name: "Recovered zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
   const recovered = await persistFleetIntentDocument(
     file,
@@ -322,6 +327,7 @@ test("state files reject another Cloudflare account explicitly", async (context)
     members: [{ zoneId: "zone-a", zoneName: "a.example" }],
     mode: "members",
     name: "First zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
   await persistFleetIntentDocument(file, "account-one", "", first)
 

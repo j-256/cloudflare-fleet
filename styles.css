@@ -3723,6 +3723,11 @@ dialog form {
   font-size: 13px;
 }
 
+#intent-group-list .intent-group-card-name {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
 .intent-item-summary {
   margin: 6px 0 0;
   color: var(--muted);

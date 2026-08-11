@@ -18,6 +18,7 @@ import {
 } from "../src/activity-store.mjs"
 import {
   createEmptyFleetIntentDocument,
+  FLEET_INTENT_GROUP_NAME_SOURCE,
 } from "../src/fleet-intent.mjs"
 import {
   readFleetIntentDocument,
@@ -470,6 +471,7 @@ test("session broker reads and writes authorized fleet intent", async () => {
       members: [{ zoneId: "zone-a", zoneName: "a.example" }],
       mode: "members",
       name: "Primary zones",
+      nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
     })
     const savedResponse = await fetch(url, {
       body: JSON.stringify({

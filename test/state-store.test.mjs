@@ -11,6 +11,7 @@ import {
 } from "../src/activity-store.mjs"
 import {
   createEmptyFleetIntentDocument,
+  FLEET_INTENT_GROUP_NAME_SOURCE,
   FLEET_INTENT_SCHEMA_VERSION,
 } from "../src/fleet-intent.mjs"
 import {
@@ -84,6 +85,7 @@ test("fleet state wraps an existing intent document without losing it", async (c
     members: [{ zoneId: "zone-one", zoneName: "alpha.example" }],
     mode: "members",
     name: "Primary",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
   await fs.writeFile(stateFile, `${JSON.stringify(intent)}\n`)
 
@@ -162,6 +164,7 @@ test("concurrent intent and activity updates preserve both state sections", asyn
     members: [{ zoneId: "zone-one", zoneName: "alpha.example" }],
     mode: "members",
     name: "Primary",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   })
 
   await Promise.all([

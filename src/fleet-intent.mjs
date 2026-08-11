@@ -10,7 +10,7 @@ import { dnssecRequestedStatus } from "./dnssec.mjs"
 import { editableEmailRoutingRulePayload } from "./policies.mjs"
 import { redirectIntentValueProjection } from "./facet-equivalence.mjs"
 
-export const FLEET_INTENT_SCHEMA_VERSION = 7
+export const FLEET_INTENT_SCHEMA_VERSION = 8
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
 export const FLEET_INTENT_ALL_ZONES_GROUP_ID = "all-zones"
 export const FLEET_INTENT_EMPTY_REVISION = ""
@@ -21,6 +21,12 @@ export const FLEET_INTENT_REASON_MAX_LENGTH = 2000
 export const FLEET_INTENT_GROUP_MODE = Object.freeze({
   ALL: "all",
   MEMBERS: "members",
+})
+
+export const FLEET_INTENT_GROUP_NAME_SOURCE = Object.freeze({
+  AUTOMATIC: "automatic",
+  CUSTOM: "custom",
+  SYSTEM: "system",
 })
 
 export const FLEET_INTENT_CELL_STATUS = Object.freeze({
@@ -85,6 +91,7 @@ const LEGACY_FLEET_INTENT_SCHEMA_VERSION_THREE = 3
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR = 4
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE = 5
 const LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX = 6
+const LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN = 7
 const REVISION_PATTERN = /^[a-f0-9]{64}$/
 const COMPOSED_CELL_STATUS_PRIORITY = Object.freeze({
   [FLEET_INTENT_CELL_STATUS.MATCH]: 0,
@@ -137,6 +144,16 @@ function allZonesGroup() {
     members: [],
     mode: FLEET_INTENT_GROUP_MODE.ALL,
     name: "All zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM,
+  }
+}
+
+function normalizeFleetIntentGroup(group) {
+  return {
+    ...structuredClone(group),
+    nameSource: group.mode === FLEET_INTENT_GROUP_MODE.ALL
+      ? FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM
+      : group.nameSource ?? FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
   }
 }
 
@@ -154,9 +171,20 @@ export function createEmptyFleetIntentDocument(accountId) {
   }
 }
 
-function isGroup(group) {
+function isGroup(group, options = {}) {
   if (!isObject(group) || !isIdentifier(group.id) || !isLabel(group.name)) return false
   if (!Object.values(FLEET_INTENT_GROUP_MODE).includes(group.mode)) return false
+  const nameSourceValid = Object.values(FLEET_INTENT_GROUP_NAME_SOURCE).includes(
+    group.nameSource,
+  )
+  if ((options.requireNameSource || group.nameSource !== undefined)
+    && !nameSourceValid) return false
+  if (nameSourceValid) {
+    const systemNameMatchesMode = group.mode === FLEET_INTENT_GROUP_MODE.ALL
+      ? group.nameSource === FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM
+      : group.nameSource !== FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM
+    if (!systemNameMatchesMode) return false
+  }
   if (!Array.isArray(group.members)) return false
   if (group.mode === FLEET_INTENT_GROUP_MODE.ALL && group.members.length > 0) return false
   const membersValid = group.members.every((member) => (
@@ -428,6 +456,7 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
     || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX
+    || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN
   if (!isObject(value)) return false
   if (value.schemaVersion !== schemaVersion) return false
   if (!isLabel(value.accountId)) return false
@@ -435,19 +464,27 @@ function isFleetIntentDocumentVersion(value, accountId, schemaVersion) {
   if (value.revision !== FLEET_INTENT_EMPTY_REVISION
     && (typeof value.revision !== "string" || !REVISION_PATTERN.test(value.revision))) return false
   if (value.updatedAt !== null && !isTimestamp(value.updatedAt)) return false
-  if (!Array.isArray(value.groups) || !value.groups.every(isGroup)) return false
+  if (!Array.isArray(value.groups) || !value.groups.every(
+    (group) => isGroup(group, {
+      requireNameSource: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+    }),
+  )) return false
   if (!Array.isArray(value.policies) || !value.policies.every(
     (policy) => isPolicy(policy, {
       requireNormalizedDnssec: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
         || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FOUR
         || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
-        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN,
       requireNormalizedEmailRouting: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
-        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN,
       requireNormalizedPresence: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
         || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_FIVE
-        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
-      requireNormalizedRedirect: schemaVersion === FLEET_INTENT_SCHEMA_VERSION,
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN,
+      requireNormalizedRedirect: schemaVersion === FLEET_INTENT_SCHEMA_VERSION
+        || schemaVersion === LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN,
     }),
   )) return false
   if (!Array.isArray(value.acknowledgements)
@@ -519,8 +556,14 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     accountId,
     LEGACY_FLEET_INTENT_SCHEMA_VERSION_SIX,
   )
+  const versionSevenValid = isFleetIntentDocumentVersion(
+    value,
+    accountId,
+    LEGACY_FLEET_INTENT_SCHEMA_VERSION_SEVEN,
+  )
   if (!versionOneValid && !versionTwoValid && !versionThreeValid
-    && !versionFourValid && !versionFiveValid && !versionSixValid) {
+    && !versionFourValid && !versionFiveValid && !versionSixValid
+    && !versionSevenValid) {
     throw new TypeError("Fleet intent document cannot be migrated")
   }
   const legacyPolicies = versionOneValid
@@ -530,6 +573,7 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     }))
     : structuredClone(value.policies)
   const policies = legacyPolicies.map(normalizeFleetIntentPolicy)
+  const groups = value.groups.map(normalizeFleetIntentGroup)
   const dnssecPolicyIds = new Set(
     policies.filter(isDnssecIntentPolicy).map((policy) => policy.id),
   )
@@ -567,9 +611,10 @@ export function migrateFleetIntentDocument(value, accountId = null) {
     ...structuredClone(value),
     acknowledgements,
     coverageExpectations: versionThreeValid || versionFourValid || versionFiveValid
-      || versionSixValid
+      || versionSixValid || versionSevenValid
       ? structuredClone(value.coverageExpectations)
       : [],
+    groups,
     policies,
     schemaVersion: FLEET_INTENT_SCHEMA_VERSION,
   }
@@ -599,18 +644,21 @@ export function cloneFleetIntentDocument(document) {
 
 export function replaceFleetIntentGroup(document, group) {
   const next = cloneFleetIntentDocument(document)
-  if (!isGroup(group)) throw new TypeError("Fleet intent group is invalid")
-  if (group.id === FLEET_INTENT_ALL_ZONES_GROUP_ID) {
+  const normalizedGroup = normalizeFleetIntentGroup(group)
+  if (!isGroup(normalizedGroup, { requireNameSource: true })) {
+    throw new TypeError("Fleet intent group is invalid")
+  }
+  if (normalizedGroup.id === FLEET_INTENT_ALL_ZONES_GROUP_ID) {
     throw new TypeError("The all-zones group cannot be replaced")
   }
-  const normalizedName = group.name.trim().toLowerCase()
-  if (next.groups.some((entry) => entry.id !== group.id
+  const normalizedName = normalizedGroup.name.trim().toLowerCase()
+  if (next.groups.some((entry) => entry.id !== normalizedGroup.id
     && entry.name.trim().toLowerCase() === normalizedName)) {
     throw new TypeError("Zone group names must be unique")
   }
   next.groups = [
-    ...next.groups.filter((entry) => entry.id !== group.id),
-    structuredClone(group),
+    ...next.groups.filter((entry) => entry.id !== normalizedGroup.id),
+    normalizedGroup,
   ]
   if (!isFleetIntentDocument(next)) throw new TypeError("Fleet intent group produced an invalid document")
   return next

@@ -12,6 +12,7 @@ import {
   FLEET_INTENT_COVERAGE_EXPECTATION_STATUS,
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
+  FLEET_INTENT_GROUP_NAME_SOURCE,
   FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_POLICY_CONFLICT_KIND,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
@@ -104,6 +105,7 @@ test("empty fleet intent is valid and includes a dynamic all-zones group", () =>
     members: [],
     mode: FLEET_INTENT_GROUP_MODE.ALL,
     name: "All zones",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM,
   }])
   assert.deepEqual(document.coverageExpectations, [])
 })
@@ -492,6 +494,29 @@ test("version six redirect intent migrates to behavioral child-rule values", () 
   assert.equal(
     migrated.acknowledgements[0].observedCanonical,
     migrated.policies[0].expected.canonical,
+  )
+  assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
+})
+
+test("version seven group names migrate as custom when provenance is unavailable", () => {
+  const legacy = createEmptyFleetIntentDocument("account-id")
+  legacy.schemaVersion = 7
+  delete legacy.groups[0].nameSource
+  legacy.groups.push({
+    id: "example-zone",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "a.example",
+  })
+
+  const migrated = migrateFleetIntentDocument(legacy, "account-id")
+
+  assert.deepEqual(
+    migrated.groups.map((group) => group.nameSource),
+    [
+      FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM,
+      FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
+    ],
   )
   assert.equal(isFleetIntentDocument(migrated, "account-id"), true)
 })
@@ -911,6 +936,42 @@ test("zone group names are unique regardless of case", () => {
       name: "primary ZONES",
     }),
     /must be unique/,
+  )
+})
+
+test("zone groups retain automatic and custom name sources", () => {
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "example-zone",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "a.example",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC,
+  })
+
+  assert.equal(
+    document.groups.find((group) => group.id === "example-zone").nameSource,
+    FLEET_INTENT_GROUP_NAME_SOURCE.AUTOMATIC,
+  )
+
+  document = replaceFleetIntentGroup(document, {
+    ...document.groups.find((group) => group.id === "example-zone"),
+    name: "Example production",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
+  })
+  assert.equal(
+    document.groups.find((group) => group.id === "example-zone").nameSource,
+    FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
+  )
+  assert.throws(
+    () => replaceFleetIntentGroup(document, {
+      id: "invalid-system-name",
+      members: [{ zoneId: "zone-b", zoneName: "b.example" }],
+      mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+      name: "Invalid",
+      nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.SYSTEM,
+    }),
+    /invalid/,
   )
 })
 
