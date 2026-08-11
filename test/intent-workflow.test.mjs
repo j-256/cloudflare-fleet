@@ -3,9 +3,27 @@ import test from "node:test"
 
 import {
   createIntentWorkflowNavigation,
+  INTENT_MANAGER_POLICY_FILTER,
   INTENT_WORKFLOW_SCREEN,
+  intentManagerPolicyFilter,
   intentWorkflowPath,
 } from "../src/intent-workflow.mjs"
+
+test("intent manager avoids an empty initial attention view", () => {
+  assert.equal(
+    intentManagerPolicyFilter(true),
+    INTENT_MANAGER_POLICY_FILTER.ATTENTION,
+  )
+  assert.equal(
+    intentManagerPolicyFilter(false),
+    INTENT_MANAGER_POLICY_FILTER.ALL,
+  )
+  assert.equal(
+    intentManagerPolicyFilter(false, INTENT_MANAGER_POLICY_FILTER.ATTENTION),
+    INTENT_MANAGER_POLICY_FILTER.ALL,
+  )
+  assert.equal(intentManagerPolicyFilter(false, "aligned"), "aligned")
+})
 
 test("intent workflow navigation preserves suspended parent entries", () => {
   const navigation = createIntentWorkflowNavigation()

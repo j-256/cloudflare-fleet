@@ -8,6 +8,11 @@ export const INTENT_WORKFLOW_SCREEN = Object.freeze({
   POLICY: "policy",
 })
 
+export const INTENT_MANAGER_POLICY_FILTER = Object.freeze({
+  ALL: "",
+  ATTENTION: "attention",
+})
+
 const INTENT_WORKFLOW_SCREEN_LABEL = Object.freeze({
   [INTENT_WORKFLOW_SCREEN.ACKNOWLEDGEMENT]: "Acknowledge exact state",
   [INTENT_WORKFLOW_SCREEN.ADOPTION]: "Review ungoverned drift",
@@ -30,6 +35,14 @@ export function intentWorkflowPath(entries) {
     labels.unshift(INTENT_WORKFLOW_SCREEN_LABEL[INTENT_WORKFLOW_SCREEN.MANAGER])
   }
   return labels.join(" / ")
+}
+
+export function intentManagerPolicyFilter(hasAttention, requestedStatus) {
+  const status = requestedStatus
+    ?? INTENT_MANAGER_POLICY_FILTER.ATTENTION
+  return status === INTENT_MANAGER_POLICY_FILTER.ATTENTION && !hasAttention
+    ? INTENT_MANAGER_POLICY_FILTER.ALL
+    : status
 }
 
 export function createIntentWorkflowNavigation() {

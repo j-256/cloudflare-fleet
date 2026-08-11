@@ -179,7 +179,9 @@ import {
 } from "./matrix-filter.mjs"
 import {
   createIntentWorkflowNavigation,
+  INTENT_MANAGER_POLICY_FILTER,
   INTENT_WORKFLOW_SCREEN,
+  intentManagerPolicyFilter,
   intentWorkflowPath,
 } from "./intent-workflow.mjs"
 import {
@@ -361,6 +363,10 @@ const INTENT_POLICY_STATUS_PRIORITY = Object.freeze({
   [INTENT_POLICY_DISPLAY_STATUS.OVERRIDDEN]: 2,
   [INTENT_POLICY_DISPLAY_STATUS.ALIGNED]: 3,
 })
+const INTENT_POLICY_ATTENTION_STATUSES = Object.freeze([
+  INTENT_POLICY_DISPLAY_STATUS.ACTIONABLE,
+  INTENT_POLICY_DISPLAY_STATUS.UNRESOLVED,
+])
 const INTENT_MANAGER_SECTION = Object.freeze({
   ACKNOWLEDGEMENTS: "acknowledgements",
   COVERAGE: "coverage",
@@ -7240,6 +7246,14 @@ function intentPolicyDisplayState(policy) {
   }
 }
 
+function intentPoliciesNeedAttention() {
+  return state.intent.policies.some(
+    (policy) => INTENT_POLICY_ATTENTION_STATUSES.includes(
+      intentPolicyDisplayState(policy).status,
+    ),
+  )
+}
+
 function replaceIntentPolicyFilterOptions(select, entries, allLabel) {
   const previous = select.value
   const all = createElement("option", { text: allLabel })
@@ -7267,10 +7281,8 @@ function filterIntentPolicies() {
   for (const card of cards) {
     const statusMatches = !status
       || card.dataset.status === status
-      || (status === "attention" && [
-        INTENT_POLICY_DISPLAY_STATUS.ACTIONABLE,
-        INTENT_POLICY_DISPLAY_STATUS.UNRESOLVED,
-      ].includes(card.dataset.status))
+      || (status === INTENT_MANAGER_POLICY_FILTER.ATTENTION
+        && INTENT_POLICY_ATTENTION_STATUSES.includes(card.dataset.status))
     const visible = statusMatches
       && (!category || card.dataset.category === category)
       && (!groupId || card.dataset.groupId === groupId)
@@ -7280,7 +7292,7 @@ function filterIntentPolicies() {
   }
   const empty = elements.intentPolicyList.querySelector("[data-intent-policy-filter-empty]")
   if (empty) {
-    empty.textContent = status === "attention"
+    empty.textContent = status === INTENT_MANAGER_POLICY_FILTER.ATTENTION
       ? "No policies need attention in this view. Choose another status to browse the catalog."
       : "No policies match these filters."
     empty.hidden = visibleCount > 0 || cards.length === 0
@@ -8427,7 +8439,9 @@ function renderIntentManager() {
     state.intent.acknowledgements.length,
   )
   if (!state.intentManagerInitialized) {
-    elements.intentPolicyStatusFilter.value = "attention"
+    elements.intentPolicyStatusFilter.value = intentManagerPolicyFilter(
+      intentPoliciesNeedAttention(),
+    )
     state.intentManagerInitialized = true
   }
   filterIntentPolicies()
@@ -8443,7 +8457,10 @@ function openIntentManager(options = {}) {
     elements.intentPolicyGroupFilter.value = options.groupId
   }
   if (options.status !== undefined) {
-    elements.intentPolicyStatusFilter.value = options.status
+    elements.intentPolicyStatusFilter.value = intentManagerPolicyFilter(
+      intentPoliciesNeedAttention(),
+      options.status,
+    )
   }
   const section = options.section || state.intentManagerSection
   setIntentManagerSection(section)
@@ -13224,7 +13241,7 @@ for (const button of elements.intentUndoButtons) {
 }
 elements.intentVerdictAction.addEventListener("click", () => openIntentManager({
   section: INTENT_MANAGER_SECTION.POLICIES,
-  status: "attention",
+  status: INTENT_MANAGER_POLICY_FILTER.ATTENTION,
 }))
 for (const button of elements.intentManagerSectionButtons) {
   button.addEventListener("click", () => {
