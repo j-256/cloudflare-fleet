@@ -35,15 +35,31 @@ test("matrix keeps filtered rows detached from the live document", () => {
   assert.doesNotMatch(appSource, /const currentRows = \[\.\.\.elements\.matrixBody\.querySelectorAll\("tr"\)\]/)
 })
 
-test("matrix tab-stop synchronization avoids layout reads", () => {
+test("matrix control availability avoids layout reads", () => {
   const availability = appSource.match(
-    /function matrixActionIsAvailable\(action\) \{([\s\S]*?)\n\}/,
+    /function matrixControlIsAvailable\(control\) \{([\s\S]*?)\n\}/,
   )?.[1] || ""
 
-  assert.match(availability, /!action\.isConnected \|\| action\.disabled/)
+  assert.match(availability, /!control\.isConnected \|\| control\.disabled/)
   assert.match(availability, /\.matrix-column-hidden/)
   assert.match(availability, /inline-editing/)
   assert.doesNotMatch(availability, /getClientRects|getBoundingClientRect|offsetWidth|offsetHeight/)
+})
+
+test("matrix uses one roving tab stop for zone selectors and row actions", () => {
+  const zoneHeading = appSource.match(
+    /function zoneHeading\(zone\) \{([\s\S]*?)\n\}/,
+  )?.[1] || ""
+
+  assert.match(
+    appSource,
+    /const MATRIX_CONTROL_SELECTOR = "\.matrix-zone-select, summary, \.cell-action"/,
+  )
+  assert.match(zoneHeading, /checkbox\.className = "matrix-zone-select"/)
+  assert.match(appSource, /\.\.\.elements\.matrixHead\.querySelectorAll\("tr"\)/)
+  assert.match(appSource, /elements\.matrixTable\.addEventListener\("focusin"/)
+  assert.match(appSource, /elements\.matrixTable\.addEventListener\("keydown"/)
+  assert.match(html, /Press Space to toggle a zone or Enter to activate an action\./)
 })
 
 test("workflow drift counts reveal and narrow the matrix", () => {

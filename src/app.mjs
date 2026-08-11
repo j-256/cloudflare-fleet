@@ -313,7 +313,7 @@ const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGN
 const DNSSEC_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.DNSSEC_ALIGNMENT]
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const LIVE_PLAN_SET = Symbol("live-plan-set")
-const MATRIX_CONTROL_SELECTOR = "summary, .cell-action"
+const MATRIX_CONTROL_SELECTOR = ".matrix-zone-select, summary, .cell-action"
 const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
   MATRIX_CAPABILITY.DIRECT_EDIT,
   MATRIX_CAPABILITY.WORKSPACE_EDIT,
@@ -2603,7 +2603,7 @@ function focusRulesetMatrixOpener(action) {
       return candidateAction?.zoneId === action.zoneId
         && candidateAction?.rulesetId === action.rulesetId
     })
-  if (button && !button.disabled) focusMatrixAction(button)
+  if (button && !button.disabled) focusMatrixControl(button)
 }
 
 function currentRulesetComparisonRow() {
@@ -3510,35 +3510,38 @@ function followSkipLink(event) {
   window.history.replaceState(null, "", `#${targetId}`)
 }
 
-function matrixActionIsAvailable(action) {
-  if (!action.isConnected || action.disabled) return false
-  if (action.closest("[hidden], .hidden-row, .matrix-column-hidden")) return false
-  const cell = action.closest(".matrix-cell")
+function matrixControlIsAvailable(control) {
+  if (!control.isConnected || control.disabled) return false
+  if (control.closest("[hidden], .hidden-row, .matrix-column-hidden")) return false
+  const cell = control.closest(".matrix-cell")
   return !(cell?.classList.contains("inline-editing")
-    && action.closest(".cell-actions"))
+    && control.closest(".cell-actions"))
 }
 
-function visibleEnabledMatrixActions() {
-  return [...elements.matrixBody.querySelectorAll(MATRIX_CONTROL_SELECTOR)]
-    .filter(matrixActionIsAvailable)
+function matrixControls() {
+  return [...elements.matrixTable.querySelectorAll(MATRIX_CONTROL_SELECTOR)]
 }
 
-function syncMatrixActionTabStop(preferred = null) {
-  const allActions = [...elements.matrixBody.querySelectorAll(MATRIX_CONTROL_SELECTOR)]
-  const available = visibleEnabledMatrixActions()
+function visibleEnabledMatrixControls() {
+  return matrixControls().filter(matrixControlIsAvailable)
+}
+
+function syncMatrixControlTabStop(preferred = null) {
+  const allControls = matrixControls()
+  const available = visibleEnabledMatrixControls()
   const target = available.includes(preferred)
     ? preferred
-    : available.find((button) => button.tabIndex === 0) || available[0] || null
-  for (const button of allActions) {
-    button.tabIndex = button === target ? 0 : -1
+    : available.find((control) => control.tabIndex === 0) || available[0] || null
+  for (const control of allControls) {
+    control.tabIndex = control === target ? 0 : -1
   }
 }
 
-function focusMatrixAction(action) {
-  if (!action) return
-  syncMatrixActionTabStop(action)
-  action.focus({ preventScroll: true })
-  action.scrollIntoView({
+function focusMatrixControl(control) {
+  if (!control) return
+  syncMatrixControlTabStop(control)
+  control.focus({ preventScroll: true })
+  control.scrollIntoView({
     behavior: "auto",
     block: "nearest",
     inline: "nearest",
@@ -3709,14 +3712,14 @@ function revealMatrixTarget(options) {
   let focusTarget = options.focusTarget
   if (!focusTarget || focusTarget.disabled) {
     focusTarget = [...(options.cell?.querySelectorAll(MATRIX_CONTROL_SELECTOR) || [])]
-      .find(matrixActionIsAvailable)
+      .find(matrixControlIsAvailable)
       || row?.querySelector(".facet-cell")
       || target.querySelector?.("input, button, summary")
       || target
   }
   if (focusTarget.matches?.(MATRIX_CONTROL_SELECTOR)
-    && matrixActionIsAvailable(focusTarget)) {
-    syncMatrixActionTabStop(focusTarget)
+    && matrixControlIsAvailable(focusTarget)) {
+    syncMatrixControlTabStop(focusTarget)
   } else if (!focusTarget.matches?.("input, button, summary, [tabindex]")) {
     focusTarget.tabIndex = -1
   }
@@ -3743,8 +3746,8 @@ function matrixIntentReturnFocus(row, selector, zoneId = "") {
     ? tableRow.querySelector(`[data-zone-id="${CSS.escape(zoneId)}"]`)
     : tableRow
   const target = container?.querySelector(selector)
-  if (!target || !matrixActionIsAvailable(target)) return elements.matrixShell
-  syncMatrixActionTabStop(target)
+  if (!target || !matrixControlIsAvailable(target)) return elements.matrixShell
+  syncMatrixControlTabStop(target)
   target.scrollIntoView({
     behavior: "auto",
     block: "nearest",
@@ -3757,25 +3760,29 @@ function coverageIntentReturnFocus() {
   return intentManagerReturnFocus() || document.querySelector("#coverage-heading")
 }
 
-function matrixActionDescriptors() {
-  return [...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)")]
+function matrixControlDescriptors() {
+  const rows = [
+    ...elements.matrixHead.querySelectorAll("tr"),
+    ...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)"),
+  ]
+  return rows
     .flatMap((row, rowIndex) => [...row.children].flatMap(
       (cell, cellIndex) => [...cell.querySelectorAll(MATRIX_CONTROL_SELECTOR)]
-        .filter(matrixActionIsAvailable)
-        .map((button, actionIndex) => ({
+        .filter(matrixControlIsAvailable)
+        .map((control, actionIndex) => ({
           actionIndex,
           cellIndex,
           rowIndex,
-          value: button,
+          value: control,
         })),
     ))
 }
 
-function handleMatrixActionKeydown(event) {
+function handleMatrixControlKeydown(event) {
   const current = event.target.closest(MATRIX_CONTROL_SELECTOR)
   if (!current || !MATRIX_NAVIGATION_KEYS.has(event.key)) return
   const target = matrixNavigationTarget(
-    matrixActionDescriptors(),
+    matrixControlDescriptors(),
     current,
     event.key,
     {
@@ -3785,7 +3792,7 @@ function handleMatrixActionKeydown(event) {
   )
   if (!target) return
   event.preventDefault()
-  focusMatrixAction(target)
+  focusMatrixControl(target)
 }
 
 function isTextEntry(element) {
@@ -8519,6 +8526,7 @@ function zoneHeading(zone) {
   const label = createElement("label")
   const checkbox = document.createElement("input")
   checkbox.type = "checkbox"
+  checkbox.className = "matrix-zone-select"
   checkbox.checked = state.selectedZoneIds.has(zone.meta.id)
   checkbox.dataset.zoneId = zone.meta.id
   checkbox.setAttribute("aria-label", `Select ${zone.meta.name}`)
@@ -9483,7 +9491,7 @@ function filterRows(options = {}) {
   elements.matrixEmpty.hidden = emptyMessage.length === 0
   elements.matrixTable.hidden = emptyMessage.length > 0
   syncMatrixFilterControls(filters)
-  syncMatrixActionTabStop()
+  syncMatrixControlTabStop()
   if (options.preserveReveal && !restoreMatrixRevealClasses()) {
     state.matrixReveal = null
   }
@@ -9547,7 +9555,7 @@ function updateSelectionStyles() {
   if (elements.targetDialog.open) updateTargetSelectionSummary()
   updateActionButtons()
   if (targetHolesWasActive) filterRows()
-  syncMatrixActionTabStop()
+  syncMatrixControlTabStop()
   syncUrlState()
 }
 
@@ -9733,7 +9741,7 @@ function updateActionButtons() {
     elements.intentAdoptionSave.disabled = intentLocked
       || !state.intentAdoptionDraft?.preview
   }
-  syncMatrixActionTabStop()
+  syncMatrixControlTabStop()
 }
 
 function updateTargetSelectionSummary() {
@@ -12000,8 +12008,8 @@ async function reviewInlineSetting(event) {
   if (state.inlineEditor !== editor) return
   const fallbackFocus = () => {
     const target = editor.cell.querySelector(".edit-cell")
-    if (!target || !matrixActionIsAvailable(target)) return elements.matrixShell
-    syncMatrixActionTabStop(target)
+    if (!target || !matrixControlIsAvailable(target)) return elements.matrixShell
+    syncMatrixControlTabStop(target)
     return target
   }
   closeInlineEditor({ restoreFocus: false })
@@ -13029,11 +13037,11 @@ elements.matrixBody.addEventListener("click", (event) => {
     openHoleResolution(fillableHole)
   }
 })
-elements.matrixBody.addEventListener("focusin", (event) => {
-  const action = event.target.closest(MATRIX_CONTROL_SELECTOR)
-  if (action) syncMatrixActionTabStop(action)
+elements.matrixTable.addEventListener("focusin", (event) => {
+  const control = event.target.closest(MATRIX_CONTROL_SELECTOR)
+  if (control) syncMatrixControlTabStop(control)
 })
-elements.matrixBody.addEventListener("keydown", handleMatrixActionKeydown)
+elements.matrixTable.addEventListener("keydown", handleMatrixControlKeydown)
 elements.clearSelection.addEventListener("click", () => {
   selectZoneIds([])
 })

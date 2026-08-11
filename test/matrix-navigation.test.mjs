@@ -15,6 +15,15 @@ const ACTIONS = Object.freeze([
   { actionIndex: 0, cellIndex: 3, rowIndex: 1, value: "fill-c" },
 ])
 
+const CONTROLS = Object.freeze([
+  { actionIndex: 0, cellIndex: 2, rowIndex: 0, value: "zone-a" },
+  { actionIndex: 0, cellIndex: 3, rowIndex: 0, value: "zone-b" },
+  ...ACTIONS.map((action) => ({
+    ...action,
+    rowIndex: action.rowIndex + 1,
+  })),
+])
+
 test("horizontal matrix navigation follows actions within a row", () => {
   assert.equal(
     matrixNavigationTarget(ACTIONS, "fill-a", "ArrowRight"),
@@ -38,6 +47,25 @@ test("vertical matrix navigation preserves the cell and action position", () => 
   assert.equal(
     matrixNavigationTarget(ACTIONS, "fill-b", "ArrowUp"),
     "fill-a",
+  )
+})
+
+test("zone selectors join the matrix control navigation model", () => {
+  assert.equal(
+    matrixNavigationTarget(CONTROLS, "zone-a", "ArrowRight"),
+    "zone-b",
+  )
+  assert.equal(
+    matrixNavigationTarget(CONTROLS, "zone-a", "ArrowDown"),
+    "fill-a",
+  )
+  assert.equal(
+    matrixNavigationTarget(CONTROLS, "fill-a", "ArrowUp"),
+    "zone-a",
+  )
+  assert.equal(
+    matrixNavigationTarget(CONTROLS, "zone-b", "ArrowDown"),
+    "fill-c",
   )
 })
 
