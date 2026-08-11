@@ -12,6 +12,7 @@ export default defineConfig({
     : "line",
   retries: process.env.CI ? 2 : 0,
   testDir: "test/e2e",
+  testIgnore: "**/*.live.spec.mjs",
   timeout: 30000,
   use: {
     browserName: "chromium",

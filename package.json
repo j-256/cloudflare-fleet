@@ -10,6 +10,7 @@
     "test:all": "npm test && npm run test:e2e",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:e2e:live:read-only": "CLOUDFLARE_FLEET_RUN_LIVE_READ_ONLY=1 playwright test --config=playwright.live.config.mjs",
     "test:e2e:serve": "node test/e2e/fixture-server.mjs",
     "test:e2e:ui": "playwright test --ui"
   },

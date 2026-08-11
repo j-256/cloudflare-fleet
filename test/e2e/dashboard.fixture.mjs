@@ -337,8 +337,15 @@ export async function createDashboardSession(options = {}) {
   const cacheDir = path.join(root, "cache")
   const runtimeDir = path.join(root, "runtime")
   const stateFile = path.join(root, "state.json")
-  const inventory = options.inventory || dashboardInventory()
-  const accountId = options.accountId || inventory.account.id
+  const inventory = options.inventory
+    ?? (options.seedCache === false ? null : dashboardInventory())
+  const accountId = options.accountId || inventory?.account.id
+  if (!accountId) {
+    throw new TypeError("A dashboard session account identifier is required")
+  }
+  if (!options.cloudflareFetch && !inventory) {
+    throw new TypeError("A dashboard session inventory or transport is required")
+  }
   const transport = options.cloudflareFetch
     ? {
         fetch: options.cloudflareFetch,

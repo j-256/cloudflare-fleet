@@ -162,7 +162,15 @@ npm run test:e2e
 shellcheck launch.sh
 ```
 
-`npm run test:all` runs both JavaScript suites. The browser journeys host the shipped dashboard through its real loopback broker, seed deterministic cached inventory, and replace only the upstream Cloudflare transport with a stateful local fake. They do not require Cloudflare credentials or send account requests. The suite covers cached startup, matrix and phone-width filtering, URL-backed zone selection, intent persistence and browser history, and a reviewed setting write through verification and Activity history. Playwright retains a trace, screenshot, and video for failures under the ignored `test-results/` directory.
+`npm run test:all` runs both deterministic JavaScript suites. The browser journeys host the shipped dashboard through its real loopback broker, seed deterministic cached inventory, and replace only the upstream Cloudflare transport with a stateful local fake. They do not require Cloudflare credentials or send account requests. The journeys cover cached startup, filtering and URL state, responsive controls, target selection, value comparison, intent and coverage persistence, workflow navigation, keyboard focus, read-only enforcement, reviewed writes, scoped verification, durable Activity history, and guarded undo for settings and DNS records. Playwright retains a trace, screenshot, and video for failures under the ignored `test-results/` directory.
+
+Run the opt-in live account journey separately:
+
+```sh
+npm run test:e2e:live:read-only
+```
+
+The live journey requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. It bypasses cached inventory, copies project state into an isolated temporary file, and loads the shipped UI through the real loopback broker while every Cloudflare request goes to the configured account. The broker rejects mutations and a second transport guard rejects any upstream method other than `GET`, so the test cannot issue a Cloudflare write even if a hidden UI path regresses. The journey verifies the real matrix, target selection, equivalence inspector, fleet-intent and Activity views, missing write affordances, browser errors, and observed request methods. Its browser closes and its temporary state and cache are removed after the run; its success trace and sanitized request summary remain under the ignored `test-results/live-read-only/` directory.
 
 Use `npm run test:e2e:ui` for Playwright's interactive runner, `npm run test:e2e:headed` to watch the suite in Chromium, or `npm run test:e2e:serve` to print a deterministic fixture URL for exploratory browser testing. Stop the fixture server with Ctrl-C when the browser session should remain open longer than the broker's normal last-tab lifecycle.
 
