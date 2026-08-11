@@ -106,6 +106,7 @@ import {
   buildIntentAdoptionCandidates,
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
+  intentAdoptionVisibleSummary,
   previewIntentAdoption,
   selectIntentAdoptionGroup,
 } from "./intent-adoption.mjs"
@@ -7797,7 +7798,11 @@ function filterIntentAdoptionCandidates() {
   }
   draft.empty.hidden = visibleCount > 0
   const selectedCount = intentAdoptionSelectedEntries().length
-  elements.intentAdoptionVisible.textContent = `${visibleCount} suggestion${visibleCount === 1 ? "" : "s"} shown | ${selectedCount} selected`
+  elements.intentAdoptionVisible.textContent = intentAdoptionVisibleSummary(
+    visibleCount,
+    draft.candidates.length,
+    selectedCount,
+  )
 }
 
 function intentAdoptionMetric(value, label, status = "") {

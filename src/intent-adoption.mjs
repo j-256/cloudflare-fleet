@@ -25,6 +25,17 @@ export const INTENT_ADOPTION_CONFIDENCE = Object.freeze({
   REVIEW: "review",
 })
 
+export function intentAdoptionVisibleSummary(
+  visibleCount,
+  totalCount,
+  selectedCount,
+) {
+  const visibleSummary = visibleCount === totalCount
+    ? `${visibleCount} suggestion${visibleCount === 1 ? "" : "s"} shown`
+    : `${visibleCount} of ${totalCount} suggestion${totalCount === 1 ? "" : "s"} shown`
+  return `${visibleSummary} | ${selectedCount} selected`
+}
+
 export function selectIntentAdoptionGroup(selection, groupId) {
   if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
     throw new TypeError("Intent adoption selection is invalid")

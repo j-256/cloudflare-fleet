@@ -6,6 +6,7 @@ import {
   createIntentAdoptionPolicy,
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
+  intentAdoptionVisibleSummary,
   previewIntentAdoption,
   selectIntentAdoptionGroup,
 } from "../src/intent-adoption.mjs"
@@ -23,6 +24,21 @@ const ZONE_NAMES = [
   "gamma.example",
   "delta.example",
 ]
+
+test("guided adoption summaries retain filtered queue context", () => {
+  assert.equal(
+    intentAdoptionVisibleSummary(18, 162, 0),
+    "18 of 162 suggestions shown | 0 selected",
+  )
+  assert.equal(
+    intentAdoptionVisibleSummary(1, 1, 1),
+    "1 suggestion shown | 1 selected",
+  )
+  assert.equal(
+    intentAdoptionVisibleSummary(4, 4, 2),
+    "4 suggestions shown | 2 selected",
+  )
+})
 
 function cell(value, options = {}) {
   const entry = {
