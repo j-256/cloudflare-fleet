@@ -417,9 +417,11 @@
         </div>
         <div class="ruleset-comparison-metrics" id="ruleset-comparison-metrics" aria-label="Ruleset comparison summary"></div>
       </header>
-      <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares the complete ordered normalized ruleset. Rule count appears on each definition as review metadata and never determines exact equivalence.</p>
-      <div class="ruleset-comparison-groups" id="ruleset-comparison-groups"></div>
-      <p class="ruleset-comparison-intent" id="ruleset-comparison-intent"></p>
+      <div class="ruleset-comparison-scroll-region">
+        <p class="ruleset-comparison-boundary" id="ruleset-comparison-boundary">This parent row compares the complete ordered normalized ruleset. Rule count appears on each definition as review metadata and never determines exact equivalence.</p>
+        <div class="ruleset-comparison-groups" id="ruleset-comparison-groups"></div>
+        <p class="ruleset-comparison-intent" id="ruleset-comparison-intent"></p>
+      </div>
       <div class="ruleset-comparison-actions">
         <button class="button button-accent" id="ruleset-comparison-show-rules" type="button">Show child rules in matrix</button>
         <button class="button button-quiet" id="ruleset-comparison-use-baseline" type="button" data-intent-write>Use exact fleet consensus as intent</button>

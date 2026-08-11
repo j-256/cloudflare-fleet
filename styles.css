@@ -2854,6 +2854,7 @@ dialog form {
 
 .ruleset-comparison-dialog {
   width: min(980px, calc(100vw - 24px));
+  overflow: hidden;
 }
 
 .value-comparison-dialog {
@@ -4411,9 +4412,20 @@ dialog .intent-policy-value-option {
 
 .ruleset-comparison-workspace {
   position: relative;
-  display: grid;
+  display: flex;
+  box-sizing: border-box;
+  max-height: calc(100dvh - 34px);
+  flex-direction: column;
   gap: 12px;
   padding: 22px;
+}
+
+.ruleset-comparison-scroll-region {
+  display: grid;
+  min-height: 0;
+  gap: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .ruleset-comparison-heading {
@@ -4644,6 +4656,7 @@ dialog .intent-policy-value-option {
 
 .ruleset-comparison-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   gap: 7px;
   justify-content: flex-end;

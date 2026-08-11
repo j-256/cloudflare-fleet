@@ -50,6 +50,25 @@ test("ruleset parent review leads with exact definitions instead of count bucket
   assert.doesNotMatch(appSource, /Most common count/)
 })
 
+test("ruleset comparison keeps navigation outside its scrolling definitions", () => {
+  assert.match(
+    html,
+    /class="ruleset-comparison-scroll-region">[\s\S]+id="ruleset-comparison-groups"[\s\S]+id="ruleset-comparison-intent"/,
+  )
+  assert.match(
+    styles,
+    /\.ruleset-comparison-dialog \{[\s\S]+overflow: hidden;/,
+  )
+  assert.match(
+    styles,
+    /\.ruleset-comparison-workspace \{[\s\S]+display: flex;[\s\S]+max-height: calc\(100dvh - 34px\);/,
+  )
+  assert.match(
+    styles,
+    /\.ruleset-comparison-scroll-region \{[\s\S]+min-height: 0;[\s\S]+overflow: auto;/,
+  )
+})
+
 test("matrix exposes phase as a filter and a stacked badge", () => {
   assert.match(html, /<select id="phase"/)
   assert.match(html, /<select id="matrix-sort"/)
