@@ -146,7 +146,7 @@
                 <span class="workflow-type">Composite workflow</span>
                 <h3>Email Routing</h3>
               </div>
-              <span class="drift-badge" id="email-policy-drift">0 drifted</span>
+              <button class="drift-badge" id="email-policy-drift" type="button" disabled>0 drifted</button>
             </div>
             <p class="workflow-status" id="email-policy-detail">Loading forwarding consensus</p>
             <dl class="workflow-scope">
@@ -165,7 +165,7 @@
                 <span class="workflow-type">Named-rule workflow</span>
                 <h3>Shared WAF rules</h3>
               </div>
-              <span class="drift-badge" id="waf-policy-drift">0 drifted</span>
+              <button class="drift-badge" id="waf-policy-drift" type="button" disabled>0 drifted</button>
             </div>
             <p class="workflow-status" id="waf-policy-detail">Loading rule consensus</p>
             <dl class="workflow-scope">
@@ -246,6 +246,10 @@
             <select id="dns-type" aria-describedby="visible-count">
               <option value="">All DNS types</option>
             </select>
+            <label class="sr-only" for="txt-purpose">Filter TXT records by purpose</label>
+            <select id="txt-purpose" aria-describedby="visible-count" hidden disabled>
+              <option value="">All TXT purposes</option>
+            </select>
             <label class="sr-only" for="redirect-type">Filter by redirect target type</label>
             <select id="redirect-type" aria-describedby="visible-count" hidden>
               <option value="">All redirect targets</option>
@@ -263,11 +267,10 @@
 
         <div class="category-capability" id="category-capability">
           <div>
-            <p class="policy-kicker">Current capability</p>
+            <p class="policy-kicker">View support</p>
             <h3 id="category-capability-title">All categories</h3>
-            <p id="category-capability-detail" role="status" aria-live="polite" aria-atomic="true">Loading category support</p>
           </div>
-          <div class="category-capability-badges" id="category-capability-badges" aria-label="Available capabilities"></div>
+          <p id="category-capability-detail" role="status" aria-live="polite" aria-atomic="true">Loading category support</p>
         </div>
 
       <div class="matrix-tools">

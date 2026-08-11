@@ -13,6 +13,7 @@ import {
   MATRIX_SCOPE,
   MATRIX_SORT,
 } from "../src/matrix-filter.mjs"
+import { TXT_RECORD_PURPOSE } from "../src/dns-record-purpose.mjs"
 
 test("a default view encodes to an empty query string", () => {
   assert.equal(encodeViewState(DEFAULT_VIEW_STATE), "")
@@ -49,7 +50,7 @@ test("round-trips representative states", () => {
     DEFAULT_VIEW_STATE,
     { ...DEFAULT_VIEW_STATE, query: "email dmarc", category: "DNS records" },
     { ...DEFAULT_VIEW_STATE, selectedZoneIds: ["zone-a", "zone-b"], selectedColumnsOnly: true },
-    { ...DEFAULT_VIEW_STATE, scope: "zone-specific", sort: "category", recordType: "TXT", intentStatus: MATRIX_INTENT_FILTER.DRIFT, differencesOnly: false, changeableOnly: true, targetHolesOnly: true },
+    { ...DEFAULT_VIEW_STATE, scope: "zone-specific", sort: "category", recordType: "TXT", txtPurpose: TXT_RECORD_PURPOSE.SPF, intentStatus: MATRIX_INTENT_FILTER.DRIFT, differencesOnly: false, changeableOnly: true, targetHolesOnly: true },
     { ...DEFAULT_VIEW_STATE, panel: VIEW_PANEL.INTENT, intentScreen: INTENT_WORKFLOW_SCREEN.POLICY },
   ]
   for (const state of states) {
@@ -94,6 +95,7 @@ test("an unrecognized enum filter or sort falls back to the default", () => {
   // these selects have no empty option, so a blank value would hide the whole matrix
   assert.equal(decodeViewState("scope=bogus").scope, DEFAULT_VIEW_STATE.scope)
   assert.equal(decodeViewState("sort=bogus").sort, DEFAULT_VIEW_STATE.sort)
+  assert.equal(decodeViewState("txt=bogus").txtPurpose, DEFAULT_VIEW_STATE.txtPurpose)
   assert.equal(
     decodeViewState("intent=bogus").intentStatus,
     DEFAULT_VIEW_STATE.intentStatus,
@@ -114,6 +116,9 @@ test("every valid scope, intent filter, and sort value round-trips through decod
   }
   for (const value of Object.values(MATRIX_INTENT_FILTER)) {
     assert.equal(decodeViewState("intent=" + value).intentStatus, value)
+  }
+  for (const value of Object.values(TXT_RECORD_PURPOSE)) {
+    assert.equal(decodeViewState("txt=" + value).txtPurpose, value)
   }
 })
 

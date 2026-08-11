@@ -1,5 +1,6 @@
 import { FLEET_INTENT_ROW_STATUS } from "./fleet-intent.mjs"
 import { RULE_PHASE_EXECUTION_ORDER } from "./rule-presentation.mjs"
+import { TXT_RECORD_PURPOSE_PRESENTATION } from "./dns-record-purpose.mjs"
 
 export const MATRIX_INTENT_FILTER = Object.freeze({
   ALL: "",
@@ -37,6 +38,7 @@ export const DEFAULT_MATRIX_FILTERS = Object.freeze({
   scope: DEFAULT_MATRIX_SCOPE,
   sort: DEFAULT_MATRIX_SORT,
   targetHolesOnly: false,
+  txtPurpose: "",
 })
 
 const PHASE_EXECUTION_INDEX = new Map(
@@ -69,6 +71,9 @@ export function matrixVisibleCountText(totalCount, visibleCount, filters = {}) {
       : "Intent not set")
   } else if (filters.differencesOnly) contexts.push("Needs review")
   if (filters.changeableOnly) contexts.push("Supported changes")
+  if (filters.txtPurpose && TXT_RECORD_PURPOSE_PRESENTATION[filters.txtPurpose]) {
+    contexts.push(`TXT: ${TXT_RECORD_PURPOSE_PRESENTATION[filters.txtPurpose].label}`)
+  }
   return contexts.length > 0 ? `${base} | ${contexts.join(" + ")}` : base
 }
 
@@ -88,6 +93,7 @@ export function matrixFilterChangeCount(filters) {
     String(filters.scope || "") !== DEFAULT_MATRIX_FILTERS.scope,
     String(filters.recordType || "") !== DEFAULT_MATRIX_FILTERS.recordType,
     String(filters.redirectType || "") !== DEFAULT_MATRIX_FILTERS.redirectType,
+    String(filters.txtPurpose || "") !== DEFAULT_MATRIX_FILTERS.txtPurpose,
     String(filters.sort || "") !== DEFAULT_MATRIX_FILTERS.sort,
     Boolean(filters.changeableOnly) !== DEFAULT_MATRIX_FILTERS.changeableOnly,
     Boolean(filters.differencesOnly) !== DEFAULT_MATRIX_FILTERS.differencesOnly,
@@ -172,6 +178,7 @@ export function matrixRowMatchesFilters(row, filters) {
     && (!filters.phase || row.phase === filters.phase)
     && (!filters.changeableOnly || row.changeable)
     && (!filters.recordType || row.recordType === filters.recordType)
+    && (!filters.txtPurpose || (row.txtPurposes || []).includes(filters.txtPurpose))
     && (!filters.redirectType || (row.redirectTypes || []).includes(filters.redirectType))
     && (!filters.intentStatus || row.intentStatus === filters.intentStatus)
     && (!filters.differencesOnly || (row.actionable ?? row.different))

@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   matrixNavigationTarget,
+  matrixRevealScrollPosition,
 } from "../src/matrix-navigation.mjs"
 
 const ACTIONS = Object.freeze([
@@ -57,4 +58,48 @@ test("Home and End stay in the row unless modified", () => {
     matrixNavigationTarget(ACTIONS, "fill-b", "End", { metaKey: true }),
     "fill-c",
   )
+})
+
+test("matrix reveals center targets in the unobscured viewport", () => {
+  assert.deepEqual(matrixRevealScrollPosition({
+    clientHeight: 600,
+    clientWidth: 1000,
+    currentLeft: 100,
+    currentTop: 200,
+    headerHeight: 50,
+    horizontal: true,
+    scrollHeight: 2400,
+    scrollWidth: 3000,
+    stickyWidth: 400,
+    targetHeight: 100,
+    targetLeft: 1400,
+    targetTop: 1200,
+    targetWidth: 200,
+    vertical: true,
+  }), {
+    left: 800,
+    top: 925,
+  })
+})
+
+test("matrix reveal preserves unused axes and clamps near edges", () => {
+  assert.deepEqual(matrixRevealScrollPosition({
+    clientHeight: 600,
+    clientWidth: 1000,
+    currentLeft: 275,
+    currentTop: 340,
+    headerHeight: 50,
+    horizontal: false,
+    scrollHeight: 900,
+    scrollWidth: 1200,
+    stickyWidth: 400,
+    targetHeight: 80,
+    targetLeft: 0,
+    targetTop: 850,
+    targetWidth: 150,
+    vertical: true,
+  }), {
+    left: 200,
+    top: 300,
+  })
 })

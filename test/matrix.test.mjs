@@ -6,6 +6,7 @@ import {
   dnsTargetFillBatch,
   matrixRenderKey,
 } from "../src/matrix.mjs"
+import { TXT_RECORD_PURPOSE } from "../src/dns-record-purpose.mjs"
 import {
   makeInventory,
   makeRule,
@@ -1053,6 +1054,76 @@ test("matrix exposes unlocked DNS records as direct cell edits", () => {
   ])
   assert.deepEqual(row.missingZoneIds, [])
   assert.match(row.search, /alpha\.example/)
+})
+
+test("matrix gives each TXT record at a shared hostname its own comparable row", () => {
+  const record = (id, name, content) => ({
+    content,
+    id,
+    locked: false,
+    name,
+    proxied: false,
+    ttl: 1,
+    type: "TXT",
+  })
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      dns: [
+        record("alpha-spf", "alpha.example", "v=spf1 -all"),
+        record("alpha-google", "alpha.example", "google-site-verification=alpha-token"),
+        record("alpha-google-second", "alpha.example", "google-site-verification=zeta-token"),
+        record("alpha-openai", "alpha.example", "openai-domain-verification=alpha-token"),
+        record("alpha-dmarc", "_dmarc.alpha.example", "v=DMARC1; p=none; rua=mailto:dmarc@alpha.example"),
+      ],
+    }),
+    makeZone("beta.example", {
+      dns: [
+        record("beta-spf", "beta.example", "v=spf1 include:_spf.example.net -all"),
+        record("beta-google", "beta.example", "google-site-verification=beta-token"),
+        record("beta-other", "beta.example", "custom application value"),
+        record("beta-dmarc", "_dmarc.beta.example", "v=DMARC1; p=none; rua=mailto:dmarc@beta.example"),
+      ],
+    }),
+  ])
+
+  const rows = buildMatrix(inventory).rows.filter(
+    (entry) => entry.category === "DNS records" && entry.recordType === "TXT",
+  )
+  const spf = rows.find((entry) => entry.label === "TXT @ | SPF")
+  const google = rows.find(
+    (entry) => entry.label === "TXT @ | Domain verification: google-site-verification",
+  )
+  const googleSecond = rows.find(
+    (entry) => entry.label === "TXT @ | Domain verification: google-site-verification #2",
+  )
+  const openai = rows.find(
+    (entry) => entry.label === "TXT @ | Domain verification: openai-domain-verification",
+  )
+  const other = rows.find((entry) => entry.label === "TXT @ | Other TXT")
+  const dmarc = rows.find((entry) => entry.label === "TXT _dmarc")
+
+  assert.equal(rows.length, 6)
+  assert.deepEqual(spf.txtPurposes, [TXT_RECORD_PURPOSE.SPF])
+  assert.equal(spf.different, true)
+  assert.deepEqual(spf.cells.get("alpha.example").txtPurposeCounts, {
+    [TXT_RECORD_PURPOSE.SPF]: 1,
+  })
+  assert.deepEqual(spf.cells.get("beta.example").txtPurposeCounts, {
+    [TXT_RECORD_PURPOSE.SPF]: 1,
+  })
+  assert.deepEqual(spf.cells.get("alpha.example").action.recordIds, ["alpha-spf"])
+  assert.equal(spf.cells.get("alpha.example").display, "v=spf1 -all")
+  assert.equal(spf.cells.get("alpha.example").inspectionValue.length, 1)
+  assert.equal(google.presentCount, 2)
+  assert.equal(google.different, true)
+  assert.equal(googleSecond.presentCount, 1)
+  assert.equal(googleSecond.cells.get("alpha.example").inspectionValue.length, 1)
+  assert.equal(openai.presentCount, 1)
+  assert.equal(other.presentCount, 1)
+  assert.equal(dmarc.key, "TXT _dmarc")
+  assert.equal(dmarc.presentCount, 2)
+  assert.match(google.search, /domain verification/)
+  assert.match(spf.search, /spf/)
 })
 
 test("matrix links Email DNS MX specifications to their live DNS records", () => {

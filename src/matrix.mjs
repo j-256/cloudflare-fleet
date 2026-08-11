@@ -33,6 +33,13 @@ import {
 } from "./redirect-presentation.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
 import {
+  orderedTxtRecordPurposes,
+  TXT_RECORD_PURPOSE_PRESENTATION,
+  txtRecordContent,
+  txtRecordIdentity,
+  txtRecordPurposeCounts,
+} from "./dns-record-purpose.mjs"
+import {
   redirectIntentComparisonValue,
   ruleExactComparisonValue,
   rulesetExactComparisonValue,
@@ -46,6 +53,7 @@ const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 const EMAIL_ROUTING_MX_DRIFT_DESCRIPTION = "Cloudflare-assigned MX priorities are ignored for drift; live priorities remain inspectable and editable"
 const MATRIX_MISSING_CANONICAL = "__missing__"
 const MX_RECORD_TYPE = "MX"
+const TXT_RECORD_TYPE = "TXT"
 const NON_CONSENSUS_VARIANT_COLOR_COUNT = 5
 const RULE_MATRIX_CATEGORY_SET = new Set([
   MATRIX_CATEGORY.REDIRECTS,
@@ -165,6 +173,8 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     resolutionSource: options.resolutionSource || null,
     search: options.search || "",
     secondaryAction: options.secondaryAction || null,
+    txtPurposeCounts: options.txtPurposeCounts || {},
+    txtPurposes: options.txtPurposes || [],
     workspaceAction: options.workspaceAction || null,
   }
   if (hasIntentValue) cell.intentValue = inspectionValue(intentValue)
@@ -349,6 +359,99 @@ function normalizedDnsMatrixRecords(
   )
 }
 
+function dnsTxtPurposeOptions(records) {
+  const txtPurposeCounts = txtRecordPurposeCounts(records)
+  const txtPurposes = orderedTxtRecordPurposes(Object.keys(txtPurposeCounts))
+  return {
+    search: txtPurposes.flatMap((purpose) => [
+      purpose,
+      TXT_RECORD_PURPOSE_PRESENTATION[purpose].label,
+    ]).join(" "),
+    txtPurposeCounts,
+    txtPurposes,
+  }
+}
+
+function dnsRecordBaseKey(record, zoneName) {
+  return `${String(record.type || "").toUpperCase()} ${relativeName(record.name, zoneName)}`
+}
+
+function splitTxtRecordBaseKeys(inventory) {
+  const splitKeys = new Set()
+  for (const zone of inventory.zones) {
+    const counts = new Map()
+    for (const record of surfaceResult(zone, "dns") || []) {
+      if (String(record.type || "").toUpperCase() !== TXT_RECORD_TYPE) continue
+      const key = dnsRecordBaseKey(record, zone.meta.name)
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    for (const [key, count] of counts) {
+      if (count > 1) splitKeys.add(key)
+    }
+  }
+  return splitKeys
+}
+
+function dnsRecordSortKey(record, zoneName) {
+  const normalized = stableString(normalizeValue({
+    content: txtRecordContent(record),
+    data: record.data,
+    name: relativeName(record.name, zoneName),
+    type: String(record.type || "").toUpperCase(),
+  }, zoneName))
+  return `${normalized} | ${String(record.id || "")}`
+}
+
+function dnsRecordMatrixGroups(inventory) {
+  const splitTxtKeys = splitTxtRecordBaseKeys(inventory)
+  const definitions = new Map()
+  const groupsByZoneId = new Map()
+
+  for (const zone of inventory.zones) {
+    const groups = new Map()
+    const identityOccurrences = new Map()
+    const records = [...(surfaceResult(zone, "dns") || [])].sort(
+      (left, right) => dnsRecordSortKey(left, zone.meta.name)
+        .localeCompare(dnsRecordSortKey(right, zone.meta.name)),
+    )
+    for (const record of records) {
+      const baseKey = dnsRecordBaseKey(record, zone.meta.name)
+      const splitTxt = splitTxtKeys.has(baseKey)
+        && String(record.type || "").toUpperCase() === TXT_RECORD_TYPE
+      if (!splitTxt) {
+        if (!groups.has(baseKey)) groups.set(baseKey, [])
+        groups.get(baseKey).push(record)
+        if (!definitions.has(baseKey)) {
+          definitions.set(baseKey, {
+            key: baseKey,
+            label: baseKey,
+            splitTxt: false,
+          })
+        }
+        continue
+      }
+
+      const identity = txtRecordIdentity(record, zone.meta.name)
+      const identityKey = `${baseKey} | ${identity.key}`
+      const occurrence = (identityOccurrences.get(identityKey) || 0) + 1
+      identityOccurrences.set(identityKey, occurrence)
+      const occurrenceSuffix = occurrence === 1 ? "" : ` #${occurrence}`
+      const key = `${identityKey}${occurrenceSuffix}`
+      groups.set(key, [record])
+      if (!definitions.has(key)) {
+        definitions.set(key, {
+          key,
+          label: `${baseKey} | ${identity.label}${occurrenceSuffix}`,
+          splitTxt: true,
+        })
+      }
+    }
+    groupsByZoneId.set(zone.meta.id, groups)
+  }
+
+  return { definitions, groupsByZoneId }
+}
+
 function emailRoutingMxIndexes(records, zone) {
   const requiredCounts = new Map()
   for (const record of surfaceResult(zone, "email-dns") || []) {
@@ -488,6 +591,7 @@ function addEmailRows(rows, inventory) {
           inspectionRecords,
           {
             ...editOptions,
+            ...dnsTxtPurposeOptions(records),
             description: ignoredPriorityIndexes.size > 0
               ? EMAIL_ROUTING_MX_DRIFT_DESCRIPTION
               : "",
@@ -539,18 +643,12 @@ function dnsRecordEditOptions(records, zone) {
 }
 
 function addDnsRows(rows, inventory) {
-  const dnsKeys = new Set()
-  for (const zone of inventory.zones) {
-    for (const record of surfaceResult(zone, "dns") || []) {
-      dnsKeys.add(`${record.type} ${relativeName(record.name, zone.meta.name)}`)
-    }
-  }
-
-  for (const key of [...dnsKeys].sort()) {
+  const { definitions, groupsByZoneId } = dnsRecordMatrixGroups(inventory)
+  for (const definition of [...definitions.values()].sort(
+    (left, right) => left.key.localeCompare(right.key),
+  )) {
     for (const zone of inventory.zones) {
-      const records = (surfaceResult(zone, "dns") || []).filter(
-        (record) => `${record.type} ${relativeName(record.name, zone.meta.name)}` === key,
-      )
+      const records = groupsByZoneId.get(zone.meta.id)?.get(definition.key) || []
       if (records.length === 0) continue
       const copyCapabilities = new Map(
         records.map((record) => [record, dnsRecordCopyCapability(record)]),
@@ -573,19 +671,25 @@ function addDnsRows(rows, inventory) {
       addCell(
         rows,
         "DNS records",
-        key,
-        key,
+        definition.key,
+        definition.label,
         zone,
         inspectionRecords,
         {
           ...dnsRecordEditOptions(records, zone),
+          ...dnsTxtPurposeOptions(records),
           description: ignoredPriorityIndexes.size > 0
             ? EMAIL_ROUTING_MX_DRIFT_DESCRIPTION
             : "",
-          display: shortDisplay(comparisonRecords),
+          display: records.length === 1
+            && String(records[0].type || "").toUpperCase() === TXT_RECORD_TYPE
+            ? txtRecordContent(records[0])
+            : shortDisplay(comparisonRecords),
           full: displayJson(inspectionRecords),
           inspectionValue: inspectionRecords,
-          labelSource: "Record type + owner",
+          labelSource: definition.splitTxt
+            ? "Record type + owner + TXT identity"
+            : "Record type + owner",
           normalized: comparisonRecords,
           resolutionKind: HOLE_RESOLUTION_KIND.DNS_RECORDS,
           resolutionValue: inspectionRecords,
@@ -1178,6 +1282,9 @@ export function buildMatrix(inventory) {
     const recordType = DNS_MATRIX_CATEGORY_SET.has(row.category)
       ? row.key.split(" ", 1)[0].toUpperCase()
       : ""
+    const txtPurposes = orderedTxtRecordPurposes(new Set(
+      [...row.cells.values()].flatMap((cell) => cell.txtPurposes),
+    ))
     const redirectTypes = [...new Set(
       [...row.cells.values()]
         .map((cell) => cell.presentation?.redirect?.targetKind)
@@ -1202,6 +1309,7 @@ export function buildMatrix(inventory) {
       presentCount: row.cells.size,
       recordType,
       redirectTypes,
+      txtPurposes,
       search: [
         row.category,
         row.label,

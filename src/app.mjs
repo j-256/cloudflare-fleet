@@ -88,6 +88,11 @@ import {
   rowSupportsDnssecIntentCorrection,
 } from "./dnssec-intent.mjs"
 import {
+  TXT_RECORD_PURPOSE,
+  TXT_RECORD_PURPOSE_ORDER,
+  TXT_RECORD_PURPOSE_PRESENTATION,
+} from "./dns-record-purpose.mjs"
+import {
   coverageFor,
   loadInventory,
   staticCoverageIssues,
@@ -144,6 +149,7 @@ import {
 } from "./intent-undo.mjs"
 import {
   matrixNavigationTarget,
+  matrixRevealScrollPosition,
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
 import {
@@ -324,6 +330,19 @@ const COMPACT_FILTER_MEDIA_QUERY = "(max-width: 1179px)"
 const COMPACT_TOOLBAR_MEDIA_QUERY = "(max-width: 620px)"
 const MATRIX_FOCUS_CLASS = "matrix-focus"
 const MATRIX_COLUMN_HIDDEN_CLASS = "matrix-column-hidden"
+const MATRIX_REVEAL_CLASS = Object.freeze({
+  CELL: "matrix-reveal-cell",
+  COLUMN: "matrix-reveal-column",
+  ROW: "matrix-reveal-row",
+})
+const MATRIX_REVEAL_KIND = Object.freeze({
+  CELL: "cell",
+  COLUMN: "column",
+  ROW: "row",
+})
+const MATRIX_REVEAL_SELECTOR = Object.values(MATRIX_REVEAL_CLASS)
+  .map((className) => `.${className}`)
+  .join(", ")
 const COVERAGE_SECTION = Object.freeze({
   EXPECTED: "expected",
   HEALTHY: "healthy",
@@ -518,6 +537,7 @@ const state = {
   intentUndoStack: [],
   filterPanelExpanded: false,
   matrixFocusScrollY: 0,
+  matrixReveal: null,
   ruleRename: null,
   rulesetComparisonRowKey: null,
   rulesetWorkspace: null,
@@ -558,7 +578,6 @@ const elements = {
   alignEmail: document.querySelector("#align-email"),
   alignWaf: document.querySelector("#align-waf"),
   category: document.querySelector("#category"),
-  categoryCapabilityBadges: document.querySelector("#category-capability-badges"),
   categoryCapabilityDetail: document.querySelector("#category-capability-detail"),
   categoryCapabilityTitle: document.querySelector("#category-capability-title"),
   changeSupportToggle: document.querySelector("#change-support-toggle"),
@@ -848,6 +867,7 @@ const elements = {
   targetClear: document.querySelector("#target-clear"),
   targetDialog: document.querySelector("#target-dialog"),
   targetHoles: document.querySelector("#target-holes"),
+  txtPurpose: document.querySelector("#txt-purpose"),
   targetOptions: document.querySelector("#target-options"),
   targetSelectionSummary: document.querySelector("#target-selection-summary"),
   targetSelectAll: document.querySelector("#target-select-all"),
@@ -2563,12 +2583,10 @@ function showWorkspaceRuleInMatrix(ruleId) {
     return
   }
   const action = cell.querySelector(MATRIX_CONTROL_SELECTOR)
-  cell.scrollIntoView({
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-    block: "center",
-    inline: "center",
+  revealMatrixTarget({
+    cell,
+    focusTarget: action,
   })
-  if (action && !action.disabled) focusMatrixAction(action)
 }
 
 function focusRulesetMatrixOpener(action) {
@@ -2843,17 +2861,11 @@ function showRulesetChildRows() {
     return
   }
   const visibleRow = visibleRows[0]
-  visibleRow.classList.add("matrix-navigation-target")
-  visibleRow.scrollIntoView({
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-    block: "center",
-    inline: "start",
-  })
   const facet = visibleRow.querySelector(".facet-cell")
-  if (facet) {
-    facet.tabIndex = -1
-    facet.focus({ preventScroll: true })
-  }
+  revealMatrixTarget({
+    focusTarget: facet,
+    row: visibleRow,
+  })
   toast(
     `Showing ${visibleRows.length} child rule row${visibleRows.length === 1 ? "" : "s"} from ${row.label} in the matrix`,
   )
@@ -3526,6 +3538,185 @@ function focusMatrixAction(action) {
   })
 }
 
+function clearMatrixReveal(options = {}) {
+  for (const target of matrixAwareQuery(MATRIX_REVEAL_SELECTOR)) {
+    target.classList.remove(...Object.values(MATRIX_REVEAL_CLASS))
+  }
+  if (options.forget !== false) state.matrixReveal = null
+}
+
+function matrixRevealRow(reveal) {
+  return matrixRowElements.find(
+    (row) => row.dataset.category === reveal.category
+      && row.dataset.facetKey === reveal.facetKey,
+  ) || null
+}
+
+function restoreMatrixRevealClasses() {
+  const reveal = state.matrixReveal
+  if (!reveal) return false
+  if (reveal.kind === MATRIX_REVEAL_KIND.COLUMN) {
+    const zoneIds = new Set(reveal.zoneIds)
+    for (const element of matrixAwareQuery(
+      ".zone-heading[data-zone-id], .matrix-cell[data-zone-id]",
+    )) {
+      if (zoneIds.has(element.dataset.zoneId)) {
+        element.classList.add(MATRIX_REVEAL_CLASS.COLUMN)
+      }
+    }
+    return reveal.zoneIds.some((zoneId) => elements.matrixHead.querySelector(
+      `.zone-heading[data-zone-id="${CSS.escape(zoneId)}"]`,
+    ))
+  }
+  const row = matrixRevealRow(reveal)
+  if (!row) return false
+  if (reveal.kind === MATRIX_REVEAL_KIND.ROW) {
+    row.classList.add(MATRIX_REVEAL_CLASS.ROW)
+    return true
+  }
+  const cell = row.querySelector(
+    `.matrix-cell[data-zone-id="${CSS.escape(reveal.zoneId)}"]`,
+  )
+  if (!cell) return false
+  cell.classList.add(MATRIX_REVEAL_CLASS.CELL)
+  return true
+}
+
+function matrixStickyWidth() {
+  return [
+    elements.matrixHead.querySelector(".category-heading"),
+    elements.matrixHead.querySelector(".facet-heading"),
+  ].reduce((width, heading) => {
+    const headingWidth = heading?.getBoundingClientRect().width || 0
+    return width + headingWidth
+  }, 0)
+}
+
+function positionMatrixReveal(target, options) {
+  const shellRect = elements.matrixShell.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const headerHeight = elements.matrixHead.getBoundingClientRect().height
+  const targetLeft = elements.matrixShell.scrollLeft
+    + targetRect.left
+    - shellRect.left
+  const targetTop = elements.matrixShell.scrollTop
+    + targetRect.top
+    - shellRect.top
+  const position = matrixRevealScrollPosition({
+    clientHeight: elements.matrixShell.clientHeight,
+    clientWidth: elements.matrixShell.clientWidth,
+    currentLeft: elements.matrixShell.scrollLeft,
+    currentTop: elements.matrixShell.scrollTop,
+    headerHeight,
+    horizontal: options.horizontal,
+    scrollHeight: elements.matrixShell.scrollHeight,
+    scrollWidth: elements.matrixShell.scrollWidth,
+    stickyWidth: matrixStickyWidth(),
+    targetHeight: targetRect.height,
+    targetLeft,
+    targetTop,
+    targetWidth: targetRect.width,
+    vertical: options.vertical,
+  })
+  const behavior = prefersReducedMotion() ? "auto" : "smooth"
+  elements.matrixShell.scrollTo({
+    behavior,
+    ...position,
+  })
+  if (options.vertical) {
+    const targetContentCenter = targetTop + (targetRect.height / 2)
+    const targetOffsetAfterScroll = targetContentCenter - position.top
+    window.scrollTo({
+      behavior,
+      top: window.scrollY
+        + shellRect.top
+        + targetOffsetAfterScroll
+        - (window.innerHeight / 2),
+    })
+  } else {
+    elements.matrixShell.scrollIntoView({
+      behavior,
+      block: "start",
+      inline: "nearest",
+    })
+  }
+}
+
+function revealMatrixTarget(options) {
+  const zoneIds = new Set(options.zoneIds || [])
+  const row = options.row || options.cell?.closest("tr") || null
+  const firstZoneId = [...zoneIds][0] || options.cell?.dataset.zoneId || ""
+  const columnTarget = firstZoneId
+    ? elements.matrixHead.querySelector(
+        `.zone-heading[data-zone-id="${CSS.escape(firstZoneId)}"]`,
+      )
+    : null
+  if (options.cell?.classList.contains(MATRIX_COLUMN_HIDDEN_CLASS)
+    || columnTarget?.classList.contains(MATRIX_COLUMN_HIDDEN_CLASS)) {
+    state.selectedColumnsOnly = false
+    updateSelectionStyles()
+  }
+  clearMatrixReveal()
+
+  let target = null
+  let reveal = null
+  if (options.cell) {
+    options.cell.classList.add(MATRIX_REVEAL_CLASS.CELL)
+    target = options.cell
+    reveal = {
+      category: row.dataset.category,
+      facetKey: row.dataset.facetKey,
+      kind: MATRIX_REVEAL_KIND.CELL,
+      zoneId: options.cell.dataset.zoneId,
+    }
+  } else if (row) {
+    row.classList.add(MATRIX_REVEAL_CLASS.ROW)
+    target = row.querySelector(".facet-cell") || row
+    reveal = {
+      category: row.dataset.category,
+      facetKey: row.dataset.facetKey,
+      kind: MATRIX_REVEAL_KIND.ROW,
+    }
+  } else if (zoneIds.size > 0) {
+    for (const element of matrixAwareQuery(
+      ".zone-heading[data-zone-id], .matrix-cell[data-zone-id]",
+    )) {
+      if (zoneIds.has(element.dataset.zoneId)) {
+        element.classList.add(MATRIX_REVEAL_CLASS.COLUMN)
+      }
+    }
+    target = columnTarget
+    reveal = {
+      kind: MATRIX_REVEAL_KIND.COLUMN,
+      zoneIds: [...zoneIds],
+    }
+  }
+  if (!target?.isConnected) return false
+  state.matrixReveal = reveal
+
+  positionMatrixReveal(target, {
+    horizontal: Boolean(options.cell || zoneIds.size > 0),
+    vertical: Boolean(options.cell || row),
+  })
+
+  let focusTarget = options.focusTarget
+  if (!focusTarget || focusTarget.disabled) {
+    focusTarget = [...(options.cell?.querySelectorAll(MATRIX_CONTROL_SELECTOR) || [])]
+      .find(matrixActionIsAvailable)
+      || row?.querySelector(".facet-cell")
+      || target.querySelector?.("input, button, summary")
+      || target
+  }
+  if (focusTarget.matches?.(MATRIX_CONTROL_SELECTOR)
+    && matrixActionIsAvailable(focusTarget)) {
+    syncMatrixActionTabStop(focusTarget)
+  } else if (!focusTarget.matches?.("input, button, summary, [tabindex]")) {
+    focusTarget.tabIndex = -1
+  }
+  focusTarget.focus({ preventScroll: true })
+  return true
+}
+
 function intentManagerReturnFocus() {
   if (!elements.intentDialog.open) return null
   return elements.intentDialog.querySelector("[data-intent-workflow-close]")
@@ -3812,15 +4003,6 @@ function renderCategories() {
   if (state.matrix.categories.includes(previous)) elements.category.value = previous
 }
 
-function capabilityBadge(capability) {
-  const presentation = MATRIX_CAPABILITY_PRESENTATION[capability]
-  if (!presentation) return null
-  return createElement("span", {
-    className: `capability-chip ${presentation.kind}`,
-    text: presentation.label,
-  })
-}
-
 function categoryChangeDetail(capabilities) {
   const available = CATEGORY_CHANGE_CAPABILITY_ORDER.filter(
     (capability) => capabilities.has(capability),
@@ -3851,43 +4033,25 @@ function renderCategoryCapability() {
   const readOnlyNote = readOnly
     ? " This read-only session can inspect capabilities and intent, but cannot save expected state or apply Cloudflare writes."
     : ""
-  let capabilities
-
   if (!selectedCategory) {
     elements.categoryCapabilityTitle.textContent = "All categories"
-    elements.categoryCapabilityDetail.textContent = `${counts.rows} facets across ${counts.categories} categories. ${counts.changeableRows} facets in ${counts.changeableCategories} categories have a supported matrix change path; ${counts.compareOnlyCategories} categories are comparison and expected-state only. Capability badges summarize row-level paths; the matrix shows availability for each cell. Multi-setting workflows are scoped separately above.${readOnlyNote}`
-    capabilities = new Set([
-      MATRIX_CAPABILITY.COMPARE,
-      MATRIX_CAPABILITY.EXPECTED_STATE,
-    ])
-    for (const entry of categories) {
-      for (const capability of entry.capabilities) capabilities.add(capability)
-    }
-    if (counts.changeableCategories > 0) {
-      capabilities.delete(MATRIX_CAPABILITY.COMPARE_ONLY)
-    }
+    elements.categoryCapabilityDetail.textContent = `${counts.rows} facets across ${counts.categories} categories. ${counts.changeableRows} facets in ${counts.changeableCategories} categories have a supported matrix change path; ${counts.compareOnlyCategories} categories are comparison and expected-state only. Row and cell actions show the available path; multi-setting workflows are scoped separately above.${readOnlyNote}`
   } else {
     const entry = categories.find((candidate) => candidate.category === selectedCategory)
     elements.categoryCapabilityTitle.textContent = selectedCategory
     if (!entry) {
       elements.categoryCapabilityDetail.textContent = "This category is not available in the loaded fleet snapshot."
-      capabilities = new Set([MATRIX_CAPABILITY.COMPARE_ONLY])
     } else if (entry.changeableRows === 0) {
       elements.categoryCapabilityDetail.textContent = `${entry.rows} facet${entry.rows === 1 ? "" : "s"}. The dashboard can compare these values and evaluate expected state, but it cannot change Cloudflare configuration in this category.${readOnlyNote}`
-      capabilities = new Set(entry.capabilities)
     } else if (entry.changeableRows === entry.rows) {
-      capabilities = new Set(entry.capabilities)
+      const capabilities = new Set(entry.capabilities)
       elements.categoryCapabilityDetail.textContent = `${entry.rows} facet${entry.rows === 1 ? "" : "s"}. Every facet has at least one supported matrix change path. ${categoryChangeDetail(capabilities)}${readOnlyNote}`
     } else {
-      capabilities = new Set(entry.capabilities)
+      const capabilities = new Set(entry.capabilities)
       const remainingRows = entry.rows - entry.changeableRows
       elements.categoryCapabilityDetail.textContent = `${entry.rows} facets. ${entry.changeableRows} facet${entry.changeableRows === 1 ? " has" : "s have"} a supported matrix change path; the remaining ${remainingRows} facet${remainingRows === 1 ? "" : "s"} can still be compared and assigned expected state. ${categoryChangeDetail(capabilities)}${readOnlyNote}`
     }
   }
-
-  elements.categoryCapabilityBadges.replaceChildren(
-    ...[...capabilities].map(capabilityBadge).filter(Boolean),
-  )
 }
 
 function renderTaskSummaries() {
@@ -4019,6 +4183,29 @@ function renderDnsTypes() {
   if (counts.has(previous)) elements.dnsType.value = previous
 }
 
+function renderTxtPurposes() {
+  const previous = elements.txtPurpose.value
+  const counts = new Map()
+  for (const row of state.matrix.rows) {
+    for (const purpose of row.txtPurposes) {
+      counts.set(purpose, (counts.get(purpose) || 0) + 1)
+    }
+  }
+  elements.txtPurpose.replaceChildren(createElement("option", {
+    text: "All TXT purposes",
+  }))
+  elements.txtPurpose.firstElementChild.value = ""
+  for (const purpose of TXT_RECORD_PURPOSE_ORDER) {
+    if (!counts.has(purpose)) continue
+    const option = createElement("option", {
+      text: `${TXT_RECORD_PURPOSE_PRESENTATION[purpose].label} (${counts.get(purpose)})`,
+    })
+    option.value = purpose
+    elements.txtPurpose.append(option)
+  }
+  if (counts.has(previous)) elements.txtPurpose.value = previous
+}
+
 function renderRedirectTypes() {
   const previous = elements.redirectType.value
   const counts = new Map()
@@ -4051,6 +4238,17 @@ function syncDnsTypeAvailability() {
     ? "Limit DNS rows to one record type"
     : "DNS type applies only to DNS categories"
   if (!available) elements.dnsType.value = ""
+  syncTxtPurposeAvailability()
+}
+
+function syncTxtPurposeAvailability() {
+  const available = !elements.dnsType.disabled && elements.dnsType.value === "TXT"
+  elements.txtPurpose.hidden = !available
+  elements.txtPurpose.disabled = !available
+  elements.txtPurpose.title = available
+    ? "Limit individual TXT record rows to one purpose"
+    : "TXT purpose is available when DNS type is TXT"
+  if (!available) elements.txtPurpose.value = ""
 }
 
 function syncRedirectTypeAvailability() {
@@ -4077,6 +4275,7 @@ function currentMatrixFilters() {
     sort: elements.matrixSort.value,
     targetHolesOnly: elements.targetHoles.getAttribute("aria-pressed") === "true",
     targetZoneIds: state.selectedZoneIds,
+    txtPurpose: elements.txtPurpose.value,
     zoneCount: state.inventory?.zones.length || 0,
   }
 }
@@ -4101,6 +4300,7 @@ function captureViewState() {
     scope: filters.scope,
     sort: filters.sort,
     recordType: filters.recordType,
+    txtPurpose: filters.txtPurpose,
     redirectType: filters.redirectType,
     changeableOnly: filters.changeableOnly,
     targetHolesOnly: filters.targetHolesOnly,
@@ -4473,6 +4673,7 @@ function resetMatrixFilters() {
   elements.intentStatus.value = DEFAULT_MATRIX_FILTERS.intentStatus
   elements.scope.value = DEFAULT_MATRIX_FILTERS.scope
   elements.dnsType.value = DEFAULT_MATRIX_FILTERS.recordType
+  elements.txtPurpose.value = DEFAULT_MATRIX_FILTERS.txtPurpose
   elements.redirectType.value = DEFAULT_MATRIX_FILTERS.redirectType
   elements.matrixSort.value = DEFAULT_MATRIX_FILTERS.sort
   elements.changeSupportToggle.setAttribute(
@@ -4502,6 +4703,7 @@ function applyViewFilters(view) {
   elements.intentStatus.value = view.intentStatus
   elements.scope.value = view.scope
   elements.dnsType.value = view.recordType
+  elements.txtPurpose.value = view.txtPurpose
   elements.redirectType.value = view.redirectType
   elements.matrixSort.value = view.sort
   elements.changeSupportToggle.setAttribute("aria-pressed", String(view.changeableOnly))
@@ -4519,11 +4721,38 @@ function renderMatrixFilters() {
   renderScopes()
   renderIntentStatuses()
   renderDnsTypes()
+  renderTxtPurposes()
   renderRedirectTypes()
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
   renderCategoryCapability()
   syncMatrixFilterControls()
+}
+
+function renderWorkflowDriftBadge(button, zones, workflow, available) {
+  const count = zones.length
+  const label = `${count} drifted`
+  button.textContent = label
+  button.disabled = !available || count === 0
+  button.dataset.zoneIds = JSON.stringify(zones.map((zone) => zone.meta.id))
+  button.classList.toggle("actionable", count > 0)
+  button.classList.toggle("aligned", available && count === 0)
+  button.setAttribute(
+    "aria-label",
+    contextualActionLabel(
+      label,
+      available && count > 0
+        ? `Show and select the ${workflow} zone${count === 1 ? "" : "s"} with drift in the matrix`
+        : available
+          ? `${workflow} matches across the fleet`
+          : `${workflow} drift is unavailable`,
+    ),
+  )
+  button.title = available && count > 0
+    ? `Show and select the drifted ${workflow} zone${count === 1 ? "" : "s"} in the matrix`
+    : available
+      ? `${workflow} matches across the fleet`
+      : `${workflow} drift cannot be evaluated from this snapshot`
 }
 
 function renderPolicyCards() {
@@ -4564,7 +4793,12 @@ function renderPolicyCards() {
     ].filter(Boolean).join("; ")
   }
   elements.emailPolicyDetail.title = elements.emailPolicyDetail.textContent
-  elements.emailPolicyDrift.textContent = `${emailDrift.length} drifted`
+  renderWorkflowDriftBadge(
+    elements.emailPolicyDrift,
+    emailDrift,
+    "Email Routing",
+    emailPolicyReady,
+  )
   const exceptionCount = state.emailPolicyExceptionStatuses.length
   const activeExceptionCount = state.emailPolicyExceptionStatuses.filter(
     (exception) => exception.status === POLICY_EXCEPTION_STATUS.ACTIVE,
@@ -4603,7 +4837,12 @@ function renderPolicyCards() {
     elements.wafPolicyDetail.textContent = reasons.join("; ")
   }
   elements.wafPolicyDetail.title = elements.wafPolicyDetail.textContent
-  elements.wafPolicyDrift.textContent = `${wafDrift.length} drifted`
+  renderWorkflowDriftBadge(
+    elements.wafPolicyDrift,
+    wafDrift,
+    "Shared WAF",
+    wafPolicyReady,
+  )
 
   renderIntentPolicyCard()
   renderDnssecWorkflowCard()
@@ -4655,6 +4894,9 @@ function showPolicyExceptionInMatrix(exception) {
     elements.intentStatus.value = MATRIX_INTENT_FILTER.ALL
     elements.scope.value = MATRIX_SCOPE.ALL
     elements.dnsType.value = "TXT"
+    elements.txtPurpose.value = exception.component === EMAIL_POLICY_COMPONENT.SPF
+      ? TXT_RECORD_PURPOSE.SPF
+      : ""
     elements.redirectType.value = ""
     elements.differenceToggle.setAttribute("aria-pressed", "false")
     elements.targetHoles.setAttribute("aria-pressed", "false")
@@ -4664,11 +4906,13 @@ function showPolicyExceptionInMatrix(exception) {
     filterRows()
 
     const rows = [...elements.matrixBody.querySelectorAll("tr:not(.hidden-row)")]
-    const targetFacet = exception.component === EMAIL_POLICY_COMPONENT.SPF
-      ? "TXT @"
+    const zoneSelector = exception.zoneId
+      ? `[data-zone-id="${CSS.escape(exception.zoneId)}"]`
       : ""
-    const row = rows.find((candidate) => candidate.dataset.facetKey === targetFacet)
-      || rows[0]
+    const row = zoneSelector
+      ? rows.find((candidate) => !candidate.querySelector(zoneSelector)?.classList.contains("missing"))
+        || rows[0]
+      : rows[0]
     if (!row) {
       elements.search.focus()
       return
@@ -4676,16 +4920,11 @@ function showPolicyExceptionInMatrix(exception) {
     const cell = exception.zoneId
       ? row.querySelector(`[data-zone-id="${CSS.escape(exception.zoneId)}"]`)
       : null
-    const action = cell?.querySelector(MATRIX_CONTROL_SELECTOR)
-    if (action && !action.disabled) {
-      focusMatrixAction(action)
-    } else {
-      row.scrollIntoView({
-        behavior: prefersReducedMotion() ? "auto" : "smooth",
-        block: "center",
-      })
-      elements.search.focus({ preventScroll: true })
-    }
+    revealMatrixTarget({
+      cell,
+      focusTarget: cell?.querySelector(MATRIX_CONTROL_SELECTOR),
+      row: cell ? null : row,
+    })
   })
 }
 
@@ -6648,12 +6887,13 @@ function showIntentPolicyInMatrix(policy) {
     (candidate) => candidate.dataset.category === row.category
       && candidate.dataset.facetKey === row.key,
   )
-  tableRow?.scrollIntoView({
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-    block: "center",
-  })
   const focusTarget = tableRow?.querySelector(".intent-set-policy, .cell-action")
-  if (focusTarget && !focusTarget.disabled) focusMatrixAction(focusTarget)
+  if (tableRow) {
+    revealMatrixTarget({
+      focusTarget,
+      row: tableRow,
+    })
+  }
 }
 
 function intentStatusBadge(text, status) {
@@ -8550,6 +8790,21 @@ function matrixCell(row, zone) {
   td.dataset.comparison = comparisonStatus.className
   td.append(comparisonStatus.element)
   const intentCell = applyIntentCellPresentation(td, row, zone)
+  if (cell.txtPurposes.length > 0) {
+    const labels = createElement("div", { className: "txt-purpose-labels" })
+    for (const purpose of cell.txtPurposes) {
+      const count = cell.txtPurposeCounts[purpose] || 0
+      const label = TXT_RECORD_PURPOSE_PRESENTATION[purpose].label
+      const purposeLabel = createElement("small", {
+        className: "txt-purpose-label",
+        text: count > 1 ? `${label} ${count}` : label,
+      })
+      purposeLabel.dataset.txtPurpose = purpose
+      purposeLabel.title = `${count} record${count === 1 ? "" : "s"} classified as ${label}`
+      labels.append(purposeLabel)
+    }
+    td.append(labels)
+  }
   const directlyEditable = Boolean(cell.action && !readOnly)
   const structuredValue = cell.inspectionValue !== null
     && typeof cell.inspectionValue === "object"
@@ -8701,6 +8956,7 @@ function renderMatrix() {
     tr.dataset.recordType = row.recordType
     tr.dataset.redirectTypes = row.redirectTypes.join(" ")
     tr.dataset.search = row.search
+    tr.dataset.txtPurposes = row.txtPurposes.join(" ")
 
     const categoryCell = createElement("th", {
       className: "category-cell",
@@ -8926,7 +9182,7 @@ function renderMatrix() {
   }
   matrixRowElements = rowElements
   elements.matrixBody.replaceChildren(fragment)
-  filterRows()
+  filterRows({ preserveReveal: true })
 }
 
 function coverageExpectationForIssue(issue) {
@@ -9152,8 +9408,9 @@ function renderCoverage() {
   syncCoverageVisibility()
 }
 
-function filterRows() {
+function filterRows(options = {}) {
   const filters = currentMatrixFilters()
+  clearMatrixReveal({ forget: !options.preserveReveal })
   const rows = sortMatrixRows(matrixRowElements.map((row) => ({
     category: row.dataset.category,
     defaultOrder: Number(row.dataset.defaultOrder),
@@ -9164,7 +9421,6 @@ function filterRows() {
   const visibleRows = []
 
   for (const row of rows) {
-    row.classList.remove("matrix-navigation-target")
     const show = matrixRowMatchesFilters({
       actionable: row.dataset.actionable === "true",
       category: row.dataset.category,
@@ -9177,7 +9433,19 @@ function filterRows() {
       recordType: row.dataset.recordType,
       redirectTypes: row.dataset.redirectTypes.split(" ").filter(Boolean),
       search: row.dataset.search,
+      txtPurposes: row.dataset.txtPurposes.split(" ").filter(Boolean),
     }, filters)
+    for (const cell of row.querySelectorAll(".matrix-cell")) {
+      const labels = [...cell.querySelectorAll(".txt-purpose-label")]
+      const matchesTxtPurpose = filters.txtPurpose
+        && labels.some((label) => label.dataset.txtPurpose === filters.txtPurpose)
+      cell.classList.toggle("txt-purpose-context", Boolean(filters.txtPurpose) && !matchesTxtPurpose)
+      for (const label of labels) {
+        const active = label.dataset.txtPurpose === filters.txtPurpose
+        label.classList.toggle("active", active)
+        label.classList.toggle("context", Boolean(filters.txtPurpose) && !active)
+      }
+    }
     row.classList.toggle("hidden-row", !show)
     if (show) visibleRows.push(row)
   }
@@ -9194,6 +9462,9 @@ function filterRows() {
   elements.matrixTable.hidden = emptyMessage.length > 0
   syncMatrixFilterControls(filters)
   syncMatrixActionTabStop()
+  if (options.preserveReveal && !restoreMatrixRevealClasses()) {
+    state.matrixReveal = null
+  }
   syncUrlState()
 }
 
@@ -9498,6 +9769,7 @@ function showExplorerView(options = {}) {
   elements.intentStatus.value = options.intentStatus || MATRIX_INTENT_FILTER.ALL
   elements.scope.value = options.scope || MATRIX_SCOPE.ALL
   elements.dnsType.value = ""
+  elements.txtPurpose.value = ""
   elements.redirectType.value = ""
   elements.differenceToggle.setAttribute(
     "aria-pressed",
@@ -9514,7 +9786,22 @@ function showExplorerView(options = {}) {
   syncRedirectTypeAvailability()
   renderCategoryCapability()
   filterRows()
-  focusConfigurationExplorer()
+  if (options.focus !== false) focusConfigurationExplorer()
+}
+
+function showWorkflowDriftInMatrix(button, workflow) {
+  const zoneIds = JSON.parse(button.dataset.zoneIds || "[]")
+  if (zoneIds.length === 0) return
+  showExplorerView({
+    focus: false,
+    scope: MATRIX_SCOPE.ALL,
+  })
+  state.selectedColumnsOnly = zoneIds.length < state.inventory.zones.length
+  selectZoneIds(zoneIds)
+  revealMatrixTarget({ zoneIds })
+  toast(
+    `Showing and selecting ${zoneIds.length} ${workflow} drifted zone${zoneIds.length === 1 ? "" : "s"} in the matrix`,
+  )
 }
 
 function showIntentDrift() {
@@ -12592,7 +12879,11 @@ elements.intentStatus.addEventListener("change", () => {
   }
   filterRows()
 })
-elements.dnsType.addEventListener("change", filterRows)
+elements.dnsType.addEventListener("change", () => {
+  syncTxtPurposeAvailability()
+  filterRows()
+})
+elements.txtPurpose.addEventListener("change", filterRows)
 elements.redirectType.addEventListener("change", filterRows)
 elements.targetHoles.addEventListener("click", () => {
   const next = elements.targetHoles.getAttribute("aria-pressed") !== "true"
@@ -12773,6 +13064,12 @@ elements.coverageGroups.addEventListener("click", (event) => {
   if (!Object.values(COVERAGE_SECTION).includes(section)) return
   state.coverageExpanded[section] = !state.coverageExpanded[section]
   syncCoverageVisibility()
+})
+elements.emailPolicyDrift.addEventListener("click", () => {
+  showWorkflowDriftInMatrix(elements.emailPolicyDrift, "Email Routing")
+})
+elements.wafPolicyDrift.addEventListener("click", () => {
+  showWorkflowDriftInMatrix(elements.wafPolicyDrift, "Shared WAF")
 })
 elements.alignEmail.addEventListener("click", alignEmail)
 elements.alignWaf.addEventListener("click", alignWaf)

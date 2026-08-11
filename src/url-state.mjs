@@ -6,6 +6,7 @@ import {
   MATRIX_SCOPE,
   MATRIX_SORT,
 } from "./matrix-filter.mjs"
+import { TXT_RECORD_PURPOSE } from "./dns-record-purpose.mjs"
 import { INTENT_WORKFLOW_SCREEN } from "./intent-workflow.mjs"
 
 export const VIEW_PANEL = Object.freeze({
@@ -21,6 +22,7 @@ export const DEFAULT_VIEW_STATE = Object.freeze({
   scope: DEFAULT_MATRIX_SCOPE,
   sort: DEFAULT_MATRIX_SORT,
   recordType: DEFAULT_MATRIX_FILTERS.recordType,
+  txtPurpose: DEFAULT_MATRIX_FILTERS.txtPurpose,
   redirectType: DEFAULT_MATRIX_FILTERS.redirectType,
   changeableOnly: DEFAULT_MATRIX_FILTERS.changeableOnly,
   targetHolesOnly: DEFAULT_MATRIX_FILTERS.targetHolesOnly,
@@ -45,6 +47,7 @@ const FIELDS = [
   { key: "scope", field: "scope", kind: "string", allowed: new Set(Object.values(MATRIX_SCOPE)) },
   { key: "sort", field: "sort", kind: "string", allowed: new Set(Object.values(MATRIX_SORT)) },
   { key: "type", field: "recordType", kind: "string" },
+  { key: "txt", field: "txtPurpose", kind: "string", allowed: new Set(Object.values(TXT_RECORD_PURPOSE)) },
   { key: "redirect", field: "redirectType", kind: "string" },
   { key: "changeable", field: "changeableOnly", kind: "bool-off" },
   { key: "holes", field: "targetHolesOnly", kind: "bool-off" },

@@ -40,8 +40,9 @@ test("matrix visible counts keep the active review context explicit", () => {
     matrixVisibleCountText(1, 1, {
       changeableOnly: true,
       differencesOnly: false,
+      txtPurpose: "spf",
     }),
-    "1 of 1 facet | Supported changes",
+    "1 of 1 facet | Supported changes + TXT: SPF",
   )
 })
 
@@ -160,6 +161,7 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
     presentCount: 3,
     recordType: "CNAME",
     redirectTypes: [],
+    txtPurposes: [],
     search: "dns records cname cc-dev zone-d.example",
   }
   const filters = {
@@ -189,6 +191,34 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
   assert.equal(matrixRowMatchesFilters(row, {
     ...filters,
     targetZoneIds: new Set(["zone-alpha.example"]),
+  }), false)
+})
+
+test("matrix filters individual TXT record rows by purpose", () => {
+  const row = {
+    category: "DNS records",
+    different: true,
+    missingZoneIds: [],
+    presentCount: 3,
+    recordType: "TXT",
+    redirectTypes: [],
+    search: "dns records txt example.com spf",
+    txtPurposes: ["spf"],
+  }
+  const filters = {
+    ...DEFAULT_MATRIX_FILTERS,
+    differencesOnly: false,
+    recordType: "TXT",
+    scope: MATRIX_SCOPE.ALL,
+    targetZoneIds: new Set(),
+    txtPurpose: "spf",
+    zoneCount: 3,
+  }
+
+  assert.equal(matrixRowMatchesFilters(row, filters), true)
+  assert.equal(matrixRowMatchesFilters(row, {
+    ...filters,
+    txtPurpose: "dkim",
   }), false)
 })
 

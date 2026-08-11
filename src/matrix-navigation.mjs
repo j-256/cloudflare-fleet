@@ -11,6 +11,30 @@ export const MATRIX_NAVIGATION_KEYS = new Set(
   Object.values(MATRIX_NAVIGATION_KEY),
 )
 
+function clamp(value, minimum, maximum) {
+  return Math.min(Math.max(value, minimum), maximum)
+}
+
+export function matrixRevealScrollPosition(options) {
+  const maxLeft = Math.max(0, options.scrollWidth - options.clientWidth)
+  const maxTop = Math.max(0, options.scrollHeight - options.clientHeight)
+  const stickyWidth = clamp(options.stickyWidth, 0, options.clientWidth)
+  const headerHeight = clamp(options.headerHeight, 0, options.clientHeight)
+  const horizontalAnchor = stickyWidth + ((options.clientWidth - stickyWidth) / 2)
+  const verticalAnchor = headerHeight + ((options.clientHeight - headerHeight) / 2)
+  const left = options.horizontal
+    ? options.targetLeft + (options.targetWidth / 2) - horizontalAnchor
+    : options.currentLeft
+  const top = options.vertical
+    ? options.targetTop + (options.targetHeight / 2) - verticalAnchor
+    : options.currentTop
+
+  return {
+    left: clamp(left, 0, maxLeft),
+    top: clamp(top, 0, maxTop),
+  }
+}
+
 function closestVerticalAction(actions, current, direction) {
   const candidateRows = [...new Set(
     actions
