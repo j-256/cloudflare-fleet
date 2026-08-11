@@ -9280,6 +9280,12 @@ function coverageIssueRow(issueState) {
     }),
     createElement("small", { text: issue.detail }),
   )
+  if (issueState.expected && issueState.expectation?.reason) {
+    copy.append(createElement("small", {
+      className: "coverage-expectation-reason",
+      text: `Expected because: ${issueState.expectation.reason}`,
+    }))
+  }
   row.append(copy)
   const action = coverageIssueAction(issueState)
   if (action) row.append(action)

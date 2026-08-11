@@ -31,9 +31,12 @@ import {
 
 const ACCOUNT_ID = "e2e-account"
 const API_PATH_PREFIX = "/client/v4/"
+const DNS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/dns_records$/
+const DNS_RECORD_PATH_PATTERN = /^zones\/([^/]+)\/dns_records\/([^/]+)$/
 const PROJECT_DIR = fileURLToPath(new URL("../..", import.meta.url))
 const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
 const SESSION_SECRET = "e2e-session-secret"
+const ZONES_PATH = "zones"
 
 const ZONE_NAMES = Object.freeze([
   "alpha.example",
@@ -151,10 +154,16 @@ function jsonResponse(status, payload) {
   })
 }
 
-function mockCloudflareTransport(inventory) {
+function fakeCloudflareTransport(inventory) {
   const requests = []
+  const dnsByZone = new Map()
   const settings = new Map()
+  let createdDnsRecord = 0
   for (const zone of inventory.zones) {
+    dnsByZone.set(
+      zone.meta.id,
+      structuredClone(zone.surfaces.dns.result),
+    )
     for (const entry of zone.surfaces.settings.result) {
       settings.set(`${zone.meta.id}:${entry.id}`, structuredClone(entry))
     }
@@ -172,6 +181,81 @@ function mockCloudflareTransport(inventory) {
       method,
       path: `${relativePath}${target.search}`,
     })
+
+    if (relativePath === ZONES_PATH && method === "GET") {
+      return jsonResponse(200, {
+        result: inventory.zones.map((zone) => structuredClone(zone.meta)),
+        result_info: { total_pages: 1 },
+        success: true,
+      })
+    }
+
+    const dnsCollectionMatch = relativePath.match(DNS_COLLECTION_PATH_PATTERN)
+    if (dnsCollectionMatch) {
+      const zoneId = decodeURIComponent(dnsCollectionMatch[1])
+      const records = dnsByZone.get(zoneId)
+      if (!records) {
+        return jsonResponse(404, {
+          errors: [{ message: "Zone not found" }],
+          success: false,
+        })
+      }
+      if (method === "GET") {
+        return jsonResponse(200, {
+          result: structuredClone(records),
+          success: true,
+        })
+      }
+      if (method === "POST") {
+        createdDnsRecord += 1
+        const created = {
+          ...body,
+          id: `created-dns-${createdDnsRecord}`,
+        }
+        records.push(created)
+        return jsonResponse(200, {
+          result: structuredClone(created),
+          success: true,
+        })
+      }
+    }
+
+    const dnsRecordMatch = relativePath.match(DNS_RECORD_PATH_PATTERN)
+    if (dnsRecordMatch) {
+      const zoneId = decodeURIComponent(dnsRecordMatch[1])
+      const recordId = decodeURIComponent(dnsRecordMatch[2])
+      const records = dnsByZone.get(zoneId)
+      const recordIndex = records?.findIndex((record) => record.id === recordId) ?? -1
+      if (!records || recordIndex === -1) {
+        return jsonResponse(404, {
+          errors: [{ message: "DNS record not found" }],
+          success: false,
+        })
+      }
+      if (method === "GET") {
+        return jsonResponse(200, {
+          result: structuredClone(records[recordIndex]),
+          success: true,
+        })
+      }
+      if (method === "PATCH") {
+        records[recordIndex] = {
+          ...records[recordIndex],
+          ...body,
+        }
+        return jsonResponse(200, {
+          result: structuredClone(records[recordIndex]),
+          success: true,
+        })
+      }
+      if (method === "DELETE") {
+        const [deleted] = records.splice(recordIndex, 1)
+        return jsonResponse(200, {
+          result: { id: deleted.id },
+          success: true,
+        })
+      }
+    }
 
     const match = relativePath.match(SETTING_PATH_PATTERN)
     if (match) {
@@ -213,6 +297,11 @@ function mockCloudflareTransport(inventory) {
   return {
     fetch,
     requests,
+    dnsRecords(zoneName) {
+      return structuredClone(
+        dnsByZone.get(`zone-${zoneName}`) || [],
+      )
+    },
     settingValue(zoneName, settingId) {
       return settings.get(`zone-${zoneName}:${settingId}`)?.value
     },
@@ -241,40 +330,51 @@ async function copyRuntimeAssets(runtimeDir) {
   ])
 }
 
-export async function createDashboardSession() {
+export async function createDashboardSession(options = {}) {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "cloudflare-fleet-e2e."),
   )
   const cacheDir = path.join(root, "cache")
   const runtimeDir = path.join(root, "runtime")
   const stateFile = path.join(root, "state.json")
-  const inventory = dashboardInventory()
-  const transport = mockCloudflareTransport(inventory)
+  const inventory = options.inventory || dashboardInventory()
+  const accountId = options.accountId || inventory.account.id
+  const transport = options.cloudflareFetch
+    ? {
+        fetch: options.cloudflareFetch,
+        requests: options.requests || [],
+      }
+    : fakeCloudflareTransport(inventory)
   await copyRuntimeAssets(runtimeDir)
-  await persistCacheRecord(
-    cacheDir,
-    "seed",
-    createCacheRecord(ACCOUNT_ID, inventory, {
-      updatedAt: inventory.loadedAt,
-    }),
-  )
+  if (options.stateSourceFile) {
+    await fs.copyFile(options.stateSourceFile, stateFile)
+  }
+  if (options.seedCache !== false) {
+    await persistCacheRecord(
+      cacheDir,
+      "seed",
+      createCacheRecord(accountId, inventory, {
+        updatedAt: inventory.loadedAt,
+      }),
+    )
+  }
   await prepareCacheScript({
-    accountId: ACCOUNT_ID,
+    accountId,
     cacheDir,
-    mode: CACHE_MODE.USE,
+    mode: options.seedCache === false ? CACHE_MODE.FRESH : CACHE_MODE.USE,
     outputPath: path.join(runtimeDir, "cache.js"),
   })
   await prepareFleetIntentScript({
-    accountId: ACCOUNT_ID,
+    accountId,
     outputPath: path.join(runtimeDir, "intent.js"),
     stateFile,
   })
   const broker = await startSessionBroker({
-    accountId: ACCOUNT_ID,
-    apiToken: "e2e-api-token",
+    accountId,
+    apiToken: options.apiToken || "e2e-api-token",
     cacheDir,
     cloudflareFetch: transport.fetch,
-    readOnly: false,
+    readOnly: Boolean(options.readOnly),
     runtimeDir,
     sessionId: `e2e-${process.pid}-${randomUUID()}`,
     sessionSecret: SESSION_SECRET,
@@ -283,9 +383,12 @@ export async function createDashboardSession() {
 
   return {
     broker,
+    dnsRecords: transport.dnsRecords,
     requests: transport.requests,
     root,
+    sessionSecret: SESSION_SECRET,
     settingValue: transport.settingValue,
+    stateFile,
     url: broker.sessionUrl,
     zoneNames: ZONE_NAMES,
   }
@@ -302,39 +405,46 @@ export async function closeDashboardSession(session) {
   })
 }
 
-async function waitForDashboard(page) {
+export async function waitForDashboard(page) {
   await page.locator("#application").waitFor({ state: "visible" })
   await page.waitForFunction(() => (
     document.querySelector("#application")?.dataset.initializing === "false"
   ))
 }
 
+async function useDashboard(page, use, testInfo, options = {}) {
+  const browserErrors = []
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text())
+  })
+  page.on("pageerror", (error) => browserErrors.push(error.stack || error.message))
+  const session = await createDashboardSession(options)
+  await page.goto(session.url, { waitUntil: "domcontentloaded" })
+  await waitForDashboard(page)
+  await use({
+    ...session,
+    page,
+    waitForReady: () => waitForDashboard(page),
+  })
+  await page.close()
+  await closeDashboardSession(session)
+  if (browserErrors.length > 0) {
+    await testInfo.attach("browser-errors", {
+      body: browserErrors.join("\n"),
+      contentType: "text/plain",
+    })
+    if (testInfo.status === testInfo.expectedStatus) {
+      throw new Error(`Unexpected browser errors:\n${browserErrors.join("\n")}`)
+    }
+  }
+}
+
 export const test = base.extend({
   dashboard: async ({ page }, use, testInfo) => {
-    const browserErrors = []
-    page.on("console", (message) => {
-      if (message.type() === "error") browserErrors.push(message.text())
-    })
-    page.on("pageerror", (error) => browserErrors.push(error.stack || error.message))
-    const session = await createDashboardSession()
-    await page.goto(session.url, { waitUntil: "domcontentloaded" })
-    await waitForDashboard(page)
-    await use({
-      ...session,
-      page,
-      waitForReady: () => waitForDashboard(page),
-    })
-    await page.close()
-    await closeDashboardSession(session)
-    if (browserErrors.length > 0) {
-      await testInfo.attach("browser-errors", {
-        body: browserErrors.join("\n"),
-        contentType: "text/plain",
-      })
-      if (testInfo.status === testInfo.expectedStatus) {
-        throw new Error(`Unexpected browser errors:\n${browserErrors.join("\n")}`)
-      }
-    }
+    await useDashboard(page, use, testInfo)
+  },
+  readOnlyDashboard: async ({ page }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, { readOnly: true })
   },
 })
 
