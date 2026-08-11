@@ -1,0 +1,19 @@
+{
+  "name": "cloudflare-fleet",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A local control plane for comparing and aligning Cloudflare zones",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:all": "npm test && npm run test:e2e",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:serve": "node test/e2e/fixture-server.mjs",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

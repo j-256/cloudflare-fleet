@@ -147,12 +147,24 @@ The matrix is descriptive and always shows real differences. Typed enforcement e
 
 ## Tests
 
-Run the dependency-free unit suite and shell validation:
+Install the pinned browser-test toolchain and Chromium once per checkout:
 
 ```sh
-node --test test/*.test.mjs
+npm ci
+npx playwright install chromium
+```
+
+Run the dependency-free unit suite, UI-driven browser journeys, and shell validation:
+
+```sh
+npm test
+npm run test:e2e
 shellcheck launch.sh
 ```
+
+`npm run test:all` runs both JavaScript suites. The browser journeys host the shipped dashboard through its real loopback broker, seed deterministic cached inventory, and replace only the upstream Cloudflare transport with a stateful local fake. They do not require Cloudflare credentials or send account requests. The suite covers cached startup, matrix and phone-width filtering, URL-backed zone selection, intent persistence and browser history, and a reviewed setting write through verification and Activity history. Playwright retains a trace, screenshot, and video for failures under the ignored `test-results/` directory.
+
+Use `npm run test:e2e:ui` for Playwright's interactive runner, `npm run test:e2e:headed` to watch the suite in Chromium, or `npm run test:e2e:serve` to print a deterministic fixture URL for exploratory browser testing. Stop the fixture server with Ctrl-C when the browser session should remain open longer than the broker's normal last-tab lifecycle.
 
 ## License
 

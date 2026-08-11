@@ -1,5 +1,8 @@
 .DS_Store
 auth.js
 chrome-profile/
+node_modules/
+playwright-report/
 state*.json.lock*
 state*.json.*.tmp
+test-results/
