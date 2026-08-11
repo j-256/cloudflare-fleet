@@ -18,7 +18,7 @@ The address-bar URL reflects the matrix filters, selected zone columns, and open
 
 ## Read-only audit
 
-The audit command reads the complete live inventory and the configured fleet-state file without sending Cloudflare mutations. Its core report covers unexpected read gaps, saved intent, DNSSEC transition age, Email Routing and fleet WAF alignment, editable zone-setting drift, legacy edge TLS, origin certificate validation, HTTP-to-HTTPS enforcement, duplicate or conflicting DNS records, empty and disabled rulesets, and certificate health. Disabled-rule evidence distinguishes explicit archives and long-dormant rules from recently parked rules. Findings carry stable identifiers and one of four severities: critical, warning, review, or info. Progress goes to stderr so stdout remains valid Markdown or JSON for piping.
+The audit command reads the complete live inventory and the configured fleet-state file without sending Cloudflare mutations. Its core report covers unexpected read gaps, saved intent, DNSSEC transition age, Email Routing and fleet WAF alignment, editable zone-setting drift, legacy edge TLS, origin certificate validation, HTTP-to-HTTPS enforcement, duplicate or conflicting DNS records, apex SPF records that lack a DMARC policy, empty and disabled rulesets, and certificate health. Disabled-rule evidence distinguishes explicit archives and long-dormant rules from recently parked rules. Findings carry stable identifiers and one of four severities: critical, warning, review, or info. Progress goes to stderr so stdout remains valid Markdown or JSON for piping.
 
 ```sh
 node src/audit.mjs

@@ -223,3 +223,51 @@ test("fleet audit HTML is self-contained and escapes finding evidence", () => {
   assert.equal(html.includes("<script>alert"), false)
   assert.match(html, /<details>[\s\S]*<summary>Evidence<\/summary>/)
 })
+
+test("fleet audit flags an apex SPF record published without a DMARC policy", () => {
+  const spfOnly = completeSurfaces(makeZone("spf-only.example", {
+    dns: [
+      {
+        content: "\"v=spf1 include:_spf.google.com -all\"",
+        id: "spf-only-spf",
+        name: "spf-only.example",
+        ttl: 60,
+        type: "TXT",
+      },
+    ],
+  }))
+  const aligned = completeSurfaces(makeZone("aligned.example"))
+  const report = buildFleetAudit(makeInventory([spfOnly, aligned]), { now: NOW })
+
+  const spfWithoutDmarc = report.findings.find(
+    (entry) => entry.id === "dns.spf-without-dmarc:spf-only.example",
+  )
+  assert.ok(spfWithoutDmarc, "expected an SPF-without-DMARC finding")
+  assert.equal(spfWithoutDmarc.severity, "warning")
+  assert.equal(spfWithoutDmarc.category, "DNS")
+  assert.deepEqual(spfWithoutDmarc.zones, ["spf-only.example"])
+
+  const ids = new Set(report.findings.map((entry) => entry.id))
+  assert.ok(
+    !ids.has("dns.spf-without-dmarc:aligned.example"),
+    "a zone publishing both SPF and DMARC must not be flagged",
+  )
+})
+
+test("fleet audit does not expect DMARC when a zone publishes no SPF", () => {
+  const noMail = completeSurfaces(makeZone("no-mail.example", {
+    dns: [
+      {
+        content: "192.0.2.10",
+        id: "no-mail-a",
+        name: "no-mail.example",
+        proxied: true,
+        ttl: 300,
+        type: "A",
+      },
+    ],
+  }))
+  const report = buildFleetAudit(makeInventory([noMail]), { now: NOW })
+  const ids = new Set(report.findings.map((entry) => entry.id))
+  assert.ok(!ids.has("dns.spf-without-dmarc:no-mail.example"))
+})

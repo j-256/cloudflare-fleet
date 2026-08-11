@@ -589,6 +589,26 @@ function dnsRecordFindings(inventory) {
         },
       ))
     }
+    // Publishing SPF declares the domain sends mail, so a DMARC policy should
+    // accompany it; without one, receivers get no anti-spoofing instruction or
+    // reporting visibility (a missing SPF implies no such declaration)
+    if (spf.length > 0 && dmarc.length === 0) {
+      findings.push(finding(
+        `dns.spf-without-dmarc:${zone.meta.name}`,
+        FLEET_AUDIT_SEVERITY.WARNING,
+        "DNS",
+        "An SPF record is published without a DMARC policy",
+        `${zone.meta.name} publishes an apex SPF record but has no ${dmarcName} policy record`,
+        {
+          evidence: {
+            dmarcName,
+            spfRecordIds: spf.map((record) => record.id || null).sort(),
+          },
+          recommendation: "Add a DMARC policy record at the expected name to complete SPF-based email authentication and gain reporting visibility, starting at p=none before enforcing",
+          zones: [zone.meta.name],
+        },
+      ))
+    }
   }
   return findings
 }
