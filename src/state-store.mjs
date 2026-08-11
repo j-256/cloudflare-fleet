@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
 
@@ -11,6 +12,7 @@ import {
 export { atomicWriteFile } from "./atomic-file.mjs"
 
 const LOCK_ATTEMPTS = 80
+const LOCK_OWNER_FILENAME = "owner.json"
 const LOCK_RETRY_MS = 25
 const STALE_LOCK_MS = 30000
 
@@ -25,11 +27,59 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+function lockOwnerPath(lockPath) {
+  return path.join(lockPath, LOCK_OWNER_FILENAME)
+}
+
+async function readLockOwner(lockPath) {
+  let content
+  try {
+    content = await fs.readFile(lockOwnerPath(lockPath), "utf8")
+  } catch (error) {
+    if (error?.code === "ENOENT") return null
+    throw error
+  }
+  try {
+    return JSON.parse(content)
+  } catch {
+    return null
+  }
+}
+
+function lockOwnerIsRunning(owner) {
+  if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0) return false
+  try {
+    process.kill(owner.pid, 0)
+    return true
+  } catch (error) {
+    return error?.code !== "ESRCH"
+  }
+}
+
 async function acquireStateLock(lockPath) {
+  const owner = {
+    pid: process.pid,
+    token: randomUUID(),
+  }
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
     try {
       await fs.mkdir(lockPath, { mode: 0o700 })
+      try {
+        await fs.writeFile(
+          lockOwnerPath(lockPath),
+          `${JSON.stringify(owner)}\n`,
+          {
+            flag: "wx",
+            mode: 0o600,
+          },
+        )
+      } catch (error) {
+        await fs.rm(lockPath, { force: true, recursive: true })
+        throw error
+      }
       return async () => {
+        const activeOwner = await readLockOwner(lockPath)
+        if (activeOwner?.token !== owner.token) return
         await fs.rm(lockPath, {
           force: true,
           recursive: true,
@@ -40,6 +90,11 @@ async function acquireStateLock(lockPath) {
       try {
         const status = await fs.stat(lockPath)
         if (Date.now() - status.mtimeMs > STALE_LOCK_MS) {
+          const activeOwner = await readLockOwner(lockPath)
+          if (lockOwnerIsRunning(activeOwner)) {
+            await wait(LOCK_RETRY_MS)
+            continue
+          }
           const abandonedPath = `${lockPath}.${process.pid}.${Date.now()}.stale`
           try {
             await fs.rename(lockPath, abandonedPath)

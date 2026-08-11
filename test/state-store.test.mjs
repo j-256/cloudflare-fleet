@@ -29,6 +29,7 @@ import {
 } from "../src/intent-store.mjs"
 import {
   readFleetStateDocument,
+  updateFleetStateDocument,
 } from "../src/state-store.mjs"
 import {
   WRITE_VERIFICATION_KIND,
@@ -184,6 +185,61 @@ test("concurrent intent and activity updates preserve both state sections", asyn
   const state = await readFleetStateDocument(stateFile, "account-one")
   assert.equal(state.intent.groups.some((group) => group.id === "primary"), true)
   assert.equal(state.activity.entries[0].id, "activity-concurrent")
+})
+
+test("state lock release preserves a successor writer's lock", async (context) => {
+  const { directory, stateFile } = await fixture(context)
+  const lockPath = `${stateFile}.lock`
+  const replacedLockPath = `${lockPath}.replaced`
+  const successorOwner = {
+    pid: process.pid,
+    token: "successor-owner",
+  }
+
+  await updateFleetStateDocument(stateFile, "account-one", async (current) => {
+    await fs.rename(lockPath, replacedLockPath)
+    await fs.mkdir(lockPath, { mode: 0o700 })
+    await fs.writeFile(
+      path.join(lockPath, "owner.json"),
+      `${JSON.stringify(successorOwner)}\n`,
+      { mode: 0o600 },
+    )
+    await fs.rm(replacedLockPath, { recursive: true })
+    return current
+  })
+
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")),
+    successorOwner,
+  )
+  await fs.rm(lockPath, { recursive: true })
+  assert.deepEqual(await fs.readdir(directory), ["state.json"])
+})
+
+test("state store does not reclaim a stale lock owned by a live process", async (context) => {
+  const { stateFile } = await fixture(context)
+  const lockPath = `${stateFile}.lock`
+  await fs.mkdir(lockPath, { mode: 0o700 })
+  await fs.writeFile(
+    path.join(lockPath, "owner.json"),
+    `${JSON.stringify({ pid: process.pid, token: "live-owner" })}\n`,
+    { mode: 0o600 },
+  )
+  const staleTime = new Date(Date.now() - 60000)
+  await fs.utimes(lockPath, staleTime, staleTime)
+
+  await assert.rejects(
+    updateFleetStateDocument(
+      stateFile,
+      "account-one",
+      (current) => current,
+    ),
+    /Fleet state store is busy/,
+  )
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(path.join(lockPath, "owner.json"), "utf8")),
+    { pid: process.pid, token: "live-owner" },
+  )
 })
 
 test("concurrent guarded undo starts allow only one active inverse", async (context) => {
