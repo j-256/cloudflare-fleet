@@ -939,6 +939,41 @@ test("zone group names are unique regardless of case", () => {
   )
 })
 
+test("zone group edits preserve order and fixed memberships stay unique", () => {
+  let document = createEmptyFleetIntentDocument("account-id")
+  document = replaceFleetIntentGroup(document, {
+    id: "primary-zones",
+    members: [{ zoneId: "zone-a", zoneName: "a.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Primary zones",
+  })
+  document = replaceFleetIntentGroup(document, {
+    id: "secondary-zones",
+    members: [{ zoneId: "zone-b", zoneName: "b.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Secondary zones",
+  })
+
+  document = replaceFleetIntentGroup(document, {
+    ...document.groups.find((group) => group.id === "primary-zones"),
+    name: "Renamed primary zones",
+  })
+
+  assert.deepEqual(
+    document.groups.map((group) => group.id),
+    [FLEET_INTENT_ALL_ZONES_GROUP_ID, "primary-zones", "secondary-zones"],
+  )
+  assert.throws(
+    () => replaceFleetIntentGroup(document, {
+      id: "duplicate-membership",
+      members: [{ zoneId: "zone-a", zoneName: "renamed.example" }],
+      mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+      name: "Duplicate membership",
+    }),
+    /already uses this membership/,
+  )
+})
+
 test("zone groups retain automatic and custom name sources", () => {
   let document = createEmptyFleetIntentDocument("account-id")
   document = replaceFleetIntentGroup(document, {

@@ -157,6 +157,15 @@ function normalizeFleetIntentGroup(group) {
   }
 }
 
+function fleetIntentGroupsShareFixedMembership(left, right) {
+  if (left.mode !== FLEET_INTENT_GROUP_MODE.MEMBERS
+    || right.mode !== FLEET_INTENT_GROUP_MODE.MEMBERS) return false
+  const leftZoneIds = left.members.map((member) => member.zoneId).sort()
+  const rightZoneIds = right.members.map((member) => member.zoneId).sort()
+  return leftZoneIds.length === rightZoneIds.length
+    && leftZoneIds.every((zoneId, index) => zoneId === rightZoneIds[index])
+}
+
 export function createEmptyFleetIntentDocument(accountId) {
   if (!isLabel(accountId)) throw new TypeError("Fleet intent requires an account identifier")
   return {
@@ -656,10 +665,15 @@ export function replaceFleetIntentGroup(document, group) {
     && entry.name.trim().toLowerCase() === normalizedName)) {
     throw new TypeError("Zone group names must be unique")
   }
-  next.groups = [
-    ...next.groups.filter((entry) => entry.id !== normalizedGroup.id),
-    normalizedGroup,
-  ]
+  if (next.groups.some((entry) => entry.id !== normalizedGroup.id
+    && fleetIntentGroupsShareFixedMembership(entry, normalizedGroup))) {
+    throw new TypeError("A fixed zone group already uses this membership")
+  }
+  const groupIndex = next.groups.findIndex(
+    (entry) => entry.id === normalizedGroup.id,
+  )
+  if (groupIndex === -1) next.groups.push(normalizedGroup)
+  else next.groups.splice(groupIndex, 1, normalizedGroup)
   if (!isFleetIntentDocument(next)) throw new TypeError("Fleet intent group produced an invalid document")
   return next
 }
