@@ -162,12 +162,12 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
     recordType: "CNAME",
     redirectTypes: [],
     txtPurposes: [],
-    search: "dns records cname cc-dev zone-d.example",
+    search: "dns records cname staging service.example",
   }
   const filters = {
     category: "DNS records",
     differencesOnly: true,
-    query: "strangelasers cc-dev",
+    query: "service staging",
     recordType: "CNAME",
     scope: MATRIX_SCOPE.FLEET_PATTERNS,
     targetHolesOnly: true,
@@ -178,7 +178,7 @@ test("matrix filters combine coverage, type, category, drift, and search terms",
   assert.equal(matrixRowMatchesFilters(row, filters), true)
   assert.equal(matrixRowMatchesFilters(row, {
     ...filters,
-    query: "strangelasers missing-token",
+    query: "service missing-token",
   }), false)
   assert.equal(matrixRowMatchesFilters(row, {
     ...filters,

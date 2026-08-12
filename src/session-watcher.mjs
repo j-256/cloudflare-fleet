@@ -16,8 +16,8 @@ const BROWSER_EXIT_INTERVAL_MS = 100
 const DEVTOOLS_EVALUATION_ID = 1
 const MISSING_TARGET_LIMIT = 3
 const POLL_INTERVAL_MS = 1000
-const SERVICE_TARGET_PATTERN = /^gui\/[0-9]+\/com\.j256\.cloudflare-fleet\.[A-Za-z0-9]+$/
-const WATCHER_SERVICE_LABEL = "com.j256.cloudflare-fleet."
+const SERVICE_TARGET_PATTERN = /^gui\/[0-9]+\/app\.cloudflare-fleet\.watcher\.[A-Za-z0-9]+$/
+const WATCHER_SERVICE_LABEL = "app.cloudflare-fleet.watcher."
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))

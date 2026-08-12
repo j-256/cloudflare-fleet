@@ -298,7 +298,7 @@ function dnssecFindings(inventory, now) {
   return findings
 }
 
-function emailFindings(inventory) {
+function emailFindings(inventory, policyConfiguration) {
   const findings = []
   const destination = deriveEmailDestination(inventory)
   const dnsPolicy = deriveEmailDnsPolicy(inventory)
@@ -322,7 +322,10 @@ function emailFindings(inventory) {
       const required = ["dns", "email", "email-catch-all", "email-dns"]
       if (required.some((surfaceId) => !zone.surfaces?.[surfaceId]?.ok)) continue
       const issues = emailIssues(zone, destination.email, dnsPolicy, {
-        exceptions: emailPolicyExceptionsForZone(zone.meta.name),
+        exceptions: emailPolicyExceptionsForZone(
+          zone.meta.name,
+          policyConfiguration,
+        ),
       })
       if (issues.length === 0) continue
       findings.push(finding(
@@ -342,7 +345,9 @@ function emailFindings(inventory) {
   const exceptions = evaluateFleetEmailPolicyExceptions(
     inventory,
     dnsPolicy,
-    configuredEmailPolicyExceptions(),
+    policyConfiguration
+      ? policyConfiguration.emailDnsRecordExceptions
+      : configuredEmailPolicyExceptions(),
   ).filter((entry) => entry.status === POLICY_EXCEPTION_STATUS.UNAVAILABLE
     || entry.status === POLICY_EXCEPTION_STATUS.VIOLATED)
   for (const exception of exceptions) {
@@ -795,7 +800,7 @@ export function buildFleetAudit(inventory, options = {}) {
     ...coverageFindings(inventory, intent),
     ...intentFindings(evaluation),
     ...dnssecFindings(inventory, now),
-    ...emailFindings(inventory),
+    ...emailFindings(inventory, options.policyConfiguration),
     ...wafFindings(inventory),
     ...securityPostureFindings(inventory),
     ...settingDriftFindings(inventory, matrix),

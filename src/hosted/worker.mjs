@@ -8,6 +8,11 @@ import {
   FLEET_INTENT_DOCUMENT_GLOBAL,
 } from "../fleet-intent.mjs"
 import {
+  createEmptyFleetPolicyConfiguration,
+  FLEET_POLICY_CONFIG_GLOBAL,
+  normalizeFleetPolicyConfiguration,
+} from "../fleet-policy.mjs"
+import {
   HTTP_METHOD,
 } from "../constants.mjs"
 import {
@@ -45,6 +50,7 @@ const DYNAMIC_SCRIPT_PATHS = new Set([
   "/auth.js",
   "/cache.js",
   "/intent.js",
+  "/policy.js",
 ])
 const MUTATION_METHODS = new Set([
   HTTP_METHOD.DELETE,
@@ -98,6 +104,21 @@ function bootstrapFailure(error) {
   )
 }
 
+function hostedFleetPolicyConfiguration(env) {
+  if (!env.FLEET_POLICY_JSON) return createEmptyFleetPolicyConfiguration()
+  let value
+  try {
+    value = JSON.parse(env.FLEET_POLICY_JSON)
+  } catch {
+    throw new Error("Hosted Fleet policy configuration is not valid JSON")
+  }
+  try {
+    return normalizeFleetPolicyConfiguration(value)
+  } catch {
+    throw new Error("Hosted Fleet policy configuration is invalid")
+  }
+}
+
 async function handleDynamicScript(pathname, env) {
   try {
     if (pathname === "/auth.js") {
@@ -116,6 +137,12 @@ async function handleDynamicScript(pathname, env) {
       return javascriptResponse(globalAssignment(
         FLEET_INTENT_DOCUMENT_GLOBAL,
         document,
+      ))
+    }
+    if (pathname === "/policy.js") {
+      return javascriptResponse(globalAssignment(
+        FLEET_POLICY_CONFIG_GLOBAL,
+        hostedFleetPolicyConfiguration(env),
       ))
     }
     const record = await readHostedCacheRecord(

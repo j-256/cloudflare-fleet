@@ -26,24 +26,24 @@ test("broader policy coverage is presented as a baseline refined by narrower gro
       name: "All zones",
     },
     {
-      id: "jklein-zone",
-      members: [{ zoneId: "zone-jklein", zoneName: "zone-b.example" }],
+      id: "alpha-zone",
+      members: [{ zoneId: "zone-alpha", zoneName: "alpha.example" }],
       mode: "members",
-      name: "zone-b.example",
+      name: "alpha.example",
     },
   ]
   const layers = fleetIntentPolicyLayers(
     [
       policy("fleet-policy", "all-zones"),
-      policy("zone-policy", "jklein-zone"),
+      policy("zone-policy", "alpha-zone"),
     ],
     groups,
-    ["zone-jklein", "zone-toolio"],
+    ["zone-alpha", "zone-beta"],
   )
 
   assert.deepEqual(layers.get("fleet-policy"), {
     broaderGroupNames: [],
-    narrowerGroupNames: ["zone-b.example"],
+    narrowerGroupNames: ["alpha.example"],
     overlappingGroupNames: [],
     role: FLEET_INTENT_POLICY_LAYER_ROLE.BASELINE,
   })

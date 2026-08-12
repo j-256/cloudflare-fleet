@@ -52,8 +52,8 @@ const PROXY_METHODS = new Set([
   HTTP_METHOD.POST,
   HTTP_METHOD.PUT,
 ])
-const SERVICE_TARGET_PATTERN = /^gui\/[0-9]+\/com\.j256\.cloudflare-fleet\.broker\.[A-Za-z0-9]+$/
-const SERVICE_TARGET_PREFIX = "com.j256.cloudflare-fleet.broker."
+const SERVICE_TARGET_PATTERN = /^gui\/[0-9]+\/app\.cloudflare-fleet\.broker\.[A-Za-z0-9]+$/
+const SERVICE_TARGET_PREFIX = "app.cloudflare-fleet.broker."
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -135,7 +135,8 @@ function staticFileFor(runtimeDir, relativePath) {
   }
   if (relativePath === "/styles.css"
     || relativePath === "/cache.js"
-    || relativePath === "/intent.js") {
+    || relativePath === "/intent.js"
+    || relativePath === "/policy.js") {
     return path.join(runtimeDir, relativePath.slice(1))
   }
   if (/^\/src\/[A-Za-z0-9._-]+\.mjs$/.test(relativePath)) {

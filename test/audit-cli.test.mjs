@@ -7,6 +7,7 @@ import {
   fleetAuditExitCode,
   fleetAuditUsage,
   parseFleetAuditArguments,
+  resolvePolicyFile,
   resolveStateFile,
 } from "../src/audit.mjs"
 
@@ -16,6 +17,7 @@ test("fleet audit arguments default to a core markdown report", () => {
     failOn: null,
     format: "markdown",
     help: false,
+    policyFile: null,
     stateFile: null,
   })
 })
@@ -32,6 +34,7 @@ test("fleet audit arguments accept deep JSON output and an explicit state file",
     failOn: "warning",
     format: "json",
     help: false,
+    policyFile: null,
     stateFile: "/tmp/fleet-state.json",
   })
 })
@@ -42,6 +45,7 @@ test("fleet audit arguments accept a self-contained HTML report", () => {
     failOn: null,
     format: "html",
     help: false,
+    policyFile: null,
     stateFile: null,
   })
 })
@@ -112,5 +116,25 @@ test("resolveStateFile still requires CLOUDFLARE_FLEET_STATE_FILE to be absolute
   assert.equal(
     resolveStateFile(undefined, { CLOUDFLARE_FLEET_STATE_FILE: "/abs/state.json" }),
     path.resolve("/abs/state.json"),
+  )
+})
+
+test("fleet audit arguments accept a policy file", () => {
+  assert.equal(
+    parseFleetAuditArguments(["--policy-file", "config/policy.json"]).policyFile,
+    "config/policy.json",
+  )
+})
+
+test("resolvePolicyFile accepts an explicit path and requires an absolute env path", () => {
+  assert.equal(
+    resolvePolicyFile("config/policy.json", {}),
+    path.resolve("config/policy.json"),
+  )
+  assert.throws(
+    () => resolvePolicyFile(undefined, {
+      CLOUDFLARE_FLEET_POLICY_FILE: "config/policy.json",
+    }),
+    /CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path/,
   )
 })

@@ -23,6 +23,7 @@ function environment(context, options = {}) {
     CLOUDFLARE_API_TOKEN: API_TOKEN,
     FLEET_ACCOUNT_ID: ACCOUNT_ID,
     FLEET_DB: hostedD1Fixture(context),
+    FLEET_POLICY_JSON: options.policyJson || "",
     FLEET_READ_ONLY: options.readOnly ? "true" : "false",
   }
 }
@@ -53,6 +54,34 @@ test("hosted Worker serves assets with security headers", async (context) => {
   assert.equal(await response.text(), "<h1>Fleet</h1>")
   assert.equal(response.headers.get("Cache-Control"), "no-cache")
   assert.match(response.headers.get("Content-Security-Policy"), /frame-ancestors 'none'/)
+})
+
+test("hosted Worker serves validated operator policy without credentials", async (context) => {
+  const env = environment(context, {
+    policyJson: JSON.stringify({
+      emailDnsRecordExceptions: [
+        {
+          component: "spf",
+          expected: {
+            content: "v=spf1 include:_spf.example.net -all",
+            ttl: 300,
+          },
+          reason: "Approved sender policy",
+          zoneName: "special.example",
+        },
+      ],
+      schemaVersion: 1,
+    }),
+  })
+  const response = await fetchHostedFleet(
+    new Request("http://localhost:8787/policy.js"),
+    env,
+  )
+  const source = await response.text()
+
+  assert.equal(response.status, 200)
+  assert.match(source, /special\.example/)
+  assert.equal(source.includes(API_TOKEN), false)
 })
 
 test("hosted Worker provides revision-safe intent persistence", async (context) => {

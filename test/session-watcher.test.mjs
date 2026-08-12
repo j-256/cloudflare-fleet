@@ -25,7 +25,7 @@ function watcherOptions() {
     port: 9222,
     runtimeBase: "/tmp",
     runtimeDir: "/tmp/cloudflare-fleet.abc123",
-    serviceTarget: "gui/501/com.j256.cloudflare-fleet.abc123",
+    serviceTarget: "gui/501/app.cloudflare-fleet.watcher.abc123",
     sessionId: "abc123",
     sessionUrl: "file:///tmp/cloudflare-fleet.abc123/index.html",
     targetId: "target-id",
@@ -159,7 +159,7 @@ test("watcher options constrain cleanup and process targets", () => {
   assert.throws(() => parseWatcherOptions(mismatchedRuntime), /Invalid session runtime path/)
 
   const mismatchedService = [...args]
-  mismatchedService[8] = "gui/501/com.j256.cloudflare-fleet.other"
+  mismatchedService[8] = "gui/501/app.cloudflare-fleet.watcher.other"
   assert.throws(() => parseWatcherOptions(mismatchedService), /Invalid launchd service target/)
 })
 

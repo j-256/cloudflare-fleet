@@ -1,0 +1,14 @@
+{
+  "emailDnsRecordExceptions": [
+    {
+      "component": "spf",
+      "expected": {
+        "content": "v=spf1 include:_spf.example.net -all",
+        "ttl": 300
+      },
+      "reason": "This zone uses an approved sender policy that differs from the fleet baseline",
+      "zoneName": "special.example"
+    }
+  ],
+  "schemaVersion": 1
+}

@@ -13,6 +13,7 @@ import {
   renderFleetAuditMarkdown,
 } from "./audit-report.mjs"
 import { isMainModule } from "./entrypoint.mjs"
+import { readFleetPolicyConfiguration } from "./fleet-policy-store.mjs"
 import { loadInventory } from "./inventory.mjs"
 import { readFleetStateDocument } from "./state-store.mjs"
 
@@ -33,6 +34,7 @@ const FLEET_AUDIT_SEVERITY_ORDER = Object.freeze([
   FLEET_AUDIT_SEVERITY.INFO,
 ])
 const DEFAULT_STATE_FILE = fileURLToPath(new URL("../state.json", import.meta.url))
+const DEFAULT_POLICY_FILE = fileURLToPath(new URL("../fleet-policy.json", import.meta.url))
 
 export function fleetAuditUsage() {
   return [
@@ -40,12 +42,13 @@ export function fleetAuditUsage() {
     "  cloudflare-fleet-audit - inspect live Cloudflare fleet configuration without writing",
     "",
     "SYNOPSIS",
-    "  node src/audit.mjs [--deep] [--format markdown|json|html] [--fail-on LEVEL] [--state-file PATH]",
+    "  node src/audit.mjs [--deep] [--format markdown|json|html] [--fail-on LEVEL] [--policy-file PATH] [--state-file PATH]",
     "",
     "OPTIONS",
     "  --deep             Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
     "  --fail-on LEVEL    Exit 2 for findings at or above critical, warning, review, or info",
     "  --format FORMAT    Render markdown, JSON, or self-contained HTML (default: markdown)",
+    "  --policy-file PATH Read fleet policy exceptions from PATH",
     "  --state-file PATH  Read fleet intent and coverage expectations from PATH",
     "  -h, --help         Show this help text",
     "",
@@ -53,6 +56,7 @@ export function fleetAuditUsage() {
     "  CLOUDFLARE_API_TOKEN        Required account-level Cloudflare API token",
     "  CLOUDFLARE_ACCOUNT_ID       Required Cloudflare account identifier",
     "  CLOUDFLARE_FLEET_STATE_FILE Optional absolute fleet-state JSON file",
+    "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file",
   ].join("\n")
 }
 
@@ -62,6 +66,7 @@ export function parseFleetAuditArguments(argv) {
     failOn: null,
     format: AUDIT_FORMAT.MARKDOWN,
     help: false,
+    policyFile: null,
     stateFile: null,
   }
   for (let index = 0; index < argv.length; index += 1) {
@@ -74,7 +79,7 @@ export function parseFleetAuditArguments(argv) {
       options.deep = true
       continue
     }
-    if (["--fail-on", "--format", "--state-file"].includes(argument)) {
+    if (["--fail-on", "--format", "--policy-file", "--state-file"].includes(argument)) {
       const value = argv[index + 1]
       if (!value || value.startsWith("--")) {
         throw new Error(`${argument} requires a value`)
@@ -82,6 +87,7 @@ export function parseFleetAuditArguments(argv) {
       index += 1
       if (argument === "--fail-on") options.failOn = value
       else if (argument === "--format") options.format = value
+      else if (argument === "--policy-file") options.policyFile = value
       else options.stateFile = value
       continue
     }
@@ -95,6 +101,10 @@ export function parseFleetAuditArguments(argv) {
     }
     if (argument.startsWith("--state-file=")) {
       options.stateFile = argument.slice("--state-file=".length)
+      continue
+    }
+    if (argument.startsWith("--policy-file=")) {
+      options.policyFile = argument.slice("--policy-file=".length)
       continue
     }
     throw new Error(`Unknown option: ${argument}`)
@@ -137,14 +147,22 @@ function progressReporter(stderr) {
 }
 
 export function resolveStateFile(argument, environment) {
-  // An explicit --state-file argument is documented to accept a relative path;
-  // only the environment variable is required to be absolute, so branch on the
-  // value's provenance rather than comparing the two values
+  // Explicit file arguments accept relative paths while environment values do not
   if (argument) return path.resolve(argument)
   const configured = environment.CLOUDFLARE_FLEET_STATE_FILE
   if (!configured) return DEFAULT_STATE_FILE
   if (!path.isAbsolute(configured)) {
     throw new Error("CLOUDFLARE_FLEET_STATE_FILE must be an absolute path")
+  }
+  return path.resolve(configured)
+}
+
+export function resolvePolicyFile(argument, environment) {
+  if (argument) return path.resolve(argument)
+  const configured = environment.CLOUDFLARE_FLEET_POLICY_FILE
+  if (!configured) return DEFAULT_POLICY_FILE
+  if (!path.isAbsolute(configured)) {
+    throw new Error("CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path")
   }
   return path.resolve(configured)
 }
@@ -165,10 +183,12 @@ export async function runFleetAuditCommand(options = {}) {
   if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required")
   const api = options.api || new CloudflareApi({ accountId, apiToken })
   const stateFile = resolveStateFile(parsed.stateFile, environment)
+  const policyFile = resolvePolicyFile(parsed.policyFile, environment)
   const onProgress = progressReporter(stderr)
   stderr.write("[audit] Reading fleet state and live Cloudflare inventory\n")
-  const [state, inventory] = await Promise.all([
+  const [state, policy, inventory] = await Promise.all([
     readFleetStateDocument(stateFile, accountId),
+    readFleetPolicyConfiguration(policyFile),
     loadInventory(api, { onProgress }),
   ])
   const now = options.now ?? Date.now()
@@ -184,6 +204,7 @@ export async function runFleetAuditCommand(options = {}) {
     deepFindings,
     intent: state.intent,
     now,
+    policyConfiguration: policy,
   })
   const output = parsed.format === AUDIT_FORMAT.JSON
     ? `${JSON.stringify(report, null, 2)}\n`

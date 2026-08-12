@@ -37,6 +37,9 @@ CACHE_RESULT=""
 INTENT_RESULT=""
 STATE_FILE=""
 DEFAULT_STATE_FILENAME="state.json"
+POLICY_FILE=""
+POLICY_RESULT=""
+DEFAULT_POLICY_FILENAME="fleet-policy.json"
 CACHE_HIT="false"
 CACHE_FRESH="false"
 CACHE_LOADED_AT=""
@@ -76,6 +79,7 @@ show_help() {
     echo "  CLOUDFLARE_ACCOUNT_ID  Required Cloudflare account identifier"
     echo "  CLOUDFLARE_FLEET_CACHE_DIR Optional snapshot cache directory"
     echo "  CLOUDFLARE_FLEET_STATE_FILE Optional absolute fleet-state JSON file"
+    echo "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file"
     echo "  CLOUDFLARE_FLEET_CHROME_APP Optional Chromium application bundle"
     echo "  CLOUDFLARE_FLEET_CHROME Optional path to a Chromium-compatible browser"
 }
@@ -229,7 +233,7 @@ wait_for_session_ready() {
 start_session_watcher() {
     WATCHER_LOG="$RUNTIME_DIR/watcher.log"
     WATCHER_PLIST="$RUNTIME_DIR/watcher.plist"
-    WATCHER_LABEL="com.j256.cloudflare-fleet.$SESSION_ID"
+    WATCHER_LABEL="app.cloudflare-fleet.watcher.$SESSION_ID"
     WATCHER_DOMAIN="gui/$(id -u)"
     WATCHER_SERVICE_TARGET="$WATCHER_DOMAIN/$WATCHER_LABEL"
     WATCHER_ARGUMENTS="$(jq -cn --args '$ARGS.positional' \
@@ -409,6 +413,32 @@ if [ -d "$STATE_FILE" ]; then
     exit 3
 fi
 
+if [ -n "${CLOUDFLARE_FLEET_POLICY_FILE:-}" ]; then
+    case "$CLOUDFLARE_FLEET_POLICY_FILE" in
+        /*)
+            POLICY_FILE="$CLOUDFLARE_FLEET_POLICY_FILE"
+            ;;
+        *)
+            error "CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path"
+            exit 3
+            ;;
+    esac
+else
+    POLICY_FILE="$SCRIPT_DIR/$DEFAULT_POLICY_FILENAME"
+fi
+
+case "$POLICY_FILE" in
+    /|*/)
+        error "CLOUDFLARE_FLEET_POLICY_FILE must name a file"
+        exit 3
+        ;;
+esac
+
+if [ -d "$POLICY_FILE" ]; then
+    error "CLOUDFLARE_FLEET_POLICY_FILE points to a directory"
+    exit 3
+fi
+
 if [ -n "${CLOUDFLARE_FLEET_CACHE_DIR:-}" ]; then
     CACHE_DIR="${CLOUDFLARE_FLEET_CACHE_DIR%/}"
 else
@@ -448,9 +478,14 @@ CACHE_LOADED_AT="$(printf '%s' "$CACHE_RESULT" | jq -r '.loadedAt // empty')"
 CACHE_MAX_AGE_HOURS="$(printf '%s' "$CACHE_RESULT" | jq -r '.maxAgeHours')"
 INTENT_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/intent-store.mjs" prepare \
     "$STATE_FILE" "$CLOUDFLARE_ACCOUNT_ID" "$RUNTIME_DIR/intent.js")"
+POLICY_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/fleet-policy-store.mjs" prepare \
+    "$POLICY_FILE" "$RUNTIME_DIR/policy.js")"
 
 if [ "$(printf '%s' "$INTENT_RESULT" | jq -r '.policies')" -gt 0 ]; then
     echo "[INF][$SCRIPT_NAME] Fleet intent loaded from project state"
+fi
+if [ "$(printf '%s' "$POLICY_RESULT" | jq -r '.emailDnsRecordExceptions')" -gt 0 ]; then
+    echo "[INF][$SCRIPT_NAME] Fleet policy exceptions loaded from operator configuration"
 fi
 
 if [ "$CACHE_HIT" = true ]; then
@@ -472,7 +507,7 @@ if [ -z "$DEBUG_PORT" ]; then
     BROKER_READY="$RUNTIME_DIR/broker-ready.json"
     BROKER_STATE_LOG="$RUNTIME_DIR/broker-state.log"
     PAGE_READY="$RUNTIME_DIR/page-ready.json"
-    BROKER_LABEL="com.j256.cloudflare-fleet.broker.$SESSION_ID"
+    BROKER_LABEL="app.cloudflare-fleet.broker.$SESSION_ID"
     BROKER_DOMAIN="gui/$(id -u)"
     BROKER_SERVICE_TARGET="$BROKER_DOMAIN/$BROKER_LABEL"
 

@@ -21,6 +21,9 @@ import {
   prepareFleetIntentScript,
 } from "../../src/intent-store.mjs"
 import {
+  prepareFleetPolicyScript,
+} from "../../src/fleet-policy-store.mjs"
+import {
   startSessionBroker,
 } from "../../src/session-broker.mjs"
 import {
@@ -432,6 +435,7 @@ export async function createDashboardSession(options = {}) {
   const cacheDir = path.join(root, "cache")
   const runtimeDir = path.join(root, "runtime")
   const stateFile = path.join(root, "state.json")
+  const policyFile = path.join(root, "fleet-policy.json")
   const inventory = options.inventory
     ?? (options.seedCache === false ? null : dashboardInventory())
   const accountId = options.accountId || inventory?.account.id
@@ -450,6 +454,13 @@ export async function createDashboardSession(options = {}) {
   await copyRuntimeAssets(runtimeDir)
   if (options.stateSourceFile) {
     await fs.copyFile(options.stateSourceFile, stateFile)
+  }
+  if (options.policyConfiguration) {
+    await fs.writeFile(
+      policyFile,
+      `${JSON.stringify(options.policyConfiguration, null, 2)}\n`,
+      { mode: 0o600 },
+    )
   }
   if (options.seedCache !== false) {
     await persistCacheRecord(
@@ -470,6 +481,10 @@ export async function createDashboardSession(options = {}) {
     accountId,
     outputPath: path.join(runtimeDir, "intent.js"),
     stateFile,
+  })
+  await prepareFleetPolicyScript({
+    outputPath: path.join(runtimeDir, "policy.js"),
+    policyFile,
   })
   const broker = await startSessionBroker({
     accountId,

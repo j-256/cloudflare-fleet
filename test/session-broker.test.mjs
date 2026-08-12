@@ -56,6 +56,7 @@ async function brokerFixture(options = {}) {
   await fs.writeFile(path.join(runtimeDir, "styles.css"), "\n")
   await fs.writeFile(path.join(runtimeDir, "cache.js"), "\n")
   await fs.writeFile(path.join(runtimeDir, "intent.js"), "\n")
+  await fs.writeFile(path.join(runtimeDir, "policy.js"), "\n")
   const calls = []
   const broker = await startSessionBroker({
     accountId: "account-id",
@@ -115,7 +116,7 @@ test("session broker binds runtime cleanup to its service session", () => {
   const config = {
     runtimeBase: "/tmp",
     runtimeDir: "/tmp/cloudflare-fleet.abc123",
-    serviceTarget: "gui/501/com.j256.cloudflare-fleet.broker.abc123",
+    serviceTarget: "gui/501/app.cloudflare-fleet.broker.abc123",
     sessionId: "abc123",
   }
 
@@ -130,7 +131,7 @@ test("session broker binds runtime cleanup to its service session", () => {
   assert.throws(
     () => validateBrokerConfig({
       ...config,
-      serviceTarget: "gui/501/com.j256.cloudflare-fleet.broker.other",
+      serviceTarget: "gui/501/app.cloudflare-fleet.broker.other",
     }),
     /service target is invalid/,
   )

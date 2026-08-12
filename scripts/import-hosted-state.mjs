@@ -8,18 +8,44 @@ import {
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_STATE_FILE = path.join(PROJECT_ROOT, "state.json")
-const HOSTED_DATABASE_ID = "00000000-0000-4000-8000-000000000001"
+const DEFAULT_WRANGLER_CONFIG = path.join(PROJECT_ROOT, "wrangler.jsonc")
 const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4/"
 
-function argumentsFrom(values) {
-  const force = values.includes("--force")
-  const paths = values.filter((value) => value !== "--force")
-  if (paths.length > 1) {
-    throw new Error("Usage: import-hosted-state.mjs [--force] [STATE_FILE]")
+export function parseImportHostedStateArguments(values) {
+  let configFile = DEFAULT_WRANGLER_CONFIG
+  let force = false
+  let stateFile = DEFAULT_STATE_FILE
+  let stateFileSet = false
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]
+    if (value === "--force") {
+      force = true
+      continue
+    }
+    if (value === "--config" || value.startsWith("--config=")) {
+      const configured = value.startsWith("--config=")
+        ? value.slice("--config=".length)
+        : values[index + 1]
+      if (!configured || configured.startsWith("--")) {
+        throw new Error("--config requires a value")
+      }
+      configFile = path.resolve(configured)
+      if (value === "--config") index += 1
+      continue
+    }
+    if (value.startsWith("--")) {
+      throw new Error(`Unknown option: ${value}`)
+    }
+    if (stateFileSet) {
+      throw new Error("Usage: import-hosted-state.mjs [--force] [--config FILE] [STATE_FILE]")
+    }
+    stateFile = path.resolve(value)
+    stateFileSet = true
   }
   return {
+    configFile,
     force,
-    stateFile: path.resolve(paths[0] || DEFAULT_STATE_FILE),
+    stateFile,
   }
 }
 
@@ -29,9 +55,25 @@ function requiredEnvironment(name) {
   return value
 }
 
-async function cloudflareRequest(accountId, apiToken, body) {
+export async function databaseIdFromWrangler(configFile) {
+  let configuration
+  try {
+    configuration = JSON.parse(await readFile(configFile, "utf8"))
+  } catch (error) {
+    throw new Error(`Could not read Wrangler configuration: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  const database = configuration.d1_databases?.find((entry) => (
+    entry?.binding === "FLEET_DB"
+  ))
+  if (typeof database?.database_id !== "string" || !database.database_id) {
+    throw new Error("Wrangler configuration does not define the FLEET_DB database ID")
+  }
+  return database.database_id
+}
+
+async function cloudflareRequest(accountId, apiToken, databaseId, body) {
   const url = new URL(
-    `accounts/${encodeURIComponent(accountId)}/d1/database/${HOSTED_DATABASE_ID}/query`,
+    `accounts/${encodeURIComponent(accountId)}/d1/database/${encodeURIComponent(databaseId)}/query`,
     CLOUDFLARE_API_BASE,
   )
   const response = await fetch(url, {
@@ -75,8 +117,8 @@ async function readState(stateFile, accountId) {
   return value
 }
 
-async function hostedStateCounts(accountId, apiToken) {
-  const [query] = await cloudflareRequest(accountId, apiToken, {
+async function hostedStateCounts(accountId, apiToken, databaseId) {
+  const [query] = await cloudflareRequest(accountId, apiToken, databaseId, {
     params: [accountId, accountId, accountId],
     sql: `
       SELECT
@@ -170,16 +212,19 @@ function importBatch(state, force) {
 export async function importHostedState(options = {}) {
   const accountId = options.accountId || requiredEnvironment("CLOUDFLARE_ACCOUNT_ID")
   const apiToken = options.apiToken || requiredEnvironment("CLOUDFLARE_API_TOKEN")
+  const databaseId = options.databaseId
+    || process.env.CLOUDFLARE_FLEET_D1_DATABASE_ID
+    || await databaseIdFromWrangler(options.configFile || DEFAULT_WRANGLER_CONFIG)
   const state = await readState(options.stateFile || DEFAULT_STATE_FILE, accountId)
-  const counts = await hostedStateCounts(accountId, apiToken)
+  const counts = await hostedStateCounts(accountId, apiToken, databaseId)
   const occupied = Object.values(counts).some((count) => Number(count) > 0)
   if (occupied && !options.force) {
     throw new Error("Hosted Fleet state already exists; rerun with --force only after reviewing the remote data")
   }
-  await cloudflareRequest(accountId, apiToken, {
+  await cloudflareRequest(accountId, apiToken, databaseId, {
     batch: importBatch(state, Boolean(options.force)),
   })
-  const imported = await hostedStateCounts(accountId, apiToken)
+  const imported = await hostedStateCounts(accountId, apiToken, databaseId)
   if (Number(imported.intent_count) !== 1
     || Number(imported.activity_count) !== 1
     || Number(imported.entry_count) !== state.activity.entries.length) {
@@ -195,7 +240,7 @@ export async function importHostedState(options = {}) {
 if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   let parsed
   try {
-    parsed = argumentsFrom(process.argv.slice(2))
+    parsed = parseImportHostedStateArguments(process.argv.slice(2))
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     process.exitCode = 1

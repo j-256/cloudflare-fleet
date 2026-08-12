@@ -3,7 +3,14 @@ import {
   POLICY_EXCEPTION_KIND,
 } from "./constants.mjs"
 
+export const FLEET_POLICY_CONFIG_GLOBAL = "__CLOUDFLARE_FLEET_POLICY_CONFIG__"
+export const FLEET_POLICY_CONFIG_SCHEMA_VERSION = 1
+
 const EMPTY_EXCEPTIONS = Object.freeze({})
+
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
 
 function emailDnsRecordException(zoneName, component, expected, reason) {
   if (!zoneName || !component || !reason) {
@@ -27,41 +34,99 @@ function emailDnsRecordException(zoneName, component, expected, reason) {
   })
 }
 
-const EMAIL_POLICY_EXCEPTIONS = Object.freeze([
-  emailDnsRecordException(
-    "zone-c.example",
-    EMAIL_POLICY_COMPONENT.SPF,
-    {
-      content: "v=spf1 a:production.support02.dw.demandware.net a:production.support01.dw.demandware.net include:_spf.mx.cloudflare.net include:_spf.google.com ~all",
-      ttl: 60,
-    },
-    "The sandbox uses a storefront-specific sender policy",
-  ),
-])
-
-const emailPolicyExceptionsByZone = {}
-for (const exception of EMAIL_POLICY_EXCEPTIONS) {
-  if (emailPolicyExceptionsByZone[exception.zoneName]?.[exception.component]) {
-    throw new Error(`Duplicate ${exception.component} policy exception for ${exception.zoneName}`)
-  }
-  emailPolicyExceptionsByZone[exception.zoneName] = {
-    ...(emailPolicyExceptionsByZone[exception.zoneName] || {}),
-    [exception.component]: exception,
+export function createEmptyFleetPolicyConfiguration() {
+  return {
+    emailDnsRecordExceptions: [],
+    schemaVersion: FLEET_POLICY_CONFIG_SCHEMA_VERSION,
   }
 }
-const EMAIL_POLICY_EXCEPTIONS_BY_ZONE = Object.freeze(
-  Object.fromEntries(
-    Object.entries(emailPolicyExceptionsByZone).map(([zoneName, exceptions]) => [
-      zoneName,
-      Object.freeze(exceptions),
-    ]),
-  ),
-)
+
+export function normalizeFleetPolicyConfiguration(value) {
+  const candidate = value ?? createEmptyFleetPolicyConfiguration()
+  if (!isObject(candidate)
+    || candidate.schemaVersion !== FLEET_POLICY_CONFIG_SCHEMA_VERSION
+    || !Array.isArray(candidate.emailDnsRecordExceptions)) {
+    throw new TypeError("Fleet policy configuration is invalid")
+  }
+  const emailDnsRecordExceptions = candidate.emailDnsRecordExceptions.map((entry) => {
+    if (!isObject(entry) || !isObject(entry.expected)) {
+      throw new TypeError("Fleet policy configuration contains an invalid exception")
+    }
+    return emailDnsRecordException(
+      entry.zoneName,
+      entry.component,
+      entry.expected,
+      entry.reason,
+    )
+  })
+  indexEmailPolicyExceptions(emailDnsRecordExceptions)
+  return Object.freeze({
+    emailDnsRecordExceptions: Object.freeze(emailDnsRecordExceptions),
+    schemaVersion: FLEET_POLICY_CONFIG_SCHEMA_VERSION,
+  })
+}
+
+export function isFleetPolicyConfiguration(value) {
+  try {
+    normalizeFleetPolicyConfiguration(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function indexEmailPolicyExceptions(exceptions) {
+  const byZone = {}
+  for (const exception of exceptions) {
+    if (byZone[exception.zoneName]?.[exception.component]) {
+      throw new Error(
+        `Duplicate ${exception.component} policy exception for ${exception.zoneName}`,
+      )
+    }
+    byZone[exception.zoneName] = {
+      ...(byZone[exception.zoneName] || {}),
+      [exception.component]: exception,
+    }
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(byZone).map(([zoneName, zoneExceptions]) => [
+        zoneName,
+        Object.freeze(zoneExceptions),
+      ]),
+    ),
+  )
+}
+
+let activeConfiguration
+let emailPolicyExceptionsByZone
+
+export function configureFleetPolicy(value = null) {
+  activeConfiguration = normalizeFleetPolicyConfiguration(value)
+  emailPolicyExceptionsByZone = indexEmailPolicyExceptions(
+    activeConfiguration.emailDnsRecordExceptions,
+  )
+  return activeConfiguration
+}
+
+export function configuredFleetPolicy() {
+  return activeConfiguration
+}
 
 export function configuredEmailPolicyExceptions() {
-  return EMAIL_POLICY_EXCEPTIONS
+  return activeConfiguration.emailDnsRecordExceptions
 }
 
-export function emailPolicyExceptionsForZone(zoneName) {
-  return EMAIL_POLICY_EXCEPTIONS_BY_ZONE[zoneName] || EMPTY_EXCEPTIONS
+export function emailPolicyExceptionsForZone(
+  zoneName,
+  configuration = activeConfiguration,
+) {
+  const byZone = configuration === activeConfiguration
+    ? emailPolicyExceptionsByZone
+    : indexEmailPolicyExceptions(
+        normalizeFleetPolicyConfiguration(configuration).emailDnsRecordExceptions,
+      )
+  return byZone[zoneName] || EMPTY_EXCEPTIONS
 }
+
+configureFleetPolicy(globalThis[FLEET_POLICY_CONFIG_GLOBAL])

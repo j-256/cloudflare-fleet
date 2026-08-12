@@ -39,6 +39,7 @@ import {
   POLICY_EXCEPTION_STATUS,
 } from "../src/constants.mjs"
 import {
+  configureFleetPolicy,
   configuredEmailPolicyExceptions,
   emailPolicyExceptionsForZone,
 } from "../src/fleet-policy.mjs"
@@ -66,7 +67,22 @@ const FLEET_EMAIL_DNS_POLICY = {
     ttl: 60,
   },
 }
-const SFCC_SPF_EXCEPTION = emailPolicyExceptionsForZone("zone-c.example").spf
+const EXCEPTION_ZONE = "special.example"
+configureFleetPolicy({
+  emailDnsRecordExceptions: [
+    {
+      component: "spf",
+      expected: {
+        content: "v=spf1 include:_spf.transactional.example -all",
+        ttl: 60,
+      },
+      reason: "This zone uses an approved transactional sender policy",
+      zoneName: EXCEPTION_ZONE,
+    },
+  ],
+  schemaVersion: 1,
+})
+const SPF_EXCEPTION = emailPolicyExceptionsForZone(EXCEPTION_ZONE).spf
 
 function dmarcRecord(zoneName, overrides = {}) {
   return {
@@ -79,12 +95,12 @@ function dmarcRecord(zoneName, overrides = {}) {
   }
 }
 
-function sfccSpfRecord(overrides = {}) {
+function exceptionalSpfRecord(overrides = {}) {
   return {
-    content: `"${SFCC_SPF_EXCEPTION.expected.content}"`,
-    id: "sandbox-spf",
-    name: "zone-c.example",
-    ttl: SFCC_SPF_EXCEPTION.expected.ttl,
+    content: `"${SPF_EXCEPTION.expected.content}"`,
+    id: "exception-spf",
+    name: EXCEPTION_ZONE,
+    ttl: SPF_EXCEPTION.expected.ttl,
     type: "TXT",
     ...overrides,
   }
@@ -480,11 +496,11 @@ test("email policy plans an explicit SPF update", () => {
   ])
 })
 
-test("email policy preserves only the exact zone-c.example SPF exception", () => {
-  const zone = makeZone("zone-c.example", {
+test("email policy preserves only the exact configured SPF exception", () => {
+  const zone = makeZone(EXCEPTION_ZONE, {
     dns: [
-      sfccSpfRecord(),
-      dmarcRecord("zone-c.example"),
+      exceptionalSpfRecord(),
+      dmarcRecord(EXCEPTION_ZONE),
     ],
   })
   const options = {
@@ -519,14 +535,14 @@ test("email policy preserves only the exact zone-c.example SPF exception", () =>
     })),
     [
       {
-        current: SFCC_SPF_EXCEPTION.expected,
+        current: SPF_EXCEPTION.expected,
         status: POLICY_EXCEPTION_STATUS.ACTIVE,
       },
     ],
   )
 })
 
-test("email policy treats unexpected zone-c.example SPF content or TTL as drift", () => {
+test("email policy treats unexpected configured SPF content or TTL as drift", () => {
   for (const overrides of [
     {
       content: "\"v=spf1 include:unexpected.example ~all\"",
@@ -535,10 +551,10 @@ test("email policy treats unexpected zone-c.example SPF content or TTL as drift"
       ttl: 300,
     },
   ]) {
-    const zone = makeZone("zone-c.example", {
+    const zone = makeZone(EXCEPTION_ZONE, {
       dns: [
-        sfccSpfRecord(overrides),
-        dmarcRecord("zone-c.example"),
+        exceptionalSpfRecord(overrides),
+        dmarcRecord(EXCEPTION_ZONE),
       ],
     })
     const options = {
@@ -570,12 +586,12 @@ test("email policy treats unexpected zone-c.example SPF content or TTL as drift"
 })
 
 test("email policy reports dormant and unavailable configured exceptions", () => {
-  const aligned = makeZone("zone-c.example", {
+  const aligned = makeZone(EXCEPTION_ZONE, {
     dns: [
-      sfccSpfRecord({
+      exceptionalSpfRecord({
         content: `"${FLEET_EMAIL_DNS_POLICY.spf.content}"`,
       }),
-      dmarcRecord("zone-c.example"),
+      dmarcRecord(EXCEPTION_ZONE),
     ],
   })
   assert.equal(
@@ -597,9 +613,9 @@ test("email policy reports dormant and unavailable configured exceptions", () =>
 })
 
 test("an SPF variation exception does not hide a missing SPF record", () => {
-  const zone = makeZone("zone-c.example", {
+  const zone = makeZone(EXCEPTION_ZONE, {
     dns: [
-      dmarcRecord("zone-c.example"),
+      dmarcRecord(EXCEPTION_ZONE),
     ],
   })
   const options = {
