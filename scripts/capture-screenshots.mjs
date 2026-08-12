@@ -98,6 +98,22 @@ export async function capturePublicationScreenshots(options = {}) {
       "dashboard-overview.png",
     ))
 
+    await overview.getByPlaceholder("Search facets, values, or zones").fill(
+      "always_use_https",
+    )
+    await overview.getByRole("button", {
+      name: "Compare 2 values: Observed values for always_use_https",
+    }).click()
+    const comparison = overview.getByRole("dialog", {
+      name: "always_use_https",
+    })
+    await comparison.getByRole("button", {
+      name: "Use as exact intent: Fleet consensus for always_use_https",
+    }).click()
+    const policy = overview.getByRole("dialog", { name: "Set facet intent" })
+    await policy.locator("#intent-policy-save").click()
+    await overview.locator("#toast-dismiss").click()
+
     await overview.getByRole("button", { name: "Manage fleet intent" }).click()
     await overview.getByRole("dialog", { name: "Fleet intent" }).waitFor()
     screenshots.push(await capture(
@@ -107,9 +123,20 @@ export async function capturePublicationScreenshots(options = {}) {
     ))
     await overview.getByRole("button", { name: "Close fleet intent" }).click()
 
-    await overview.getByPlaceholder("Search facets, values, or zones").fill(
-      "always_use_https",
-    )
+    await overview.getByRole("button", {
+      name: "Review alignment (1): Align always_use_https with fleet intent",
+    }).click()
+    const alignmentReview = overview.getByRole("dialog", {
+      name: "Align always_use_https with fleet intent",
+    })
+    await alignmentReview.waitFor()
+    screenshots.push(await capture(
+      overview,
+      outputDirectory,
+      "intent-alignment.png",
+    ))
+    await alignmentReview.getByRole("button", { name: "Cancel" }).click()
+
     await overview.getByRole("button", {
       name: "Edit always_use_https on bravo.example",
     }).click()

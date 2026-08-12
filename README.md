@@ -15,6 +15,7 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 
 - Compares normalized configuration across every selected zone without hiding raw source values
 - Separates observed differences from saved fleet intent, acknowledged exceptions, and expected coverage gaps
+- Turns supported exact and forbidden intent into first-class cell, row, and policy alignment reviews
 - Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
 - Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
 - Displays targets, before and after values, methods, endpoints, and request bodies before a write
@@ -81,7 +82,13 @@ Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Rout
 
 Fleet intent defines presence and value constraints independently. Broader groups act as baselines, contained groups refine them, and partial overlaps remain peers. Exact acknowledgements bind one policy, zone, and observed normalized value, then become stale if that context changes. Saving intent evaluates drift but never writes Cloudflare.
 
-An actionable control derives the smallest live read set needed to rebuild its plan. Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, current and desired values, methods, endpoints, and payloads. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
+Review alignment appears on a supported policy, matrix row, and individual drifting cell. Exact intent can edit supported zone settings, DNS records, DNSSEC status, API-managed Email Routing rules, redirects, and ruleset rules, and it can fill missing DNS records and portable rules from a matching fleet source. Forbidden intent can remove supported DNS records and rules through reversible adapters. Conflicts, must-differ choices, required values without an exact expectation, missing portable sources, generated resources, and unsupported endpoint shapes stay visibly blocked.
+
+A row or policy review is all-or-nothing: every unacknowledged drift cell in that action scope must have a deterministic adapter. A cell review deliberately narrows the requested change to one zone. Both forms reread the relevant facet across every account zone, reject changed fleet membership or incomplete reads, reevaluate the latest saved intent, and only then build the confirmation.
+
+![Cloudflare Fleet intent alignment review using a synthetic example fleet](docs/screenshots/intent-alignment.png)
+
+Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, current and desired values, methods, endpoints, and payloads. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
 
 Clearing or bypassing the inventory cache never removes intent or activity. Hosted sessions use transactional D1 state; local sessions use revisioned sections in the ignored account-scoped state file.
 

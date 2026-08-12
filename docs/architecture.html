@@ -76,7 +76,7 @@
         <article class="card">
           <p class="card-accent">INTENT</p>
           <h3>Describe expected state</h3>
-          <p><code>src/fleet-intent.mjs</code> defines scopes, presence constraints, value constraints, acknowledgements, and coverage expectations. Evaluation remains descriptive until an operator opens a supported change path.</p>
+          <p><code>src/fleet-intent.mjs</code> defines scopes, presence constraints, value constraints, acknowledgements, and coverage expectations. <code>src/intent-alignment.mjs</code> turns effective exact and forbidden intent into deterministic adapter targets only when every selected drift cell is supported.</p>
         </article>
         <article class="card">
           <p class="card-accent">EXECUTION</p>
@@ -101,11 +101,26 @@
       </div>
     </section>
 
+    <section class="section" aria-labelledby="intent-alignment-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Desired-state convergence</p>
+        <h2 id="intent-alignment-heading">Alignment is an explicit, all-or-nothing plan</h2>
+        <p>An operator can start from one drifting cell, an entire matrix row, or one saved policy's effective scope. Fleet composes layered exact expectations, preserves fields outside authored subsets, materializes zone-relative values, and maps forbidden presence to reversible removals where an adapter exists.</p>
+      </div>
+      <div class="diagram-frame">
+        <img src="diagrams/intent-alignment.svg" width="1400" height="720" alt="Intent alignment architecture showing cell, row, and policy scopes combining observed state, layered intent, and endpoint adapters before branching to a blocked safe stop, an already-aligned stop, or a full-account facet read and reviewed write flow.">
+      </div>
+      <div class="callout">
+        <strong>Fresh scope, complete decision</strong>
+        <p>The live preflight reads the relevant facet across every zone in the account, verifies that fleet membership is unchanged, reevaluates the latest saved intent, and refuses the entire row or policy action if any selected drift cell lacks a deterministic adapter. A cell action deliberately narrows only the action scope, not the account-wide membership and read check.</p>
+      </div>
+    </section>
+
     <section class="section" aria-labelledby="write-flow-heading">
       <div class="section-heading">
         <p class="eyebrow">Mutation lifecycle</p>
         <h2 id="write-flow-heading">A write is a verified state transition, not a button click</h2>
-        <p>The plan is rebuilt from fresh, narrowly scoped reads. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources.</p>
+        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources.</p>
       </div>
       <div class="diagram-frame">
         <img src="diagrams/write-flow.svg" width="1400" height="640" alt="Reviewed write flow from desired state through live read, plan, confirmation, pending journal, execution, verification, cache patch, and guarded undo.">

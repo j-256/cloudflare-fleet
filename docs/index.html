@@ -80,14 +80,26 @@
         <article class="card">
           <p class="card-accent">02 / GOVERN</p>
           <h3>Define expected state</h3>
-          <p>Presence and value intent compose across all zones and fixed scopes. Exact acknowledgements stay tied to one observed value and become stale when reality changes.</p>
+          <p>Presence and value intent compose across all zones and fixed scopes. Exact acknowledgements stay tied to one observed value, while supported drift exposes a direct alignment review.</p>
         </article>
         <article class="card">
           <p class="card-accent">03 / CHANGE</p>
           <h3>Plan before execution</h3>
-          <p>Supported changes reread their dependencies, produce endpoint-specific plans, save a pending journal entry, execute in order, and verify the smallest authoritative surface.</p>
+          <p>Cell, row, policy, and workflow changes reread their dependencies, produce endpoint-specific plans, save a pending journal entry, execute in order, and verify the smallest authoritative surface.</p>
         </article>
       </div>
+    </section>
+
+    <section class="section" aria-labelledby="alignment-heading">
+      <div class="section-heading">
+        <p class="eyebrow">From intent to action</p>
+        <h2 id="alignment-heading">Review a complete convergence plan</h2>
+        <p>Exact and forbidden intent can produce first-class alignment actions on a policy, matrix row, or individual drifting cell. Fleet refreshes the latest intent and the relevant facet across the account, then blocks the whole selected scope if any drift cell is conflicting, ambiguous, or unsupported.</p>
+      </div>
+      <figure class="screenshot-frame">
+        <img src="screenshots/intent-alignment.png" width="1440" height="1000" alt="Cloudflare Fleet intent alignment confirmation for a synthetic zone setting, showing the target zone, live current and desired values, API endpoint, method, and review acknowledgement.">
+        <figcaption class="screenshot-caption">The synthetic fleet's row action enters the same confirmation, verification, activity, and guarded undo flow used by direct edits.</figcaption>
+      </figure>
     </section>
 
     <section class="section" aria-labelledby="architecture-heading">
@@ -143,7 +155,7 @@
       <div class="image-pair">
         <figure class="screenshot-frame">
           <img src="screenshots/fleet-intent.png" width="1440" height="1000" alt="Fleet intent workspace with policies, groups, coverage, acknowledgements, and an evaluation summary.">
-          <figcaption class="screenshot-caption">Fleet intent stays separate from observed configuration and never changes Cloudflare by itself.</figcaption>
+          <figcaption class="screenshot-caption">Saving intent remains descriptive; the separate Review alignment action starts a fresh, confirmable Cloudflare plan.</figcaption>
         </figure>
         <figure class="screenshot-frame mobile-frame">
           <img src="screenshots/mobile-dashboard.png" width="390" height="844" alt="Cloudflare Fleet responsive matrix controls and the first synthetic zone columns on a phone-sized viewport.">

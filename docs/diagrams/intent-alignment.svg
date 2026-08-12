@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="720" viewBox="0 0 1400 720" role="img" aria-labelledby="title description">
+  <title id="title">Cloudflare Fleet intent alignment architecture</title>
+  <desc id="description">A cell, row, or policy action combines the observed matrix, effective layered intent, and endpoint adapter registry. The assessment stops on conflicts or unsupported drift, stops when already aligned, or performs a fresh facet read across every account zone before recomputing a complete plan and entering the reviewed write flow.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#5de1d4"/>
+    </marker>
+    <marker id="arrow-violet" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#bc8cff"/>
+    </marker>
+    <style>
+      .box { fill: #10222f; stroke: #36566a; stroke-width: 2 }
+      .box-assess { fill: #181d31; stroke: #bc8cff; stroke-width: 2 }
+      .box-ready { fill: #122827; stroke: #5de1d4; stroke-width: 2 }
+      .box-stop { fill: #261e13; stroke: #ffb454; stroke-width: 2 }
+      .eyebrow { fill: #5de1d4; font: 700 12px ui-monospace, monospace; letter-spacing: 1px }
+      .eyebrow-review { fill: #bc8cff }
+      .eyebrow-stop { fill: #ffb454 }
+      .label { fill: #eff8f7; font: 700 18px ui-sans-serif, system-ui, sans-serif }
+      .copy { fill: #a7bac6; font: 13px ui-sans-serif, system-ui, sans-serif }
+      .flow { fill: none; stroke: #5de1d4; stroke-width: 3; marker-end: url(#arrow) }
+      .flow-review { fill: none; stroke: #bc8cff; stroke-width: 3; marker-end: url(#arrow-violet) }
+      .flow-stop { fill: none; stroke: #ffb454; stroke-width: 2; stroke-dasharray: 7 6 }
+    </style>
+  </defs>
+  <rect width="1400" height="720" rx="24" fill="#07121a"/>
+  <text x="42" y="48" fill="#eff8f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Intent becomes a complete plan only when every selected drift cell is writable</text>
+
+  <g transform="translate(42 88)">
+    <rect class="box" width="300" height="126" rx="14"/>
+    <text x="18" y="30" class="eyebrow">ACTION SCOPE</text>
+    <text x="18" y="63" class="label">Cell, row, or policy</text>
+    <text x="18" y="89" class="copy">One zone, one facet, or one</text>
+    <text x="18" y="108" class="copy">saved policy's effective cells</text>
+  </g>
+  <g transform="translate(380 88)">
+    <rect class="box" width="300" height="126" rx="14"/>
+    <text x="18" y="30" class="eyebrow">OBSERVED STATE</text>
+    <text x="18" y="63" class="label">Comparable matrix</text>
+    <text x="18" y="89" class="copy">Presence, normalized values,</text>
+    <text x="18" y="108" class="copy">source identity, capabilities</text>
+  </g>
+  <g transform="translate(718 88)">
+    <rect class="box" width="300" height="126" rx="14"/>
+    <text x="18" y="30" class="eyebrow">EFFECTIVE INTENT</text>
+    <text x="18" y="63" class="label">Layered expectations</text>
+    <text x="18" y="89" class="copy">Presence constraints, exact</text>
+    <text x="18" y="108" class="copy">values, authored field subsets</text>
+  </g>
+  <g transform="translate(1056 88)">
+    <rect class="box" width="300" height="126" rx="14"/>
+    <text x="18" y="30" class="eyebrow">WRITE BOUNDARY</text>
+    <text x="18" y="63" class="label">Endpoint adapters</text>
+    <text x="18" y="89" class="copy">Writable shapes, reversible</text>
+    <text x="18" y="108" class="copy">deletes, verification targets</text>
+  </g>
+
+  <path class="flow-review" d="M192 214V248C192 270 540 270 540 294"/>
+  <path class="flow-review" d="M530 214V248C530 270 640 270 640 294"/>
+  <path class="flow-review" d="M868 214V248C868 270 760 270 760 294"/>
+  <path class="flow-review" d="M1206 214V248C1206 270 860 270 860 294"/>
+
+  <g transform="translate(480 294)">
+    <rect class="box box-assess" width="440" height="112" rx="14"/>
+    <text x="20" y="30" class="eyebrow eyebrow-review">DETERMINISTIC ASSESSMENT</text>
+    <text x="20" y="62" class="label">Classify every selected drift cell</text>
+    <text x="20" y="88" class="copy">A row or policy action is all-or-nothing</text>
+  </g>
+
+  <path class="flow-stop" d="M560 406V436C560 454 222 454 222 478"/>
+  <path class="flow-stop" d="M700 406V478"/>
+  <path class="flow" d="M840 406V436C840 454 1178 454 1178 478"/>
+
+  <g transform="translate(42 478)">
+    <rect class="box box-stop" width="360" height="132" rx="14"/>
+    <text x="18" y="30" class="eyebrow eyebrow-stop">BLOCKED SAFE STOP</text>
+    <text x="18" y="63" class="label">No partial alignment</text>
+    <text x="18" y="89" class="copy">Conflict, must-differ choice, missing</text>
+    <text x="18" y="108" class="copy">source, or unsupported adapter is named</text>
+  </g>
+  <g transform="translate(520 478)">
+    <rect class="box box-stop" width="360" height="132" rx="14"/>
+    <text x="18" y="30" class="eyebrow eyebrow-stop">NO-OP SAFE STOP</text>
+    <text x="18" y="63" class="label">Already aligned</text>
+    <text x="18" y="89" class="copy">Fresh state has no unacknowledged</text>
+    <text x="18" y="108" class="copy">drift in the selected action scope</text>
+  </g>
+  <g transform="translate(998 478)">
+    <rect class="box box-ready" width="360" height="132" rx="14"/>
+    <text x="18" y="30" class="eyebrow">READY FOR LIVE REVIEW</text>
+    <text x="18" y="63" class="label">Read the facet across the account</text>
+    <text x="18" y="89" class="copy">Recheck membership, reads, intent, and</text>
+    <text x="18" y="108" class="copy">every adapter before building operations</text>
+  </g>
+
+  <path class="flow" d="M1178 610V654H922"/>
+  <g transform="translate(478 632)">
+    <rect class="box box-ready" width="444" height="62" rx="14"/>
+    <text x="20" y="27" class="eyebrow">REVIEWED WRITE FLOW</text>
+    <text x="20" y="48" class="copy">Confirm, record, execute, verify, patch, and guard undo</text>
+  </g>
+</svg>

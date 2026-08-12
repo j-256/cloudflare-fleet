@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" role="img" aria-labelledby="title description">
   <title id="title">Cloudflare Fleet reviewed write flow</title>
-  <desc id="description">A requested change triggers a scoped live read, normalization, planning, human review, durable pending record, execution, scoped verification, and a matrix and cache patch. No-op plans stop without writing, stale reads return to review, and verified operations may offer a guarded inverse.</desc>
+  <desc id="description">A cell, row, policy, or workflow change triggers a scoped live read, normalization, planning, human review, durable pending record, execution, scoped verification, and a matrix and cache patch. No-op plans stop without writing, stale reads return to review, and verified operations may offer a guarded inverse.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
       <path d="M0 0L10 5L0 10Z" fill="#5de1d4"/>
@@ -30,7 +30,7 @@
     <rect class="box" width="172" height="116" rx="14"/>
     <text x="18" y="28" class="step">01 REQUEST</text>
     <text x="18" y="59" class="label">Desired state</text>
-    <text x="18" y="84" class="copy">One cell or workflow</text>
+    <text x="18" y="84" class="copy">Cell, row, or policy</text>
   </g>
   <g transform="translate(242 112)">
     <rect class="box" width="172" height="116" rx="14"/>
