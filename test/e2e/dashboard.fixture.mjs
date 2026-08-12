@@ -38,6 +38,7 @@ const API_PATH_PREFIX = "/client/v4/"
 const DNS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/dns_records$/
 const DNS_RECORD_PATH_PATTERN = /^zones\/([^/]+)\/dns_records\/([^/]+)$/
 const PROJECT_DIR = fileURLToPath(new URL("../..", import.meta.url))
+const SETTINGS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/settings$/
 const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
 const SESSION_SECRET = "e2e-session-secret"
 const ZONES_PATH = "zones"
@@ -334,6 +335,19 @@ function fakeCloudflareTransport(inventory) {
           success: true,
         })
       }
+    }
+
+    const settingsCollectionMatch = relativePath.match(
+      SETTINGS_COLLECTION_PATH_PATTERN,
+    )
+    if (settingsCollectionMatch && method === "GET") {
+      const zoneId = decodeURIComponent(settingsCollectionMatch[1])
+      return jsonResponse(200, {
+        result: [...settings.entries()]
+          .filter(([key]) => key.startsWith(`${zoneId}:`))
+          .map(([, value]) => structuredClone(value)),
+        success: true,
+      })
     }
 
     const match = relativePath.match(SETTING_PATH_PATTERN)

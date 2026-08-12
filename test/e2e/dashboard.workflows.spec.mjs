@@ -79,6 +79,67 @@ test("turns a compared fleet value into persisted intent and undoes it", async (
   })).toBeVisible()
 })
 
+test("reviews and applies exact intent alignment from a drifting cell", async ({ dashboard }) => {
+  const {
+    page,
+    requests,
+    settingValue,
+    zoneNames,
+  } = dashboard
+
+  await page.getByPlaceholder("Search facets, values, or zones").fill(
+    "always_use_https",
+  )
+  await page.getByRole("button", {
+    name: "Compare 2 values: Observed values for always_use_https",
+  }).click()
+  const comparison = page.getByRole("dialog", { name: "always_use_https" })
+  await comparison.getByRole("button", {
+    name: "Use as exact intent: Fleet consensus for always_use_https",
+  }).click()
+  const policy = page.getByRole("dialog", { name: "Set facet intent" })
+  await policy.locator("#intent-policy-save").click()
+  await expect(page.locator("#toast-message")).toHaveText(
+    "always_use_https intent saved for All zones",
+  )
+
+  await expect(page.getByRole("button", {
+    name: "Review alignment (1): Align always_use_https with fleet intent",
+  })).toBeVisible()
+  await page.getByRole("button", { name: "Manage fleet intent" }).click()
+  const manager = page.getByRole("dialog", { name: "Fleet intent" })
+  await expect(manager.getByRole("button", {
+    name: "Review alignment (1): always_use_https for All zones",
+  })).toBeVisible()
+  await manager.getByRole("button", { name: "Done" }).click()
+
+  await page.getByRole("button", {
+    name: `Align to intent: always_use_https on ${zoneNames[1]}`,
+  }).click()
+  const confirmation = page.locator("#confirm-dialog")
+  await expect(confirmation).toContainText(zoneNames[1])
+  await expect(confirmation).toContainText("zones/zone-bravo.example/settings/always_use_https")
+  await acceptCurrentWrite(page)
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "always_use_https aligned with fleet intent and live verification passed",
+  )
+  await expect.poll(() => settingValue(
+    zoneNames[1],
+    "always_use_https",
+  )).toBe("on")
+  await expect(page.locator("#review-intent-count")).toHaveText("0")
+  await page.locator("#intent-status").selectOption("")
+  await page.locator("#difference-toggle").click()
+  await expect(page.locator(
+    `#matrix-body td[data-zone-id="zone-${zoneNames[1]}"]`,
+  )).toHaveAttribute("data-intent-status", "match")
+  expect(requests.filter((request) => (
+    request.method === "GET"
+      && /^zones\/[^/]+\/settings$/.test(request.path)
+  ))).toHaveLength(zoneNames.length)
+})
+
 test("confirms rules individually without exposing a parent ruleset facet", async ({ dashboard }) => {
   const { page, zoneNames } = dashboard
 

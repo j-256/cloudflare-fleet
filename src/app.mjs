@@ -113,6 +113,11 @@ import {
   selectIntentAdoptionGroup,
 } from "./intent-adoption.mjs"
 import {
+  assessIntentAlignment,
+  buildIntentAlignmentPlans,
+  intentAlignmentReadRequirement,
+} from "./intent-alignment.mjs"
+import {
   defaultFleetIntentPolicyConstraints,
   fleetIntentPolicyForGroup,
   fleetIntentPolicyGroupSelection,
@@ -192,7 +197,6 @@ import {
   VIEW_PANEL,
 } from "./url-state.mjs"
 import {
-  buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
@@ -232,6 +236,7 @@ import {
 import {
   actionResourceId,
   executeActionReadPlan,
+  executeReadPlan,
   READ_ACTION,
   READ_ACTION_SURFACES,
   rulesetPhaseResourceId,
@@ -316,7 +321,6 @@ const INVENTORY_SOURCE = Object.freeze({
   LIVE: "live",
 })
 const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGNMENT]
-const DNSSEC_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.DNSSEC_ALIGNMENT]
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = ".matrix-zone-select, summary, .cell-action"
@@ -573,7 +577,7 @@ const bulkFillRowByButton = new WeakMap()
 const fleetActionByButton = new WeakMap()
 const workspaceActionByButton = new WeakMap()
 const intentCellActionByButton = new WeakMap()
-const intentCorrectionByButton = new WeakMap()
+const intentAlignmentByButton = new WeakMap()
 const intentPolicyRowByButton = new WeakMap()
 const valueComparisonRowByButton = new WeakMap()
 const activityEntryByButton = new WeakMap()
@@ -5012,6 +5016,7 @@ async function syncFleetIntent(options = {}) {
     if (!options.silent) toast("Newer fleet intent loaded from another dashboard window")
     return true
   } catch (error) {
+    if (options.throwOnError) throw error
     if (!options.silent) {
       toast(error instanceof Error ? error.message : String(error), "error")
     }
@@ -5026,6 +5031,44 @@ function intentPolicyRow(policy) {
     (row) => row.category === policy.facet.category
       && row.key === policy.facet.key,
   ) || null
+}
+
+function intentAlignmentAction(row, options = {}) {
+  return {
+    category: row.category,
+    key: row.key,
+    label: row.label,
+    phase: row.phase || "",
+    policyId: options.policyId || null,
+    zoneIds: options.zoneIds ? [...options.zoneIds] : null,
+  }
+}
+
+function intentAlignmentRow(matrix, action) {
+  return matrix?.rows.find(
+    (row) => row.category === action.category
+      && row.key === action.key
+      && (row.phase || "") === action.phase,
+  ) || null
+}
+
+function evaluatedIntentAlignmentRow(inventory, action) {
+  const observedMatrix = buildMatrix(inventory)
+  const evaluation = evaluateFleetIntent(
+    state.intent,
+    inventory,
+    observedMatrix,
+  )
+  const row = intentAlignmentRow(observedMatrix, action)
+  if (!row) return null
+  const rowState = evaluation.rowStates.get(
+    fleetIntentFacetId(row.category, row.key),
+  )
+  return {
+    ...row,
+    actionable: rowState?.actionable || false,
+    intentState: rowState,
+  }
 }
 
 function intentPoliciesForRow(row) {
@@ -7143,6 +7186,9 @@ function renderIntentPolicies() {
             && cell.policies.some((entry) => entry.id === policy.id),
         )
       : []
+    const alignment = row
+      ? assessIntentAlignment(row, { policyId: policy.id })
+      : null
     const item = createElement("article", {
       className: `intent-item ${status} ${layer.role}${stalledDnssecCount > 0 ? " dnssec-stalled" : ""}`,
     })
@@ -7179,8 +7225,19 @@ function renderIntentPolicies() {
         layerPresentation.status,
       ))
     }
-    if (remediation.className !== INTENT_REMEDIATION_KIND.ALLOWANCE) {
+    if (remediation.className !== INTENT_REMEDIATION_KIND.ALLOWANCE
+      && (problemCells.length === 0 || !alignment)) {
       badges.append(remediationBadge)
+    }
+    if (problemCells.length > 0 && alignment) {
+      const alignmentBadge = intentStatusBadge(
+        alignment.available ? "Alignment ready" : "Alignment blocked",
+        alignment.available
+          ? INTENT_REMEDIATION_KIND.REMEDIABLE
+          : INTENT_REMEDIATION_KIND.MANUAL,
+      )
+      alignmentBadge.title = alignment.reason
+      badges.append(alignmentBadge)
     }
     heading.append(
       createElement("h4", { text: policy.facet.label }),
@@ -7273,20 +7330,23 @@ function renderIntentPolicies() {
     item.append(matchingDetails)
     const actions = intentItemActions()
     actions.append(intentPolicyMatrixButton(policy, row, actionContext))
-    if (correction?.available) {
-      const correctionCount = correction.targets.length
-      actions.append(intentActionButton(
-        `Align ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
-        () => reviewDnssecIntentCorrection(
-          correction,
-          `Align ${policy.facet.label} with fleet intent`,
-        ),
+    if (problemCells.length > 0 && alignment) {
+      const alignmentButton = intentActionButton(
+        alignment.available
+          ? `Review alignment (${alignment.targets.length})`
+          : `Alignment blocked (${alignment.actionableCount})`,
+        () => reviewIntentAlignment(intentAlignmentAction(row, {
+          policyId: policy.id,
+        })),
         {
           context: actionContext,
-          title: `Live-validate and preview DNSSEC status changes for ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`,
+          disabled: !alignment.available,
+          title: alignment.reason,
           write: true,
         },
-      ))
+      )
+      alignmentButton.dataset.intentBlocked = String(!alignment.available)
+      actions.append(alignmentButton)
     }
     if (row) {
       actions.append(
@@ -8394,6 +8454,35 @@ function applyIntentCellPresentation(td, row, zone) {
 }
 
 function appendIntentCellAction(actions, row, zone, intentCell) {
+  const actionable = intentCell?.status === FLEET_INTENT_CELL_STATUS.CONFLICT
+    || intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
+    || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT
+  if (!readOnly && actionable) {
+    const alignment = assessIntentAlignment(row, {
+      zoneIds: [zone.meta.id],
+    })
+    const alignmentButton = createElement("button", {
+      className: "cell-action align-intent-cell",
+      text: alignment.available ? "Align to intent" : "Alignment blocked",
+    })
+    alignmentButton.type = "button"
+    alignmentButton.disabled = !alignment.available
+    alignmentButton.dataset.alignmentBlocked = String(!alignment.available)
+    alignmentButton.dataset.actionTitle = alignment.reason
+    alignmentButton.setAttribute(
+      "aria-label",
+      contextualActionLabel(
+        alignmentButton.textContent,
+        `${row.label} on ${zone.meta.name}`,
+      ),
+    )
+    alignmentButton.title = alignment.reason
+    intentAlignmentByButton.set(
+      alignmentButton,
+      intentAlignmentAction(row, { zoneIds: [zone.meta.id] }),
+    )
+    actions.append(alignmentButton)
+  }
   if (!intentMutationSupported()) return
   if (intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
     || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT) {
@@ -8412,7 +8501,6 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
       zone,
     })
     actions.append(button)
-    return
   }
   if (intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED) {
     const actionLabel = "Unacknowledge"
@@ -8801,26 +8889,29 @@ function renderMatrix() {
       })
       facetActions.append(intentButton)
     }
-    const intentCorrection = dnssecIntentCorrection(row)
-    if (!readOnly && intentCorrection.available) {
-      const correctionCount = intentCorrection.targets.length
-      const correctionLabel = `Align ${correctionCount} zone${correctionCount === 1 ? "" : "s"}`
-      const correctionButton = createElement("button", {
-        className: "cell-action apply-intent-correction",
-        text: correctionLabel,
+    const alignment = assessIntentAlignment(row)
+    if (!readOnly && alignment.actionableCount > 0) {
+      const alignmentLabel = alignment.available
+        ? `Review alignment (${alignment.targets.length})`
+        : `Alignment blocked (${alignment.actionableCount})`
+      const alignmentButton = createElement("button", {
+        className: "cell-action review-intent-alignment",
+        text: alignmentLabel,
       })
-      correctionButton.type = "button"
-      correctionButton.setAttribute(
+      alignmentButton.type = "button"
+      alignmentButton.disabled = !alignment.available
+      alignmentButton.dataset.alignmentBlocked = String(!alignment.available)
+      alignmentButton.setAttribute(
         "aria-label",
         contextualActionLabel(
-          correctionLabel,
+          alignmentLabel,
           `Align ${row.label} with fleet intent`,
         ),
       )
-      correctionButton.title = "Fresh-read the drifting zones and preview the DNSSEC status writes"
-      correctionButton.dataset.actionTitle = correctionButton.title
-      intentCorrectionByButton.set(correctionButton, intentCorrection)
-      facetActions.append(correctionButton)
+      alignmentButton.title = alignment.reason
+      alignmentButton.dataset.actionTitle = alignment.reason
+      intentAlignmentByButton.set(alignmentButton, intentAlignmentAction(row))
+      facetActions.append(alignmentButton)
     }
     if (actionTypes.has("zone-setting")) {
       facetActions.append(createElement("small", { className: "capability-badge", text: "Edit settings" }))
@@ -9410,9 +9501,17 @@ function updateActionButtons() {
     button.disabled = writeLocked
     button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
   }
-  for (const button of matrixAwareQuery(".apply-intent-correction")) {
-    button.disabled = writeLocked
-    button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
+  for (const button of matrixAwareQuery(
+    ".review-intent-alignment, .align-intent-cell",
+  )) {
+    const blocked = button.dataset.alignmentBlocked === "true"
+    const intentPending = state.intentSaving || state.intentSyncing
+    button.disabled = writeLocked || intentPending || blocked
+    button.title = writeLocked
+      ? writeLockReason
+      : intentPending
+        ? "Wait for the fleet intent document to finish saving or syncing"
+        : button.dataset.actionTitle
   }
   const intentLocked = !intentWritable()
   for (const button of matrixAwareQuery(
@@ -10330,42 +10429,129 @@ function selectedLiveZones(inventory, zoneIds) {
   return zoneIds.map((zoneId) => byId.get(zoneId))
 }
 
-async function reviewDnssecIntentCorrection(correction, title = "Align DNSSEC with fleet intent") {
-  if (!correction?.available || correction.targets.length === 0) {
-    toast(correction?.reason || "No correctable DNSSEC status drift is present", "error")
+function assertIntentAlignmentFleetMembership(liveInventory) {
+  if (!state.inventory) throw new Error("The fleet snapshot is unavailable")
+  const loaded = new Map(
+    state.inventory.zones.map((zone) => [zone.meta.id, zone.meta.name]),
+  )
+  const live = new Map(
+    liveInventory.zones.map((zone) => [zone.meta.id, zone.meta.name]),
+  )
+  const unchanged = loaded.size === live.size
+    && [...loaded].every(([zoneId, zoneName]) => live.get(zoneId) === zoneName)
+  if (!unchanged) {
+    throw new Error("Fleet membership changed during live validation. Refresh the full fleet before aligning intent so no zone is omitted or evaluated under a stale name.")
+  }
+}
+
+function assertIntentAlignmentRuleDetails(inventory, requirement) {
+  if (!requirement.includeRuleDetails) return
+  const phases = requirement.ruleDetailPhases
+    ? new Set(requirement.ruleDetailPhases)
+    : null
+  const kinds = requirement.ruleDetailKinds
+    ? new Set(requirement.ruleDetailKinds)
+    : null
+  const failures = []
+  for (const zone of inventory.zones) {
+    const expected = (zone.surfaces.rulesets?.result || []).filter(
+      (ruleset) => (phases === null || phases.has(ruleset.phase))
+        && (kinds === null || kinds.has(ruleset.kind)),
+    )
+    const actualIds = new Set(
+      zone.ruleDetails
+        .filter((detail) => detail.ok)
+        .map((detail) => detail.result?.id)
+        .filter(Boolean),
+    )
+    if (zone.ruleDetails.some((detail) => !detail.ok)
+      || expected.some((ruleset) => !actualIds.has(ruleset.id))) {
+      failures.push(zone.meta.name)
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`Intent alignment live validation could not read complete ruleset details for ${failures.join(", ")}`)
+  }
+}
+
+function intentAlignmentOptions(action) {
+  return {
+    policyId: action.policyId,
+    zoneIds: action.zoneIds,
+  }
+}
+
+async function reviewIntentAlignment(action) {
+  if (!action || state.busy || readOnly || !state.transportAvailable) return false
+  if (state.intentSaving || state.intentSyncing) {
+    toast("Wait for the fleet intent document to finish saving or syncing", "error")
     return false
   }
-  const desiredStatusByZoneId = new Map(
-    correction.targets.map((target) => [target.zoneId, target.desiredStatus]),
-  )
-  const zoneIds = correction.targets.map((target) => target.zoneId)
   let intentWasSuspended = false
   try {
+    await syncFleetIntent({ silent: true, throwOnError: true })
+    const loadedRow = intentAlignmentRow(state.matrix, action)
+    if (!loadedRow) {
+      throw new Error("The selected intent facet is no longer present in the fleet matrix")
+    }
+    const loadedAssessment = assessIntentAlignment(
+      loadedRow,
+      intentAlignmentOptions(action),
+    )
+    if (!loadedAssessment.available) {
+      if (loadedAssessment.actionableCount === 0) {
+        toast(`${action.label} already matches fleet intent`)
+        return false
+      }
+      throw new Error(loadedAssessment.reason)
+    }
+
+    const requirement = intentAlignmentReadRequirement(loadedRow)
     const liveData = await runWritePreflight(
-      "DNSSEC intent",
-      () => executePreflightRead([
-        {
-          type: READ_ACTION.DNSSEC_ALIGNMENT,
-          zoneIds,
+      `${action.label} intent alignment`,
+      () => executeReadPlan(api, [requirement], {
+        onProgress: ({ message }) => {
+          elements.refreshDetail.title = message
         },
-      ]),
+      }),
     )
     const liveInventory = liveData.inventory
-    assertSurfaceReads(liveInventory, DNSSEC_PREFLIGHT_SURFACE_IDS, "DNSSEC")
-    const plans = selectedLiveZones(liveInventory, zoneIds).map((zone) => {
-      const desiredStatus = desiredStatusByZoneId.get(zone.meta.id)
-      if (!desiredStatus) {
-        throw new Error(`DNSSEC intent is unavailable for ${zone.meta.name}`)
-      }
-      return buildDnssecStatusPlan(zone, desiredStatus)
-    })
+    assertIntentAlignmentFleetMembership(liveInventory)
+    assertSurfaceReads(
+      liveInventory,
+      requirement.surfaceIds,
+      "Intent alignment",
+    )
+    assertIntentAlignmentRuleDetails(liveInventory, requirement)
+    const liveRow = evaluatedIntentAlignmentRow(liveInventory, action)
+    if (!liveRow) {
+      throw new Error("The selected intent facet is absent from the fresh fleet state")
+    }
+    const liveAssessment = assessIntentAlignment(
+      liveRow,
+      intentAlignmentOptions(action),
+    )
+    if (liveAssessment.actionableCount === 0) {
+      toast(`${action.label} already matches fleet intent in fresh live state`)
+      return false
+    }
+    if (!liveAssessment.available) throw new Error(liveAssessment.reason)
+    const plans = buildIntentAlignmentPlans(
+      liveInventory,
+      liveRow,
+      liveAssessment,
+    )
+    const dnssecNote = dnssecConfirmationNote(plans)
     intentWasSuspended = temporarilySuspendIntentWorkflow()
     return await applyPlans(
-      title,
+      `Align ${action.label} with fleet intent`,
       createLivePlanSet(plans),
       {
-        confirmationNote: dnssecConfirmationNote(plans),
-        successMessage: "DNSSEC correction requests succeeded and live state was re-read",
+        confirmationNote: [
+          "Every unacknowledged drift cell in this action has a deterministic write plan; unsupported cells block the complete review before any write is sent.",
+          dnssecNote,
+        ].filter(Boolean).join(" "),
+        successMessage: `${action.label} aligned with fleet intent and live verification passed`,
       },
     )
   } catch (error) {
@@ -12738,14 +12924,16 @@ elements.matrixHead.addEventListener("change", (event) => {
   updateSelectionStyles()
 })
 elements.matrixBody.addEventListener("click", (event) => {
-  const intentCorrectionButton = event.target.closest(".apply-intent-correction")
-  if (intentCorrectionButton) {
-    const correction = intentCorrectionByButton.get(intentCorrectionButton)
-    if (!correction) {
-      toast("The selected intent correction is no longer available", "error")
+  const intentAlignmentButton = event.target.closest(
+    ".review-intent-alignment, .align-intent-cell",
+  )
+  if (intentAlignmentButton) {
+    const action = intentAlignmentByButton.get(intentAlignmentButton)
+    if (!action) {
+      toast("The selected intent alignment is no longer available", "error")
       return
     }
-    reviewDnssecIntentCorrection(correction)
+    reviewIntentAlignment(action)
     return
   }
   const valueComparisonButton = event.target.closest(".compare-values")
