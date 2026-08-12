@@ -35,6 +35,7 @@ const OPTION_WITH_VALUE = new Set([
   "format",
   "key",
   "phase",
+  "policy-file",
   "policy",
   "state-file",
   "zone-id",
@@ -51,6 +52,7 @@ export function fleetUsage() {
     "  cloudflare-fleet alignment plan SELECTOR [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment apply SELECTOR --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
     "",
     "SELECTOR",
     "  --policy ID",
@@ -92,6 +94,7 @@ function parseOptions(argv, allowed) {
     key: null,
     phase: null,
     policy: null,
+    policyfile: null,
     statefile: null,
     zoneIds: [],
   }
@@ -163,6 +166,18 @@ export function parseFleetArguments(argv) {
   }
   if (resource === "audit") {
     return { argv: argv.slice(1), command: "audit" }
+  }
+  if (resource === "mcp") {
+    const options = parseOptions(
+      argv.slice(1),
+      new Set(["policy-file", "state-file"]),
+    )
+    if (options.help) return { command: "help" }
+    return {
+      command: "mcp",
+      policyFile: options.policyfile,
+      stateFile: options.statefile,
+    }
   }
   if (resource === "alignment") {
     if (!["list", "plan", "apply"].includes(action)) {
@@ -349,6 +364,15 @@ export async function runFleetCommand(options = {}) {
       environment,
       stderr,
       stdout,
+    })
+  }
+  if (parsed.command === "mcp") {
+    const { runFleetMcpServer } = await import("./mcp.mjs")
+    return runFleetMcpServer({
+      environment,
+      policyFile: parsed.policyFile,
+      stateFile: parsed.stateFile,
+      stderr,
     })
   }
   const service = options.service || createLocalFleetService({

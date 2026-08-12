@@ -23,6 +23,7 @@
     "dev:hosted": "wrangler dev",
     "export:standalone": "node scripts/export-standalone.mjs",
     "fleet": "node src/cli.mjs",
+    "mcp": "node src/mcp.mjs",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "screenshots:ci": "node scripts/capture-screenshots.mjs --output test-results/publication-screenshots",
     "state:import:hosted": "node scripts/import-hosted-state.mjs",
@@ -36,10 +37,13 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@playwright/test": "1.62.1",
     "wrangler": "4.121.0"
   },
   "dependencies": {
-    "jose": "6.2.8"
+    "@modelcontextprotocol/server": "2.0.0",
+    "jose": "6.2.8",
+    "zod": "4.4.3"
   }
 }

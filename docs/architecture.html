@@ -29,8 +29,8 @@
   <main class="content" id="main">
     <header class="page-intro">
       <p class="eyebrow">Architecture</p>
-      <h1>A shared browser application with narrow backend authority</h1>
-      <p class="lede">Fleet keeps comparison and desired-state logic in one portable interface while two backend transports protect credentials, persistence, and Cloudflare API access.</p>
+      <h1>Shared fleet logic behind narrow operator interfaces</h1>
+      <p class="lede">Fleet keeps comparison and desired-state logic in shared services while browser, CLI, and local MCP interfaces protect credentials, persistence, and Cloudflare API access according to their trust boundaries.</p>
     </header>
 
     <section class="section" aria-labelledby="deployment-architecture-heading">
@@ -81,7 +81,7 @@
         <article class="card">
           <p class="card-accent">EXECUTION</p>
           <h3>Plan and verify</h3>
-          <p><code>src/read-composer.mjs</code> derives fresh dependencies, <code>src/policies.mjs</code> emits ordered operations, and <code>src/write-verification.mjs</code> maps results back to the smallest authoritative reread.</p>
+          <p><code>src/alignment-service.mjs</code> binds fresh reads and deterministic operations into a digest, while <code>src/write-executor.mjs</code> journals, executes in order, and delegates exact authoritative rereads to <code>src/write-verification.mjs</code>.</p>
         </article>
         <article class="card">
           <p class="card-accent">HOSTED BACKEND</p>
@@ -98,6 +98,11 @@
           <h3>Report without mutation</h3>
           <p><code>src/audit.mjs</code> produces Markdown, JSON, or self-contained HTML. Core checks use the same inventory and intent model; deep mode adds bounded DNS, endpoint, account-resource, and dependency evidence.</p>
         </article>
+        <article class="card">
+          <p class="card-accent">AGENT INTERFACE</p>
+          <h3>Expose bounded operations</h3>
+          <p><code>src/fleet-service.mjs</code> supplies the headless local contract used by <code>src/cli.mjs</code> and <code>src/mcp.mjs</code>. Agents receive structured plans and activity without an arbitrary API passthrough.</p>
+        </article>
       </div>
     </section>
 
@@ -113,6 +118,30 @@
       <div class="callout">
         <strong>Fresh scope, complete decision</strong>
         <p>The live preflight reads the relevant facet across every zone in the account, verifies that fleet membership is unchanged, reevaluates the latest saved intent, and refuses the entire row or policy action if any selected drift cell lacks a deterministic adapter. A cell action deliberately narrows only the action scope, not the account-wide membership and read check. Blocked controls render the exact reason in both the matrix and intent manager.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="agent-interface-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Agent interface</p>
+        <h2 id="agent-interface-heading">Automation uses the same bounded state machine</h2>
+        <p>The CLI and local stdio MCP server call the shared alignment service instead of duplicating dashboard planning. Both expose policy, row, and cell selectors; structured plan digests; revision-bound pending activity; ordered writes; and exact verification reads.</p>
+      </div>
+      <div class="mode-grid">
+        <article class="mode-card">
+          <p class="card-accent">CLI</p>
+          <h3>Explicit noninteractive approval</h3>
+          <p>A caller lists candidates, prepares a fresh plan, presents it for review, and supplies that exact digest to apply. Apply replans and exits without mutation if the digest changed.</p>
+        </article>
+        <article class="mode-card">
+          <p class="card-accent">MCP</p>
+          <h3>Interactive protocol confirmation</h3>
+          <p>The stdio server exposes named audit, alignment, and activity tools. Apply elicits approval for every method, path, zone, label, body, and digest through authenticated short-lived request state, then replans before execution.</p>
+        </article>
+      </div>
+      <div class="callout">
+        <strong>No raw control-plane tool</strong>
+        <p>Neither interface accepts arbitrary Cloudflare methods or paths, and neither mutates fleet intent. The direct local process holds the configured token, so its host environment and outputs remain part of the trusted operator boundary.</p>
       </div>
     </section>
 

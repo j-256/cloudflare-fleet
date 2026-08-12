@@ -84,6 +84,7 @@
             <tr><td>Cloudflare Access</td><td>User identity and application policy</td><td>Allows or denies access to the hosted hostname</td><td>Identity provider, Allow policy, application session, edge enforcement</td></tr>
             <tr><td>Hosted Worker</td><td>Access assertion, account boundary, encrypted API token, D1 binding, read-only mode</td><td>Can serve Fleet, persist Fleet documents, and call allowlisted Cloudflare API shapes</td><td>JWT verification, same-origin mutation check, bounded bodies and duration, no redirects, path allowlists, zone ownership checks</td></tr>
             <tr><td>Local broker</td><td>API token, account ID, random session secret, private runtime and state paths</td><td>Equivalent Fleet reads and writes for one local session</td><td>Loopback binding, random capability, origin checks, private file modes, liveness-bound cleanup</td></tr>
+            <tr><td>Local CLI or MCP process</td><td>API token, account ID, selectors, planning digests, and explicit state paths</td><td>Can audit, plan intent alignment, execute supported alignment writes, and read local activity</td><td>Named operations, no raw API passthrough, digest binding, fresh replanning, serialized writes, and protocol confirmation for MCP</td></tr>
             <tr><td>Cloudflare D1 or local state</td><td>Inventory snapshots, desired state, acknowledgements, and operation journal</td><td>Persists configuration evidence but no Cloudflare API token</td><td>Schema validation, account scoping, revisions, transactions or atomic file locks</td></tr>
           </tbody>
         </table>
@@ -104,15 +105,24 @@
       <p>Local state and cache records contain the account configuration shown by Fleet. They are sensitive even though they contain no API token. Keep ignored state and policy files private, protect workstation backups, and use an explicit absolute state path when separating accounts.</p>
     </section>
 
+    <section class="section prose" aria-labelledby="agent-security-heading">
+      <h2 id="agent-security-heading">Agent boundary</h2>
+      <p>The CLI and MCP server are direct local processes, not browser clients. They inherit the API token and account identifier, so the process, its parent agent, and the host environment can exercise every Cloudflare permission granted to that token. Run them only for trusted local clients and keep secrets out of tracked or shared MCP configuration.</p>
+      <p>The MCP transport is stdio-only and opens no network listener. Tool inputs and outputs never include the API token, protocol frames stay on stdout, and diagnostics stay on stderr. Its named tools expose audit, intent alignment, and activity operations without accepting arbitrary Cloudflare methods or paths.</p>
+      <p>The CLI apply command is intentionally noninteractive: the calling workflow must present the full plan and obtain operator approval before supplying its digest. MCP apply adds protocol-level input elicitation. Its authenticated, method-bound, short-lived request state binds the account, selector, and digest; approval must repeat the exact digest; and a fresh plan must still match before execution.</p>
+    </section>
+
     <section class="section prose" aria-labelledby="writes-heading">
       <h2 id="writes-heading">Write safety</h2>
       <ul>
         <li>Read-only mode removes interface controls and causes the backend to reject mutations.</li>
         <li>A supported action declares the exact live facts it must reread before planning.</li>
         <li>Intent alignment rereads the relevant facet across every account zone and blocks a row or policy action unless every selected drift cell has a deterministic adapter.</li>
+        <li>An alignment digest binds the account, fleet membership, intent revision, selector, and exact ordered operations.</li>
         <li>Endpoint adapters allowlist writable fields and strip server-managed identifiers.</li>
         <li>The operator reviews target zones, current values, desired values, HTTP methods, endpoints, and request bodies.</li>
-        <li>A durable pending record exists before the first API mutation.</li>
+        <li>Apply repeats fresh planning and rejects a changed digest before mutation.</li>
+        <li>A revision-bound durable pending record exists before the first API mutation.</li>
         <li>Post-write verification rereads the smallest authoritative resources and updates the matrix once.</li>
         <li>An inverse is offered only when the completed operation has a lossless adapter and the saved post-write state still matches live Cloudflare state.</li>
       </ul>

@@ -216,4 +216,21 @@ test("unified CLI help documents the bounded agent surface", () => {
   assert.match(usage, /alignment apply/)
   assert.match(usage, /--expect-plan DIGEST/)
   assert.match(usage, /activity list/)
+  assert.match(usage, /cloudflare-fleet mcp/)
+})
+
+test("unified CLI parses MCP state and policy profiles", () => {
+  assert.deepEqual(
+    parseFleetArguments([
+      "mcp",
+      "--state-file",
+      "profiles/state.json",
+      "--policy-file=profiles/policy.json",
+    ]),
+    {
+      command: "mcp",
+      policyFile: "profiles/policy.json",
+      stateFile: "profiles/state.json",
+    },
+  )
 })

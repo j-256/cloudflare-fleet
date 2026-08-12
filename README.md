@@ -78,6 +78,32 @@ Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Rout
 
 `--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors.
 
+## Agent CLI and MCP
+
+The fleet CLI exposes the same intent alignment planner and verified write executor as the dashboard. Text is the default for operators; `--format json` keeps stdout machine-readable while progress remains on stderr.
+
+```sh
+npm run fleet -- alignment list --format json
+npm run fleet -- alignment plan --policy POLICY_ID --format json
+npm run fleet -- alignment apply --policy POLICY_ID \
+  --expect-plan 'sha256:...' --format json
+npm run fleet -- activity list --format json
+```
+
+Select a policy with `--policy ID`, a complete matrix row with `--category CATEGORY --key KEY [--phase PHASE]`, or repeat `--zone-id ID` with a row selector to target cells. Planning performs fresh full and scoped reads. Applying requires the exact digest returned by planning, rebuilds the plan again, and refuses to write if fleet membership, intent, live state, or the resulting operations changed. The CLI is deliberately noninteractive, so its caller is responsible for presenting and approving the complete plan before passing the digest.
+
+The local stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy:
+
+```sh
+npm run mcp
+# Equivalent client command:
+node /absolute/path/to/cloudflare-fleet/src/mcp.mjs
+```
+
+It registers `audit_fleet`, `list_alignment_candidates`, `plan_alignment`, `apply_alignment`, and `list_activity`. `apply_alignment` accepts a selector plus an exact planning digest, rebuilds and displays every operation through MCP input elicitation, requires explicit approval and the repeated digest, then performs another fresh digest check before any write. Confirmation state is authenticated, method-bound, and short-lived. Protocol messages use stdout and diagnostics use stderr.
+
+The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Pass `--state-file PATH` and `--policy-file PATH` to `npm run mcp --` when using explicit local profiles; the state path is also available to the fleet CLI. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
+
 ## Fleet intent and writes
 
 Fleet intent defines presence and value constraints independently. Broader groups act as baselines, contained groups refine them, and partial overlaps remain peers. Exact acknowledgements bind one policy, zone, and observed normalized value, then become stale if that context changes. Saving intent evaluates drift but never writes Cloudflare.

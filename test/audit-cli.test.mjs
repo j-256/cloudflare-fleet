@@ -3,6 +3,7 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  collectFleetAudit,
   FLEET_AUDIT_EXIT_CODE,
   fleetAuditExitCode,
   fleetAuditUsage,
@@ -137,4 +138,32 @@ test("resolvePolicyFile accepts an explicit path and requires an absolute env pa
     }),
     /CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path/,
   )
+})
+
+test("collectFleetAudit supports an injected API without requiring a token", async (context) => {
+  const stateFile = path.resolve(
+    "test-results",
+    `audit-service-${context.name.replaceAll(" ", "-")}.json`,
+  )
+  const policyFile = path.resolve("fleet-policy.example.json")
+  const api = {
+    accountId: "account-one",
+    async listEmailAddresses() {
+      return []
+    },
+    async listZones() {
+      return []
+    },
+  }
+
+  const report = await collectFleetAudit({
+    api,
+    environment: {},
+    now: 0,
+    policyFile,
+    stateFile,
+  })
+
+  assert.equal(report.summary.zones, 0)
+  assert.equal(report.generatedAt, "1970-01-01T00:00:00.000Z")
 })

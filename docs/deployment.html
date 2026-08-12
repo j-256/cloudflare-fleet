@@ -157,12 +157,16 @@ npm run configure:hosted -- ...</code></pre>
     </section>
 
     <section class="section prose" aria-labelledby="local-heading">
-      <h2 id="local-heading">Keep the local launcher</h2>
+      <h2 id="local-heading">Keep the local interfaces</h2>
       <p>Hosted deployment does not replace local mode. On macOS, provide the account token and identifier in the shell and launch the ordinary browser workflow. It shares the same UI, policy, intent schema, write planner, activity model, and verification code.</p>
       <pre><code>export CLOUDFLARE_API_TOKEN="your-account-token"
 export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 ./launch.sh --read-only</code></pre>
       <p>Use <code>./launch.sh --write</code> for the full local workflow. Local state defaults to ignored <code>state.json</code>; set <code>CLOUDFLARE_FLEET_STATE_FILE</code> to an absolute path for another profile.</p>
+      <p>The local fleet CLI and stdio MCP server inherit the same credentials and use the same ignored state profile. Start them from the project directory after installing dependencies:</p>
+      <pre><code>npm run fleet -- alignment list --format json
+npm run mcp</code></pre>
+      <p>An MCP client can launch <code>node /absolute/path/to/cloudflare-fleet/src/mcp.mjs</code> directly. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named audit, alignment, and activity tools.</p>
     </section>
 
     <section class="section prose" aria-labelledby="pages-heading">

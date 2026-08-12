@@ -167,6 +167,41 @@ export function resolvePolicyFile(argument, environment) {
   return path.resolve(configured)
 }
 
+export async function collectFleetAudit(options = {}) {
+  const environment = options.environment || process.env
+  const apiToken = environment.CLOUDFLARE_API_TOKEN
+  const accountId = options.accountId || options.api?.accountId
+    || environment.CLOUDFLARE_ACCOUNT_ID
+  if (!options.api && !apiToken) throw new Error("CLOUDFLARE_API_TOKEN is required")
+  if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required")
+  const api = options.api || new CloudflareApi({ accountId, apiToken })
+  const stateFile = resolveStateFile(options.stateFile, environment)
+  const policyFile = resolvePolicyFile(options.policyFile, environment)
+  const [state, policy, inventory] = await Promise.all([
+    readFleetStateDocument(stateFile, accountId),
+    readFleetPolicyConfiguration(policyFile),
+    loadInventory(api, {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    }),
+  ])
+  const now = options.now ?? Date.now()
+  const deepFindings = options.deep
+    ? await collectDeepAuditFindings(api, inventory, {
+        fetchImpl: options.fetchImpl,
+        now,
+        onProgress: options.onProgress,
+      })
+    : []
+  return buildFleetAudit(inventory, {
+    deep: options.deep === true,
+    deepFindings,
+    intent: state.intent,
+    now,
+    policyConfiguration: policy,
+  })
+}
+
 export async function runFleetAuditCommand(options = {}) {
   const argv = options.argv || process.argv.slice(2)
   const environment = options.environment || process.env
@@ -177,34 +212,15 @@ export async function runFleetAuditCommand(options = {}) {
     stdout.write(`${fleetAuditUsage()}\n`)
     return null
   }
-  const apiToken = environment.CLOUDFLARE_API_TOKEN
-  const accountId = environment.CLOUDFLARE_ACCOUNT_ID
-  if (!apiToken) throw new Error("CLOUDFLARE_API_TOKEN is required")
-  if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required")
-  const api = options.api || new CloudflareApi({ accountId, apiToken })
-  const stateFile = resolveStateFile(parsed.stateFile, environment)
-  const policyFile = resolvePolicyFile(parsed.policyFile, environment)
   const onProgress = progressReporter(stderr)
   stderr.write("[audit] Reading fleet state and live Cloudflare inventory\n")
-  const [state, policy, inventory] = await Promise.all([
-    readFleetStateDocument(stateFile, accountId),
-    readFleetPolicyConfiguration(policyFile),
-    loadInventory(api, { onProgress }),
-  ])
-  const now = options.now ?? Date.now()
-  const deepFindings = parsed.deep
-    ? await collectDeepAuditFindings(api, inventory, {
-        fetchImpl: options.fetchImpl,
-        now,
-        onProgress,
-      })
-    : []
-  const report = buildFleetAudit(inventory, {
+  const report = await collectFleetAudit({
+    ...options,
     deep: parsed.deep,
-    deepFindings,
-    intent: state.intent,
-    now,
-    policyConfiguration: policy,
+    environment,
+    onProgress,
+    policyFile: parsed.policyFile,
+    stateFile: parsed.stateFile,
   })
   const output = parsed.format === AUDIT_FORMAT.JSON
     ? `${JSON.stringify(report, null, 2)}\n`
