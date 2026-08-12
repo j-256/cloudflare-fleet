@@ -138,7 +138,7 @@ export function intentPolicyRemediation(
       }
     }
     if (editableWorkspace) {
-      return manualRemediation("Manual remediation: use the editable ruleset workspace to reconcile present values. Missing values are allowed, but there is no automatic whole-ruleset alignment action.")
+      return manualRemediation("Manual remediation: use the parent ruleset workspace to reconcile present rules. Missing values are allowed, but there is no automatic create flow.")
     }
     return {
       className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,
@@ -178,7 +178,7 @@ export function intentPolicyRemediation(
     }
   }
   if (editableWorkspace) {
-    return manualRemediation("Manual remediation: use the editable ruleset workspace to reconcile this facet. Intent will detect and filter drift, but there is no automatic whole-ruleset alignment action.")
+    return manualRemediation("Manual remediation: use the parent ruleset workspace to reconcile this rule. Intent will detect and filter drift, but there is no automatic fleet alignment action.")
   }
   return {
     className: INTENT_REMEDIATION_KIND.COMPARE_ONLY,

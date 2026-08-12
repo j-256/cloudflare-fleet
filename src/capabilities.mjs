@@ -70,8 +70,7 @@ function actionHasEditableWorkspace(action) {
 
 function rowHasEditableWorkspace(row) {
   return rowCells(row).some(
-    (cell) => actionHasEditableWorkspace(cell.workspaceAction)
-      || actionHasEditableWorkspace(cell.parentAction),
+    (cell) => actionHasEditableWorkspace(cell.parentAction),
   )
 }
 

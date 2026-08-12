@@ -79,6 +79,52 @@ test("turns a compared fleet value into persisted intent and undoes it", async (
   })).toBeVisible()
 })
 
+test("confirms rules individually without exposing a parent ruleset facet", async ({ dashboard }) => {
+  const { page, zoneNames } = dashboard
+
+  await expect(page.locator('#category option[value="Rulesets"]')).toHaveCount(0)
+  await page.locator("#category").selectOption("Ruleset rules")
+
+  const rows = page.locator("#matrix-body tr")
+  await expect(rows).toHaveCount(1)
+  await expect(rows.locator(".facet-title-value")).toHaveText("Protect service")
+  await expect(page.getByRole("button", {
+    name: /^Open the parent ruleset for Protect service on /,
+  })).toHaveCount(3)
+
+  await page.getByRole("button", {
+    name: "Set intent: Set intent for Protect service",
+  }).click()
+  const policy = page.getByRole("dialog", { name: "Set facet intent" })
+  await expect(policy).toContainText("Ruleset rules | Protect service")
+  await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
+  await policy.getByRole("radio", { name: /^Exact value/ }).check()
+  await policy.locator("#intent-policy-save").click()
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "Protect service intent saved for All zones",
+  )
+  await page.getByRole("button", {
+    name: `Acknowledge Protect service on ${zoneNames[1]}`,
+  }).click()
+
+  const acknowledgement = page.getByRole("dialog", {
+    name: "Acknowledge exact state",
+  })
+  await acknowledgement.getByLabel("Reason").fill("Intentionally disabled")
+  await acknowledgement.getByRole("button", {
+    name: "Acknowledge state",
+  }).click()
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    `Protect service acknowledged on ${zoneNames[1]}`,
+  )
+  await page.locator("#difference-toggle").click()
+  await expect(
+    rows.locator(`td[data-zone-id="zone-${zoneNames[1]}"]`),
+  ).toHaveAttribute("data-intent-status", "acknowledged")
+})
+
 test("protects a dirty saved scope from accidental workflow dismissal", async ({ dashboard }) => {
   const { page, zoneNames } = dashboard
 

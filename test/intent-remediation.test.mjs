@@ -13,32 +13,28 @@ import {
 
 function row(workspaceKind = null) {
   return {
-    category: "Rulesets",
+    category: "Ruleset rules",
     cells: new Map([
       ["example.com", {
-        workspaceAction: workspaceKind ? { kind: workspaceKind } : null,
+        parentAction: workspaceKind ? { kind: workspaceKind } : null,
       }],
     ]),
-    key: "zone:http_request_firewall_custom",
+    key: "http_request_firewall_custom:protect service",
     missingResolutions: new Map(),
   }
 }
 
 const expected = Object.freeze({
-  canonical: '{"kind":"zone","name":"default","rules":[{"action":"block","enabled":true,"expression":"true"}]}',
+  canonical: '{"action":"block","enabled":true,"expression":"true"}',
   resolutionCanonical: null,
   value: Object.freeze({
-    kind: "zone",
-    name: "default",
-    rules: Object.freeze([Object.freeze({
-      action: "block",
-      enabled: true,
-      expression: "true",
-    })]),
+    action: "block",
+    enabled: true,
+    expression: "true",
   }),
 })
 
-test("editable ruleset intent advertises manual remediation", () => {
+test("rule intent with a parent workspace advertises manual remediation", () => {
   const remediation = intentPolicyRemediation(row("zone"), expected)
 
   assert.equal(remediation.className, INTENT_REMEDIATION_KIND.MANUAL)
@@ -46,11 +42,11 @@ test("editable ruleset intent advertises manual remediation", () => {
     INTENT_REMEDIATION_PRESENTATION[remediation.className].label,
     "Manual remediation",
   )
-  assert.match(remediation.text, /editable ruleset workspace/)
-  assert.match(remediation.text, /no automatic whole-ruleset alignment/)
+  assert.match(remediation.text, /parent ruleset workspace/)
+  assert.match(remediation.text, /no automatic fleet alignment/)
 })
 
-test("managed and unavailable ruleset workspaces remain comparison only", () => {
+test("managed and unavailable parent workspaces remain comparison only", () => {
   assert.equal(
     intentPolicyRemediation(row("managed"), expected).className,
     INTENT_REMEDIATION_KIND.COMPARE_ONLY,
@@ -61,7 +57,7 @@ test("managed and unavailable ruleset workspaces remain comparison only", () => 
   )
 })
 
-test("editable ruleset workspaces describe manual non-exact remediation", () => {
+test("editable parent workspaces describe manual non-exact remediation", () => {
   const mayDiffer = intentPolicyRemediation(
     row("custom"),
     null,

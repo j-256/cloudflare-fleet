@@ -251,16 +251,16 @@ test("matrix filters redirects by destination type", () => {
   }), false)
 })
 
-test("matrix filters ruleset facets by exact phase", () => {
+test("matrix filters rule facets by exact phase", () => {
   const row = {
-    category: "Rulesets",
+    category: "Ruleset rules",
     different: true,
     missingZoneIds: [],
     phase: "http_config_settings",
     presentCount: 4,
     recordType: "",
     redirectTypes: [],
-    search: "configuration settings entrypoint",
+    search: "configuration settings protect service",
   }
   const filters = {
     ...DEFAULT_MATRIX_FILTERS,

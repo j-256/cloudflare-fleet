@@ -14,10 +14,7 @@ const DNS_RECORD_CATEGORY = "DNS records"
 const DNSSEC_CATEGORY = "DNSSEC"
 const EMAIL_DNS_SPECIFICATION_CATEGORY = "Email DNS specification"
 const EMAIL_ROUTE_CATEGORY = "Email routes"
-const RULESET_CATEGORY = "Rulesets"
 const ZONE_SETTING_CATEGORY = "Zone settings"
-const MANAGED_RULESET_KEY_PREFIX = "managed:"
-const ZONE_RULESET_KEY_PREFIX = "zone:"
 const RULE_CATEGORIES = new Set([
   MATRIX_CATEGORY.REDIRECTS,
   MATRIX_CATEGORY.RULESET_RULES,
@@ -68,18 +65,6 @@ export function redirectIntentComparisonValue(rule, zoneName) {
   )
 }
 
-export function rulesetExactComparisonValue(ruleset, zoneName) {
-  return {
-    description: normalizeValue(
-      typeof ruleset?.description === "string" ? ruleset.description.trim() : "",
-      zoneName,
-    ),
-    rules: Array.isArray(ruleset?.rules)
-      ? ruleset.rules.map((rule) => ruleExactComparisonValue(rule, zoneName))
-      : [],
-  }
-}
-
 export function canonicalComparisonValue(canonical) {
   try {
     return JSON.parse(canonical)
@@ -104,10 +89,7 @@ function phaseFromFacetKey(facet) {
   const category = String(facet?.category || "")
   const key = String(facet?.key || "")
   if (RULE_CATEGORIES.has(category)) return key.split(":", 1)[0]
-  if (category !== RULESET_CATEGORY || key.startsWith(MANAGED_RULESET_KEY_PREFIX)) {
-    return ""
-  }
-  return key.split(":")[1] || ""
+  return ""
 }
 
 export function facetPhase(facet) {
@@ -123,16 +105,6 @@ function facetIdentitySummary(facet, phaseLabel) {
   if (category === MATRIX_CATEGORY.RULESET_RULES) {
     return `Ruleset rules / ${phaseLabel} / normalized rule name`
   }
-  if (category === RULESET_CATEGORY && key.startsWith(MANAGED_RULESET_KEY_PREFIX)) {
-    return "Rulesets / managed ruleset ID"
-  }
-  if (category === RULESET_CATEGORY && key.startsWith(ZONE_RULESET_KEY_PREFIX)) {
-    return `Rulesets / zone / ${phaseLabel}`
-  }
-  if (category === RULESET_CATEGORY) {
-    const kind = key.split(":", 1)[0] || "ruleset"
-    return `Rulesets / ${kind} / ${phaseLabel} / normalized name`
-  }
   if (category === DNS_RECORD_CATEGORY || category === EMAIL_DNS_SPECIFICATION_CATEGORY) {
     return `${matrixCategoryLabel(category)} / record type / normalized owner`
   }
@@ -144,13 +116,6 @@ function facetIdentitySummary(facet, phaseLabel) {
 
 function facetEquivalenceSummary(facet) {
   const category = String(facet?.category || "")
-  const key = String(facet?.key || "")
-  if (category === RULESET_CATEGORY && key.startsWith(MANAGED_RULESET_KEY_PREFIX)) {
-    return "Kind + phase + version"
-  }
-  if (category === RULESET_CATEGORY) {
-    return "Description + ordered editable rule fields"
-  }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return "Behavioral rule fields"
   }
@@ -171,10 +136,6 @@ function facetEquivalenceSummary(facet) {
 
 function facetNormalizationSummary(facet) {
   const category = String(facet?.category || "")
-  const key = String(facet?.key || "")
-  if (category === RULESET_CATEGORY && !key.startsWith(MANAGED_RULESET_KEY_PREFIX)) {
-    return "Zone domain becomes {zone}; rule order and custom refs count"
-  }
   if (RULE_CATEGORIES.has(category)) {
     return "Zone domain becomes {zone}; array order counts"
   }
@@ -183,10 +144,6 @@ function facetNormalizationSummary(facet) {
 
 function facetIgnoredSummary(facet) {
   const category = String(facet?.category || "")
-  const key = String(facet?.key || "")
-  if (category === RULESET_CATEGORY && !key.startsWith(MANAGED_RULESET_KEY_PREFIX)) {
-    return "Immutable name, kind, phase; IDs, timestamps, versions, generated refs, unsupported fields"
-  }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return "Absolute position, description, explicit ref, IDs, timestamps, versions, unsupported API fields"
   }
@@ -228,7 +185,7 @@ export function describeFacetComparisonAccess(facet, cell) {
   }
 
   const category = String(facet?.category || "")
-  const workspaceAction = cell.workspaceAction || cell.parentAction
+  const workspaceAction = cell.parentAction
   const editableWorkspace = rulesetActionIsEditable(workspaceAction)
   if (cell.action) {
     const hasOrderEditor = category === MATRIX_CATEGORY.REDIRECTS
@@ -249,9 +206,7 @@ export function describeFacetComparisonAccess(facet, cell) {
   if (editableWorkspace) {
     return {
       kind: FACET_COMPARISON_ACCESS_KIND.WORKSPACE,
-      reason: category === RULESET_CATEGORY
-        ? "Edit description, rule fields, and order in the ruleset workspace. Immutable name, kind, and phase are not compared."
-        : "Edit compared rule fields in the parent ruleset workspace.",
+      reason: "Edit compared rule fields in the parent ruleset workspace.",
       secondaryKind: null,
     }
   }

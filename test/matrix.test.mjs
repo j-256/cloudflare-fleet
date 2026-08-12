@@ -321,21 +321,14 @@ test("matrix leads with rule names and separates direct edits from copying", () 
     type: "ruleset-open",
     zoneId: "zone-alpha.example",
   })
-  const parentRow = matrix.rows.find(
-    (entry) => entry.category === "Rulesets"
-      && entry.label === "Dynamic redirects ruleset",
-  )
-  assert.equal(parentRow.phase, "http_request_dynamic_redirect")
-  assert.equal(parentRow.labelSource, "Ruleset phase")
-  assert.equal(parentRow.description, "Complete ordered rules for each zone")
-  assert.deepEqual(
-    parentRow.cells.get("alpha.example").workspaceAction,
-    cell.parentAction,
+  assert.equal(
+    matrix.rows.some((entry) => entry.category === "Rulesets"),
+    false,
   )
   assert.match(row.search, /dynamic redirects entrypoint/)
 })
 
-test("ruleset parent exact values include ordered editable rule fields", () => {
+test("matrix compares each non-redirect rule without a parent ruleset facet", () => {
   const ruleset = (zoneName, securityLevel) => ({
     description: "",
     id: `config-entrypoint-${zoneName}`,
@@ -365,31 +358,33 @@ test("ruleset parent exact values include ordered editable rule fields", () => {
       ruleDetails: [ok(ruleset("gamma.example", "low"))],
     }),
   ]))
-  const parent = matrix.rows.find(
-    (entry) => entry.category === "Rulesets"
-      && entry.key === "zone:http_config_settings",
+  const ruleRow = matrix.rows.find(
+    (entry) => entry.category === "Ruleset rules"
+      && entry.key === "http_config_settings:exclude service",
   )
-  const alpha = parent.cells.get("alpha.example")
-  const beta = parent.cells.get("beta.example")
-  const gamma = parent.cells.get("gamma.example")
+  const alpha = ruleRow.cells.get("alpha.example")
+  const beta = ruleRow.cells.get("beta.example")
+  const gamma = ruleRow.cells.get("gamma.example")
   const compared = JSON.parse(alpha.intentCanonical)
 
-  assert.equal(parent.phase, "http_config_settings")
-  assert.equal(parent.variantCount, 2)
-  assert.equal(parent.consensusCount, 2)
-  assert.equal(parent.different, true)
+  assert.equal(ruleRow.phase, "http_config_settings")
+  assert.equal(ruleRow.variantCount, 2)
+  assert.equal(ruleRow.consensusCount, 2)
+  assert.equal(ruleRow.different, true)
   assert.equal(alpha.intentCanonical, beta.intentCanonical)
   assert.notEqual(alpha.intentCanonical, gamma.intentCanonical)
   assert.equal(Object.hasOwn(compared, "kind"), false)
   assert.equal(Object.hasOwn(compared, "name"), false)
-  assert.equal(compared.description, "")
-  assert.equal(compared.rules.length, 1)
-  assert.equal(compared.rules[0].expression, "(http.host eq \"s.{zone}\")")
-  assert.equal(compared.rules[0].action_parameters.security_level, "essentially_off")
+  assert.equal(compared.expression, "(http.host eq \"s.{zone}\")")
+  assert.equal(compared.action_parameters.security_level, "essentially_off")
   assert.equal(Object.hasOwn(compared, "rule_count"), false)
-  assert.equal(Object.hasOwn(compared.rules[0], "id"), false)
-  assert.equal(compared.rules[0].ref, "rule-{zone}")
-  assert.equal(Object.hasOwn(compared.rules[0], "version"), false)
+  assert.equal(Object.hasOwn(compared, "id"), false)
+  assert.equal(compared.ref, "rule-{zone}")
+  assert.equal(Object.hasOwn(compared, "version"), false)
+  assert.equal(
+    matrix.rows.some((entry) => entry.category === "Rulesets"),
+    false,
+  )
 })
 
 test("matrix aligns redirects by normalized match behavior despite name differences", () => {
@@ -537,7 +532,7 @@ test("matrix treats redirect order as behavioral drift", () => {
   )
 })
 
-test("matrix exposes managed rulesets as individual workspaces", () => {
+test("matrix excludes managed catalogs from confirmable facets", () => {
   const matrix = buildMatrix(makeInventory([
     makeZone("alpha.example", {
       rulesets: [
@@ -558,23 +553,10 @@ test("matrix exposes managed rulesets as individual workspaces", () => {
       ],
     }),
   ]))
-  const managedRows = matrix.rows.filter(
-    (entry) => entry.category === "Rulesets"
-      && entry.key.startsWith("managed:"),
+  assert.equal(
+    matrix.rows.some((entry) => entry.category === "Rulesets"),
+    false,
   )
-
-  assert.deepEqual(
-    managedRows.map((row) => row.label).sort(),
-    [
-      "Cloudflare Managed Free Ruleset",
-      "Cloudflare Normalization Ruleset",
-    ],
-  )
-  assert.deepEqual(
-    managedRows[0].cells.get("alpha.example").workspaceAction.type,
-    "ruleset-open",
-  )
-  assert.equal(managedRows[0].labelSource, "Ruleset name")
 })
 
 test("matrix exposes dependency-backed rules for editing but not copying", () => {

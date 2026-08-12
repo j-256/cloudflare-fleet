@@ -43,30 +43,12 @@ test("matrix opens compared and observed values in a dedicated equivalence modal
   assert.doesNotMatch(appSource, /details\.className = "cell-value-details"/)
 })
 
-test("ruleset parent review leads with exact definitions instead of count buckets", () => {
-  assert.match(html, /Rule count appears on each definition as review metadata/)
-  assert.match(appSource, /const reviewLabel = "Compare rule sets"/)
-  assert.match(appSource, /text: rulesetComparison\.definitionSummaryText/)
-  assert.doesNotMatch(appSource, /Most common count/)
-})
-
-test("ruleset comparison keeps navigation outside its scrolling definitions", () => {
-  assert.match(
-    html,
-    /class="ruleset-comparison-scroll-region">[\s\S]+id="ruleset-comparison-groups"[\s\S]+id="ruleset-comparison-intent"/,
-  )
-  assert.match(
-    styles,
-    /\.ruleset-comparison-dialog \{[\s\S]+overflow: hidden;/,
-  )
-  assert.match(
-    styles,
-    /\.ruleset-comparison-workspace \{[\s\S]+display: flex;[\s\S]+max-height: calc\(100dvh - 34px\);/,
-  )
-  assert.match(
-    styles,
-    /\.ruleset-comparison-scroll-region \{[\s\S]+min-height: 0;[\s\S]+overflow: auto;/,
-  )
+test("ruleset-derived matrix controls stay on individual rule rows", () => {
+  assert.doesNotMatch(html, /id="ruleset-comparison-dialog"/)
+  assert.doesNotMatch(appSource, /Compare rule sets/)
+  assert.match(appSource, /if \(cell\.parentAction\)/)
+  assert.match(appSource, /text: "Ruleset"/)
+  assert.match(appSource, /Open the parent ruleset workspace/)
 })
 
 test("matrix exposes phase as a filter and a stacked badge", () => {
@@ -201,7 +183,10 @@ test("facet intent actions stay in the focused policy editor", () => {
     appSource,
     /function activateIntentPolicyRow\(button\)[\s\S]+openIntentPolicyEditor\(action\.row, action\.policy\)/,
   )
-  assert.match(appSource, /openIntentPolicyEditor\(row, preferredIntentPolicy\(policies\), options\)/)
+  assert.match(
+    appSource,
+    /function useComparedValueAsIntent\(row, variant\)[\s\S]+openIntentPolicyEditor\(row, preferredIntentPolicy\(policies\), \{[\s\S]+expectedCanonical: variant\.intentCanonical/,
+  )
 })
 
 test("policy and group editors preview impact and support focused shortcuts", () => {

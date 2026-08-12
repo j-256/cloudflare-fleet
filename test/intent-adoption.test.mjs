@@ -235,66 +235,51 @@ test("exact adoption uses intent-normalized values and a resolution-capable sour
   assert.equal(policy.expected.sourceZoneName, "beta.example")
 })
 
-test("exact adoption persists the editable parent projection without inspection metadata", () => {
+test("exact adoption persists the editable rule projection without inspection metadata", () => {
   const { document, inventory } = fixture()
   const leading = {
-    description: "",
-    rules: [{
-      action: "set_config",
-      action_parameters: { security_level: "essentially_off" },
-      enabled: true,
-      expression: "true",
-    }],
+    action: "set_config",
+    action_parameters: { security_level: "essentially_off" },
+    description: "Protect service",
+    enabled: true,
+    expression: "true",
   }
   const alternate = {
-    description: "",
-    rules: [{
-      action: "set_config",
-      action_parameters: { security_level: "low" },
-      enabled: true,
-      expression: "true",
-    }],
+    ...leading,
+    action_parameters: { security_level: "low" },
   }
   const inspectionValue = {
-    id: "ruleset-id",
-    kind: "zone",
-    name: "default",
-    phase: "http_config_settings",
-    rules: [{
-      ...leading.rules[0],
-      id: "rule-id",
-    }],
+    ...leading,
+    id: "rule-id",
   }
-  const parentRow = row(
-    "zone:http_config_settings",
+  const ruleRow = row(
+    "http_config_settings:protect service",
     [inspectionValue, inspectionValue, inspectionValue, {
       ...inspectionValue,
-      rules: [{
-        ...alternate.rules[0],
-        id: "alternate-rule-id",
-      }],
+      ...alternate,
+      id: "alternate-rule-id",
     }],
     {
-      category: "Rulesets",
+      category: "Ruleset rules",
       cellOptions: [
         { canonical: JSON.stringify(leading), intentCanonical: JSON.stringify(leading) },
         { canonical: JSON.stringify(leading), intentCanonical: JSON.stringify(leading) },
         { canonical: JSON.stringify(leading), intentCanonical: JSON.stringify(leading) },
         { canonical: JSON.stringify(alternate), intentCanonical: JSON.stringify(alternate) },
       ],
-      label: "Configuration settings entrypoint",
+      label: "Protect service",
       phase: "http_config_settings",
     },
   )
   const candidate = buildIntentAdoptionCandidates(
     document,
     inventory,
-    { rows: [parentRow] },
+    { rows: [ruleRow] },
   )[0]
   const policy = createIntentAdoptionPolicy(candidate, {
     expectedCanonical: candidate.recommendation.expectedCanonical,
     groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
-    policyId: "ruleset-policy",
+    policyId: "rule-policy",
     valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
   })
 

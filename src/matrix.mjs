@@ -42,7 +42,6 @@ import {
 import {
   redirectIntentComparisonValue,
   ruleExactComparisonValue,
-  rulesetExactComparisonValue,
 } from "./facet-equivalence.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
@@ -175,7 +174,6 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     secondaryAction: options.secondaryAction || null,
     txtPurposeCounts: options.txtPurposeCounts || {},
     txtPurposes: options.txtPurposes || [],
-    workspaceAction: options.workspaceAction || null,
   }
   if (hasIntentValue) cell.intentValue = inspectionValue(intentValue)
   if (Object.prototype.hasOwnProperty.call(options, "intentDisplay")) {
@@ -706,54 +704,14 @@ function addDnsRows(rows, inventory) {
   }
 }
 
-function addRulesetRows(rows, inventory) {
+function addRuleRows(rows, inventory) {
   for (const zone of inventory.zones) {
-    for (const ruleset of (surfaceResult(zone, "rulesets") || [])
-      .filter((entry) => entry.kind === RULESET_KIND.MANAGED)) {
-      addCell(
-        rows,
-        "Rulesets",
-        `managed:${ruleset.id}`,
-        ruleset.name,
-        zone,
-        {
-          kind: ruleset.kind,
-          phase: ruleset.phase,
-          version: ruleset.version,
-        },
-        {
-          description: "Managed ruleset",
-          display: `Managed | ${rulePhaseLabel(ruleset.phase)}`,
-          inspectionValue: ruleset,
-          labelSource: "Ruleset name",
-          phase: ruleset.phase,
-          workspaceAction: {
-            kind: ruleset.kind,
-            name: ruleset.name,
-            phase: ruleset.phase,
-            rulesetId: ruleset.id,
-            type: RULESET_ACTION_KIND.OPEN,
-            zoneId: zone.meta.id,
-          },
-        },
-      )
-    }
-
     for (const detail of zone.ruleDetails.filter((entry) => entry.ok)) {
       const ruleset = detail.result
       const phase = ruleset.phase
-      const rulesetKey = ruleset.kind === RULESET_KIND.ZONE
-        ? `zone:${phase}`
-        : `${ruleset.kind}:${phase}:${normalizeText(ruleset.name || ruleset.id, zone.meta.name)}`
       const rulesetLabel = ruleset.kind === RULESET_KIND.ZONE
         ? `${rulePhaseLabel(phase)} ruleset`
         : ruleset.name || "Unnamed ruleset"
-      const rulesetLabelSource = ruleset.kind === RULESET_KIND.ZONE
-        ? "Ruleset phase"
-        : ruleset.name
-          ? "Ruleset name"
-          : "Generated fallback"
-      const exactValue = rulesetExactComparisonValue(ruleset, zone.meta.name)
       const workspaceAction = {
         kind: ruleset.kind,
         name: ruleset.name,
@@ -762,30 +720,6 @@ function addRulesetRows(rows, inventory) {
         type: RULESET_ACTION_KIND.OPEN,
         zoneId: zone.meta.id,
       }
-      addCell(
-        rows,
-        "Rulesets",
-        rulesetKey,
-        rulesetLabel,
-        zone,
-        exactValue,
-        {
-          description: ruleset.kind === RULESET_KIND.ZONE
-            ? "Complete ordered rules for each zone"
-            : "",
-          display: `${ruleset.rules?.length || 0} rule${ruleset.rules?.length === 1 ? "" : "s"}`,
-          inspectionValue: ruleset,
-          labelSource: rulesetLabelSource,
-          normalized: exactValue,
-          phase,
-          search: [
-            rulePhaseLabel(phase),
-            phase,
-            `${rulePhaseLabel(phase)} entrypoint`,
-          ].join(" "),
-          workspaceAction,
-        },
-      )
 
       const ruleIdentityOccurrences = new Map()
       for (const [index, rule] of (ruleset.rules || []).entries()) {
@@ -1247,7 +1181,7 @@ export function buildMatrix(inventory) {
   addDnssecRows(rows, inventory)
   addEmailRows(rows, inventory)
   addDnsRows(rows, inventory)
-  addRulesetRows(rows, inventory)
+  addRuleRows(rows, inventory)
   addRouteAndLegacyRows(rows, inventory)
   addAdditionalRows(rows, inventory)
 
@@ -1361,7 +1295,6 @@ export function matrixRenderKey(inventory, matrix) {
           resolutionSource: cell.resolutionSource,
           secondaryAction: cell.secondaryAction,
           parentAction: cell.parentAction,
-          workspaceAction: cell.workspaceAction,
         }
       }),
       description: row.description,

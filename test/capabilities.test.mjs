@@ -35,8 +35,8 @@ test("row capabilities detect direct, workspace, copy, and fleet adapters", () =
     cells: [
       ["zone-a", {
         action: { type: "zone-setting" },
+        parentAction: { kind: "zone" },
         secondaryAction: { type: "ruleset-rule-copy" },
-        workspaceAction: { kind: "zone" },
       }],
     ],
     fleetAction: { type: "ruleset-rule-rename" },
@@ -53,11 +53,11 @@ test("row capabilities detect direct, workspace, copy, and fleet adapters", () =
   assert.equal(matrixRowSupportsChanges(editable), true)
 })
 
-test("managed ruleset workspaces remain inspection-only", () => {
+test("managed parent workspaces remain inspection-only", () => {
   const managed = row({
     cells: [
       ["zone-a", {
-        workspaceAction: { kind: "managed" },
+        parentAction: { kind: "managed" },
       }],
     ],
   })

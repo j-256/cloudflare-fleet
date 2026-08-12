@@ -101,6 +101,25 @@ function dnsRecords(zoneName, options = {}) {
   return records
 }
 
+function dashboardRuleset(zoneName, options = {}) {
+  return {
+    id: `firewall-${zoneName}`,
+    kind: "zone",
+    name: "default",
+    phase: "http_request_firewall_custom",
+    rules: [
+      {
+        action: "block",
+        description: "Protect service",
+        enabled: options.enabled !== false,
+        expression: `http.host eq "service.${zoneName}"`,
+        id: `protect-${zoneName}`,
+        ref: `protect-${zoneName}`,
+      },
+    ],
+  }
+}
+
 function dashboardInventory() {
   const inventory = makeInventory([
     makeDashboardZone(ZONE_NAMES[0], {
@@ -115,6 +134,7 @@ function dashboardInventory() {
         setting("min_tls_version", "1.2"),
         setting("tls_1_3", "on"),
       ],
+      ruleDetails: [ok(dashboardRuleset(ZONE_NAMES[0]))],
     }),
     makeDashboardZone(ZONE_NAMES[1], {
       dns: dnsRecords(ZONE_NAMES[1], {
@@ -128,6 +148,7 @@ function dashboardInventory() {
         setting("min_tls_version", "1.2"),
         setting("tls_1_3", "on"),
       ],
+      ruleDetails: [ok(dashboardRuleset(ZONE_NAMES[1], { enabled: false }))],
     }),
     makeDashboardZone(ZONE_NAMES[2], {
       dns: dnsRecords(ZONE_NAMES[2], {
@@ -140,6 +161,7 @@ function dashboardInventory() {
         setting("min_tls_version", "1.3"),
         setting("tls_1_3", "off"),
       ],
+      ruleDetails: [ok(dashboardRuleset(ZONE_NAMES[2]))],
     }),
   ])
   inventory.account.id = ACCOUNT_ID
