@@ -6,6 +6,7 @@ import test from "node:test"
 
 import {
   appendOperationActivity,
+  FleetIntentRevisionConflictError,
   finalizeOperationActivity,
   readOperationActivityDocument,
 } from "../src/activity-store.mjs"
@@ -141,6 +142,27 @@ test("operation activity persists alongside intent in one state file", async (co
     state.activity,
   )
   assert.equal((await fs.stat(stateFile)).mode & 0o777, 0o600)
+})
+
+test("operation activity append can bind the saved intent revision", async (context) => {
+  const { stateFile } = await fixture(context)
+  const state = await readFleetStateDocument(stateFile, "account-one")
+
+  await assert.rejects(
+    appendOperationActivity(
+      stateFile,
+      "account-one",
+      pendingActivity(),
+      { expectedIntentRevision: "different-intent-revision" },
+    ),
+    (error) => error instanceof FleetIntentRevisionConflictError
+      && error.actualRevision === state.intent.revision,
+  )
+
+  assert.deepEqual(
+    (await readOperationActivityDocument(stateFile, "account-one")).entries,
+    [],
+  )
 })
 
 test("concurrent operation starts merge without a stale document overwrite", async (context) => {

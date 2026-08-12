@@ -12,6 +12,15 @@ import {
   updateFleetStateDocument,
 } from "./state-store.mjs"
 
+export class FleetIntentRevisionConflictError extends Error {
+  constructor(expectedRevision, actualRevision) {
+    super("Fleet intent changed before operation activity could be started")
+    this.name = "FleetIntentRevisionConflictError"
+    this.actualRevision = actualRevision
+    this.expectedRevision = expectedRevision
+  }
+}
+
 function nextActivityDocument(entries) {
   const updatedAt = new Date().toISOString()
   const content = {
@@ -48,6 +57,7 @@ export async function appendOperationActivity(
   stateFile,
   accountId,
   entry,
+  options = {},
 ) {
   if (!isOperationActivityEntry(entry)
     || entry.status !== OPERATION_ACTIVITY_STATUS.PENDING) {
@@ -57,6 +67,13 @@ export async function appendOperationActivity(
     stateFile,
     accountId,
     (current) => {
+      if (options.expectedIntentRevision !== undefined
+        && current.intent.revision !== options.expectedIntentRevision) {
+        throw new FleetIntentRevisionConflictError(
+          options.expectedIntentRevision,
+          current.intent.revision,
+        )
+      }
       if (current.activity.entries.some((candidate) => candidate.id === entry.id)) {
         throw new TypeError(`Operation activity ${entry.id} already exists`)
       }

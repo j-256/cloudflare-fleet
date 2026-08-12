@@ -5,6 +5,9 @@
   "description": "A self-hosted control plane for auditing and aligning Cloudflare zones",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "bin": {
+    "cloudflare-fleet": "src/cli.mjs"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -19,6 +22,7 @@
     "docs:serve": "node scripts/serve-docs.mjs",
     "dev:hosted": "wrangler dev",
     "export:standalone": "node scripts/export-standalone.mjs",
+    "fleet": "node src/cli.mjs",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "screenshots:ci": "node scripts/capture-screenshots.mjs --output test-results/publication-screenshots",
     "state:import:hosted": "node scripts/import-hosted-state.mjs",
