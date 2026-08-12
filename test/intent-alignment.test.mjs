@@ -269,6 +269,68 @@ test("exact Email Routing intent edits API-managed rules", () => {
   )
 })
 
+test("exact Email Routing setting intent patches support_subaddress", () => {
+  const alpha = makeZone("alpha.example")
+  const bravo = makeZone("bravo.example", {
+    email: { support_subaddress: false },
+  })
+  const inventory = makeInventory([alpha, bravo])
+  const row = buildMatrix(inventory).rows.find((entry) => (
+    entry.category === "Email"
+      && entry.key === "settings:support_subaddress"
+  ))
+  const governed = evaluatedRow(
+    inventory,
+    row,
+    policyFor(row, observedExpected(row, alpha)),
+  )
+
+  const assessment = assessIntentAlignment(governed)
+  const plans = buildIntentAlignmentPlans(inventory, governed, assessment)
+
+  assert.equal(assessment.available, true)
+  assert.equal(
+    assessment.targets[0].kind,
+    INTENT_ALIGNMENT_TARGET_KIND.EDIT_EMAIL_SETTING,
+  )
+  assert.deepEqual(plans[0].operations, [{
+    body: { support_subaddress: true },
+    currentValue: { support_subaddress: false },
+    label: "Set Email Routing support_subaddress",
+    method: "PATCH",
+    path: "zones/zone-bravo.example/email/routing",
+  }])
+  assert.deepEqual(
+    intentAlignmentReadRequirement(governed).surfaceIds,
+    ["email"],
+  )
+})
+
+test("read-only Email Routing status intent names its blocker", () => {
+  const alpha = makeZone("alpha.example")
+  const bravo = makeZone("bravo.example", {
+    email: { status: "misconfigured" },
+  })
+  const inventory = makeInventory([alpha, bravo])
+  const row = buildMatrix(inventory).rows.find((entry) => (
+    entry.category === "Email" && entry.key === "settings:status"
+  ))
+  const governed = evaluatedRow(
+    inventory,
+    row,
+    policyFor(row, observedExpected(row, alpha)),
+  )
+
+  const assessment = assessIntentAlignment(governed)
+
+  assert.equal(assessment.available, false)
+  assert.equal(assessment.blockers.length, 1)
+  assert.equal(
+    assessment.blockers[0].reason,
+    "Cloudflare reports Email Routing status as read-only",
+  )
+})
+
 test("exact DNSSEC intent plans only the requested status", () => {
   const alpha = makeZone("alpha.example", {
     surfaces: {

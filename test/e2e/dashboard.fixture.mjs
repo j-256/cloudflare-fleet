@@ -37,6 +37,7 @@ const ACCOUNT_ID = "e2e-account"
 const API_PATH_PREFIX = "/client/v4/"
 const DNS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/dns_records$/
 const DNS_RECORD_PATH_PATTERN = /^zones\/([^/]+)\/dns_records\/([^/]+)$/
+const EMAIL_SETTINGS_PATH_PATTERN = /^zones\/([^/]+)\/email\/routing$/
 const PROJECT_DIR = fileURLToPath(new URL("../..", import.meta.url))
 const SETTINGS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/settings$/
 const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
@@ -176,6 +177,19 @@ export function dashboardInventory(options = {}) {
   return inventory
 }
 
+function emailIntentInventory() {
+  const inventory = dashboardInventory()
+  const zone = inventory.zones.find(
+    (entry) => entry.meta.name === ZONE_NAMES[1],
+  )
+  zone.surfaces.email.result = {
+    ...zone.surfaces.email.result,
+    status: "misconfigured",
+    support_subaddress: false,
+  }
+  return inventory
+}
+
 function denseRuleInventory() {
   const zones = Array.from({ length: DENSE_RULE_ZONE_COUNT }, (_, index) => {
     const ordinal = String(index + 1).padStart(2, "0")
@@ -224,6 +238,7 @@ function jsonResponse(status, payload) {
 function fakeCloudflareTransport(inventory) {
   const requests = []
   const dnsByZone = new Map()
+  const emailSettings = new Map()
   const failures = []
   const settings = new Map()
   let createdDnsRecord = 0
@@ -231,6 +246,10 @@ function fakeCloudflareTransport(inventory) {
     dnsByZone.set(
       zone.meta.id,
       structuredClone(zone.surfaces.dns.result),
+    )
+    emailSettings.set(
+      zone.meta.id,
+      structuredClone(zone.surfaces.email.result),
     )
     for (const entry of zone.surfaces.settings.result) {
       settings.set(`${zone.meta.id}:${entry.id}`, structuredClone(entry))
@@ -337,6 +356,37 @@ function fakeCloudflareTransport(inventory) {
       }
     }
 
+    const emailSettingsMatch = relativePath.match(
+      EMAIL_SETTINGS_PATH_PATTERN,
+    )
+    if (emailSettingsMatch) {
+      const zoneId = decodeURIComponent(emailSettingsMatch[1])
+      const current = emailSettings.get(zoneId)
+      if (!current) {
+        return jsonResponse(404, {
+          errors: [{ message: "Email Routing settings not found" }],
+          success: false,
+        })
+      }
+      if (method === "GET") {
+        return jsonResponse(200, {
+          result: structuredClone(current),
+          success: true,
+        })
+      }
+      if (method === "PATCH") {
+        const updated = {
+          ...current,
+          ...body,
+        }
+        emailSettings.set(zoneId, updated)
+        return jsonResponse(200, {
+          result: structuredClone(updated),
+          success: true,
+        })
+      }
+    }
+
     const settingsCollectionMatch = relativePath.match(
       SETTINGS_COLLECTION_PATH_PATTERN,
     )
@@ -394,6 +444,9 @@ function fakeCloudflareTransport(inventory) {
       return structuredClone(
         dnsByZone.get(`zone-${zoneName}`) || [],
       )
+    },
+    emailSettingValue(zoneName, settingId) {
+      return emailSettings.get(`zone-${zoneName}`)?.[settingId]
     },
     queueFailure(failure) {
       failures.push({
@@ -520,6 +573,7 @@ export async function createDashboardSession(options = {}) {
     root,
     sessionSecret: SESSION_SECRET,
     setSettingValue: transport.setSettingValue,
+    emailSettingValue: transport.emailSettingValue,
     settingValue: transport.settingValue,
     stateFile,
     url: broker.sessionUrl,
@@ -590,6 +644,11 @@ export const test = base.extend({
   denseDashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo, {
       inventory: denseRuleInventory(),
+    })
+  },
+  emailIntentDashboard: async ({ page }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, {
+      inventory: emailIntentInventory(),
     })
   },
   readOnlyDashboard: async ({ page }, use, testInfo) => {

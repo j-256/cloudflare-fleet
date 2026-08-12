@@ -29,6 +29,12 @@ export function matrixCategoryLabel(category) {
 
 export const EMAIL_ROUTING_ACTION_KIND = Object.freeze({
   RULE_EDIT: "email-routing-rule",
+  SETTING_EDIT: "email-routing-setting",
+})
+
+export const EMAIL_ROUTING_SETTING = Object.freeze({
+  SKIP_WIZARD: "skip_wizard",
+  SUPPORT_SUBADDRESS: "support_subaddress",
 })
 
 export const EMAIL_ROUTING_RULE_IDENTIFIER = Object.freeze({

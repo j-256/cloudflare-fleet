@@ -1824,7 +1824,18 @@ thead .facet-heading {
 
 .cell-display {
   display: block;
+  clear: both;
+  margin-top: 3px;
+}
+
+.cell-display.editable {
   font-weight: 600;
+}
+
+.cell-state {
+  display: block;
+  clear: both;
+  margin-top: 3px;
 }
 
 .txt-purpose-labels {
@@ -1986,6 +1997,7 @@ thead .facet-heading {
 
 .cell-actions {
   display: flex;
+  flex-wrap: wrap;
   clear: both;
   gap: 7px;
   align-items: center;
@@ -2011,6 +2023,19 @@ thead .facet-heading {
 .cell-action:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+.alignment-blocked-reason {
+  order: 100;
+  flex: 1 0 100%;
+  width: 100%;
+  margin: 2px 0 0;
+  padding-left: 6px;
+  border-left: 2px solid rgba(255, 107, 120, 0.58);
+  color: var(--danger);
+  font: 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .fill-hole {

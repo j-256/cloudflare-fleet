@@ -582,6 +582,7 @@ const intentPolicyRowByButton = new WeakMap()
 const valueComparisonRowByButton = new WeakMap()
 const activityEntryByButton = new WeakMap()
 let matrixRowElements = []
+let alignmentReasonSequence = 0
 
 const elements = {
   activityCount: document.querySelector("#activity-count"),
@@ -7347,6 +7348,12 @@ function renderIntentPolicies() {
       )
       alignmentButton.dataset.intentBlocked = String(!alignment.available)
       actions.append(alignmentButton)
+      if (!alignment.available) {
+        actions.append(alignmentBlockerDetail(
+          alignment,
+          alignmentButton,
+        ))
+      }
     }
     if (row) {
       actions.append(
@@ -8337,7 +8344,7 @@ function cellComparisonStatus(row, cell) {
   const status = matchesConsensus
     ? {
         className: MATRIX_COMPARISON_STATE.MATCH,
-        label: "Match",
+        label: "Consensus",
         title: "Matches the unique row consensus",
       }
     : hasConsensus
@@ -8453,10 +8460,28 @@ function applyIntentCellPresentation(td, row, zone) {
   return intentCell
 }
 
+function visibleAlignmentBlockerReason(alignment) {
+  if (alignment.blockers.length === 1) return alignment.blockers[0].reason
+  return alignment.reason
+}
+
+function alignmentBlockerDetail(alignment, control) {
+  alignmentReasonSequence += 1
+  const detail = createElement("small", {
+    className: "alignment-blocked-reason",
+    text: visibleAlignmentBlockerReason(alignment),
+  })
+  detail.dataset.alignmentBlockedReason = ""
+  detail.id = `alignment-blocked-reason-${alignmentReasonSequence}`
+  control.setAttribute("aria-describedby", detail.id)
+  return detail
+}
+
 function appendIntentCellAction(actions, row, zone, intentCell) {
   const actionable = intentCell?.status === FLEET_INTENT_CELL_STATUS.CONFLICT
     || intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
     || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT
+  let blockedDetail = null
   if (!readOnly && actionable) {
     const alignment = assessIntentAlignment(row, {
       zoneIds: [zone.meta.id],
@@ -8482,8 +8507,14 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
       intentAlignmentAction(row, { zoneIds: [zone.meta.id] }),
     )
     actions.append(alignmentButton)
+    if (!alignment.available) {
+      blockedDetail = alignmentBlockerDetail(alignment, alignmentButton)
+    }
   }
-  if (!intentMutationSupported()) return
+  if (!intentMutationSupported()) {
+    if (blockedDetail) actions.append(blockedDetail)
+    return
+  }
   if (intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
     || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT) {
     const button = createElement("button", {
@@ -8527,6 +8558,7 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
     })
     actions.append(button)
   }
+  if (blockedDetail) actions.append(blockedDetail)
 }
 
 function matrixCell(row, zone) {
@@ -8637,7 +8669,7 @@ function matrixCell(row, zone) {
   const structuredValue = cell.inspectionValue !== null
     && typeof cell.inspectionValue === "object"
   td.append(createElement("span", {
-    className: directlyEditable ? "cell-display" : "",
+    className: `cell-display${directlyEditable ? " editable" : ""}`,
     text: cell.display,
   }))
 
@@ -8912,6 +8944,12 @@ function renderMatrix() {
       alignmentButton.dataset.actionTitle = alignment.reason
       intentAlignmentByButton.set(alignmentButton, intentAlignmentAction(row))
       facetActions.append(alignmentButton)
+      if (!alignment.available) {
+        facetActions.append(alignmentBlockerDetail(
+          alignment,
+          alignmentButton,
+        ))
+      }
     }
     if (actionTypes.has("zone-setting")) {
       facetActions.append(createElement("small", { className: "capability-badge", text: "Edit settings" }))

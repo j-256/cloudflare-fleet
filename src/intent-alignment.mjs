@@ -1,5 +1,6 @@
 import {
   EMAIL_ROUTING_ACTION_KIND,
+  EMAIL_ROUTING_SETTING,
   HOLE_RESOLUTION_KIND,
   MATRIX_CATEGORY,
   RULESET_KIND,
@@ -25,6 +26,7 @@ import {
   buildDnsRecordEditPlan,
   buildDnssecStatusPlan,
   buildEmailRoutingRuleEditPlan,
+  buildEmailRoutingSettingPlan,
   buildRuleCopyPlans,
   buildRuleDeletePlan,
   buildRuleEditPlan,
@@ -42,7 +44,11 @@ const EMAIL_CATCH_ALL_KEY = "catch-all"
 const EMAIL_CATEGORY = "Email"
 const EMAIL_DNS_SPECIFICATION_CATEGORY = "Email DNS specification"
 const EMAIL_ROUTE_CATEGORY = "Email routes"
+const EMAIL_SETTING_KEY_PREFIX = "settings:"
 const ZONE_SETTING_CATEGORY = "Zone settings"
+const EMAIL_ROUTING_WRITABLE_SETTINGS = new Set(
+  Object.values(EMAIL_ROUTING_SETTING),
+)
 const RULE_CATEGORIES = new Set([
   MATRIX_CATEGORY.REDIRECTS,
   MATRIX_CATEGORY.RULESET_RULES,
@@ -58,6 +64,7 @@ export const INTENT_ALIGNMENT_TARGET_KIND = Object.freeze({
   DELETE_RULE: "delete-rule",
   EDIT_DNS_RECORDS: "edit-dns-records",
   EDIT_EMAIL_RULE: "edit-email-rule",
+  EDIT_EMAIL_SETTING: "edit-email-setting",
   EDIT_RULE: "edit-rule",
   EDIT_SETTING: "edit-setting",
   FILL_DNS_RECORDS: "fill-dns-records",
@@ -219,6 +226,37 @@ function fillTarget(row, cell, exact) {
   )
 }
 
+function emailRoutingSettingId(row) {
+  if (row.category !== EMAIL_CATEGORY
+    || !row.key.startsWith(EMAIL_SETTING_KEY_PREFIX)) return null
+  return row.key.slice(EMAIL_SETTING_KEY_PREFIX.length)
+}
+
+function emailRoutingSettingTarget(row, cell, exact) {
+  const settingId = emailRoutingSettingId(row)
+  if (!settingId) return null
+  if (!EMAIL_ROUTING_WRITABLE_SETTINGS.has(settingId)) {
+    return blocker(
+      cell,
+      settingId === "enabled"
+        ? "Email Routing enabled state requires the coupled Email alignment workflow"
+        : settingId === "status"
+          ? "Cloudflare reports Email Routing status as read-only"
+          : `Email Routing setting ${settingId} has no direct alignment adapter`,
+    )
+  }
+  if (typeof exact.value !== "boolean") {
+    return blocker(
+      cell,
+      `Exact Email Routing ${settingId} intent must be a boolean`,
+    )
+  }
+  return target(cell, INTENT_ALIGNMENT_TARGET_KIND.EDIT_EMAIL_SETTING, {
+    expected: exact,
+    settingId,
+  })
+}
+
 function editTarget(row, cell, currentCell, exact) {
   if (row.category === EMAIL_DNS_SPECIFICATION_CATEGORY) {
     return blocker(
@@ -235,6 +273,8 @@ function editTarget(row, cell, currentCell, exact) {
         })
       : blocker(cell, "Exact DNSSEC intent does not contain a writable requested status")
   }
+  const emailSetting = emailRoutingSettingTarget(row, cell, exact)
+  if (emailSetting) return emailSetting
   const action = currentCell?.action
   if (action?.type === "zone-setting" && row.category === ZONE_SETTING_CATEGORY) {
     return target(cell, INTENT_ALIGNMENT_TARGET_KIND.EDIT_SETTING, {
@@ -366,6 +406,12 @@ export function intentAlignmentReadRequirement(row) {
       surfaceIds: ["dns"],
     })
   }
+  if (emailRoutingSettingId(row)) {
+    return inventoryRead({
+      includeEmailAddresses: false,
+      surfaceIds: ["email"],
+    })
+  }
   if (row.category === EMAIL_ROUTE_CATEGORY) {
     return inventoryRead({
       includeEmailAddresses: false,
@@ -466,6 +512,17 @@ function targetPlans(targetDefinition, zonesById) {
       materializeValue(targetDefinition.expected.value, zone.meta.name),
     )
     return [buildEmailRoutingRuleEditPlan(zone, liveRule, desired, options)]
+  }
+  if (targetDefinition.kind === INTENT_ALIGNMENT_TARGET_KIND.EDIT_EMAIL_SETTING) {
+    const desired = materializeValue(
+      targetDefinition.expected.value,
+      zone.meta.name,
+    )
+    return [buildEmailRoutingSettingPlan(
+      zone,
+      targetDefinition.settingId,
+      desired,
+    )]
   }
   if (targetDefinition.kind === INTENT_ALIGNMENT_TARGET_KIND.EDIT_RULE) {
     const { rule } = requiredRule(zone, targetDefinition.action)

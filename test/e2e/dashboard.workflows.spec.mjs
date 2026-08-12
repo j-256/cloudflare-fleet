@@ -140,6 +140,120 @@ test("reviews and applies exact intent alignment from a drifting cell", async ({
   ))).toHaveLength(zoneNames.length)
 })
 
+test("aligns Email Routing settings and shows unsupported reasons", async ({ emailIntentDashboard }) => {
+  const {
+    emailSettingValue,
+    page,
+    requests,
+    zoneNames,
+  } = emailIntentDashboard
+
+  await page.locator("#category").selectOption("Email")
+  await page.getByPlaceholder("Search facets, values, or zones").fill(
+    "support_subaddress",
+  )
+  await page.getByRole("button", {
+    name: "Compare 2 values: Observed values for support_subaddress",
+  }).click()
+  let comparison = page.getByRole("dialog", { name: "support_subaddress" })
+  await comparison.getByRole("button", {
+    name: "Use as exact intent: Fleet consensus for support_subaddress",
+  }).click()
+  let policy = page.getByRole("dialog", { name: "Set facet intent" })
+  await policy.locator("#intent-policy-save").click()
+
+  const supportRow = page.locator(
+    '#matrix-body tr[data-facet-key="settings:support_subaddress"]',
+  )
+  const matchingCell = supportRow.locator(
+    `td[data-zone-id="zone-${zoneNames[0]}"]`,
+  )
+  await expect(matchingCell.locator(".cell-comparison-status")).toHaveText(
+    "Consensus",
+  )
+  await expect(matchingCell.locator(".cell-intent-status")).toHaveText(
+    "Intent match",
+  )
+  const verticalLayout = await matchingCell.evaluate((cell) => {
+    const statuses = [...cell.querySelectorAll(
+      ".cell-comparison-status, .cell-intent-status",
+    )].map((element) => element.getBoundingClientRect())
+    const value = cell.querySelector(".cell-display").getBoundingClientRect()
+    return {
+      statusBottom: Math.max(...statuses.map((status) => status.bottom)),
+      valueTop: value.top,
+    }
+  })
+  expect(verticalLayout.valueTop).toBeGreaterThanOrEqual(
+    verticalLayout.statusBottom,
+  )
+
+  await page.getByRole("button", {
+    name: `Align to intent: support_subaddress on ${zoneNames[1]}`,
+  }).click()
+  const confirmation = page.locator("#confirm-dialog")
+  await expect(confirmation).toContainText(
+    `zones/zone-${zoneNames[1]}/email/routing`,
+  )
+  await expect(confirmation).toContainText("support_subaddress")
+  await acceptCurrentWrite(page)
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "support_subaddress aligned with fleet intent and live verification passed",
+  )
+  await expect.poll(() => emailSettingValue(
+    zoneNames[1],
+    "support_subaddress",
+  )).toBe(true)
+  const emailReads = requests.filter((request) => (
+    request.method === "GET"
+      && /^zones\/[^/]+\/email\/routing$/.test(request.path)
+  ))
+  expect(new Set(emailReads.map((request) => request.path))).toEqual(new Set(
+    zoneNames.map((zoneName) => `zones/zone-${zoneName}/email/routing`),
+  ))
+  expect(requests.filter((request) => (
+    request.method === "PATCH"
+      && request.path === `zones/zone-${zoneNames[1]}/email/routing`
+      && request.body.support_subaddress === true
+      && Object.keys(request.body).length === 1
+  ))).toHaveLength(1)
+
+  await page.getByPlaceholder("Search facets, values, or zones").fill("status")
+  await page.getByRole("button", {
+    name: "Compare 2 values: Observed values for status",
+  }).click()
+  comparison = page.getByRole("dialog", { name: "status" })
+  await comparison.getByRole("button", {
+    name: "Use as exact intent: Fleet consensus for status",
+  }).click()
+  policy = page.getByRole("dialog", { name: "Set facet intent" })
+  await policy.locator("#intent-policy-save").click()
+
+  const statusRow = page.locator(
+    '#matrix-body tr[data-facet-key="settings:status"]',
+  )
+  await expect(statusRow.getByRole("button", {
+    name: "Alignment blocked (1): Align status with fleet intent",
+  })).toBeDisabled()
+  await expect(statusRow.locator(
+    ".facet-cell [data-alignment-blocked-reason]",
+  )).toHaveText("Cloudflare reports Email Routing status as read-only")
+  await expect(statusRow.locator(
+    `td[data-zone-id="zone-${zoneNames[1]}"] [data-alignment-blocked-reason]`,
+  )).toHaveText("Cloudflare reports Email Routing status as read-only")
+
+  await page.getByRole("button", { name: "Manage fleet intent" }).click()
+  const manager = page.getByRole("dialog", { name: "Fleet intent" })
+  const blockedPolicy = manager.locator("[data-intent-policy-card]").filter({
+    hasText: "Cloudflare reports Email Routing status as read-only",
+  })
+  await expect(blockedPolicy).toBeVisible()
+  await expect(blockedPolicy.getByRole("button", {
+    name: "Alignment blocked (1): status for All zones",
+  })).toBeDisabled()
+})
+
 test("confirms rules individually without exposing a parent ruleset facet", async ({ dashboard }) => {
   const { page, zoneNames } = dashboard
 

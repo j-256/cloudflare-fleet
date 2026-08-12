@@ -8,6 +8,7 @@ import {
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
   buildEmailRoutingRuleEditPlan,
+  buildEmailRoutingSettingPlan,
   buildRuleCreatePlan,
   buildRuleCopyPlans,
   buildRuleDeletePlan,
@@ -995,6 +996,40 @@ test("Email Routing rule editor strips server fields and plans a live PUT", () =
       source: "wrangler",
     }).reason,
     /Wrangler owns this route/,
+  )
+})
+
+test("Email Routing setting plans patch only the governed boolean", () => {
+  const zone = makeZone("alpha.example", {
+    email: {
+      skip_wizard: false,
+      support_subaddress: false,
+    },
+  })
+  const plan = buildEmailRoutingSettingPlan(
+    zone,
+    "support_subaddress",
+    true,
+  )
+
+  assert.deepEqual(plan.operations, [{
+    body: { support_subaddress: true },
+    currentValue: { support_subaddress: false },
+    label: "Set Email Routing support_subaddress",
+    method: "PATCH",
+    path: "zones/zone-alpha.example/email/routing",
+  }])
+  assert.deepEqual(
+    buildEmailRoutingSettingPlan(zone, "support_subaddress", false).operations,
+    [],
+  )
+  assert.throws(
+    () => buildEmailRoutingSettingPlan(zone, "status", true),
+    /not directly writable/,
+  )
+  assert.throws(
+    () => buildEmailRoutingSettingPlan(zone, "skip_wizard", "true"),
+    /must be a boolean/,
   )
 })
 

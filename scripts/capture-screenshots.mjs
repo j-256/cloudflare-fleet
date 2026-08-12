@@ -75,6 +75,13 @@ export async function capturePublicationScreenshots(options = {}) {
   let session
   try {
     const inventory = dashboardInventory({ loadedAt: FIXED_TIME })
+    const statusDriftZone = inventory.zones.find(
+      (zone) => zone.meta.name === "bravo.example",
+    )
+    statusDriftZone.surfaces.email.result = {
+      ...statusDriftZone.surfaces.email.result,
+      status: "misconfigured",
+    }
     session = await createDashboardSession({ inventory })
     browser = await chromium.launch({ headless: true })
     const context = await browser.newContext({
@@ -137,6 +144,30 @@ export async function capturePublicationScreenshots(options = {}) {
     ))
     await alignmentReview.getByRole("button", { name: "Cancel" }).click()
 
+    await overview.locator("#category").selectOption("Email")
+    await overview.getByPlaceholder("Search facets, values, or zones").fill(
+      "status",
+    )
+    await overview.getByRole("button", {
+      name: "Compare 2 values: Observed values for status",
+    }).click()
+    const statusComparison = overview.getByRole("dialog", { name: "status" })
+    await statusComparison.getByRole("button", {
+      name: "Use as exact intent: Fleet consensus for status",
+    }).click()
+    const statusPolicy = overview.getByRole("dialog", { name: "Set facet intent" })
+    await statusPolicy.locator("#intent-policy-save").click()
+    await overview.locator("#toast-dismiss").click()
+    screenshots.push(await capture(
+      overview,
+      outputDirectory,
+      "alignment-blocked.png",
+    ))
+
+    await overview.locator("#category").selectOption("")
+    await overview.getByPlaceholder("Search facets, values, or zones").fill(
+      "always_use_https",
+    )
     await overview.getByRole("button", {
       name: "Edit always_use_https on bravo.example",
     }).click()

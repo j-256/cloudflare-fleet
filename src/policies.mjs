@@ -3,6 +3,7 @@ import {
   EMAIL_POLICY_COMPONENT,
   EMAIL_ROUTING_ACTION_KIND,
   EMAIL_ROUTING_RULE_IDENTIFIER,
+  EMAIL_ROUTING_SETTING,
   FLEET_WAF_RULE_DESCRIPTIONS,
   HTTP_METHOD,
   POLICY_EXCEPTION_STATUS,
@@ -38,6 +39,9 @@ const EMAIL_ROUTING_RULE_FIELDS = Object.freeze([
 ])
 const EMAIL_ROUTING_CATCH_ALL_FIELDS = Object.freeze(
   EMAIL_ROUTING_RULE_FIELDS.filter((field) => field !== "priority"),
+)
+const EMAIL_ROUTING_WRITABLE_SETTINGS = new Set(
+  Object.values(EMAIL_ROUTING_SETTING),
 )
 const RULE_COPY_DEPENDENCY_KEYS = new Set([
   "id",
@@ -1561,6 +1565,45 @@ export function buildEmailRoutingRuleEditPlan(
     summary: operations.length === 0
       ? `${label} already matches the desired definition`
       : `Update ${label} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
+export function buildEmailRoutingSettingPlan(zone, settingId, value) {
+  if (!EMAIL_ROUTING_WRITABLE_SETTINGS.has(settingId)) {
+    throw new Error(`Email Routing setting ${settingId} is not directly writable`)
+  }
+  if (typeof value !== "boolean") {
+    throw new TypeError(`Email Routing setting ${settingId} must be a boolean`)
+  }
+  const settings = resultFor(zone, "email")
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    throw new Error(`Email Routing settings are unavailable on ${zone.meta.name}`)
+  }
+  const current = settings[settingId]
+  if (typeof current !== "boolean") {
+    throw new Error(`Email Routing setting ${settingId} is unavailable on ${zone.meta.name}`)
+  }
+  const operations = current === value
+    ? []
+    : [
+        {
+          body: { [settingId]: value },
+          currentValue: { [settingId]: current },
+          label: `Set Email Routing ${settingId}`,
+          method: HTTP_METHOD.PATCH,
+          path: `zones/${zone.meta.id}/email/routing`,
+        },
+      ]
+
+  return {
+    id: `email-routing-setting:${zone.meta.id}:${settingId}`,
+    kind: EMAIL_ROUTING_ACTION_KIND.SETTING_EDIT,
+    operations,
+    summary: operations.length === 0
+      ? `${settingId} already matches the desired value`
+      : `Update Email Routing ${settingId} on ${zone.meta.name}`,
     zoneId: zone.meta.id,
     zoneName: zone.meta.name,
   }

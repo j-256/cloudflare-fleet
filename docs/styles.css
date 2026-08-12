@@ -406,6 +406,10 @@ td {
   font-size: 0.8rem;
 }
 
+.alignment-blocker-frame {
+  margin-top: 1rem;
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
