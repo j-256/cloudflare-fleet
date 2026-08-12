@@ -121,6 +121,17 @@
             <button class="button button-primary" id="show-supported-changes" type="button">Browse matrix change paths</button>
           </article>
         </div>
+        <nav class="operational-review" aria-label="Operational review">
+          <div class="operational-review-copy">
+            <p class="task-kind">Operational review</p>
+            <strong>Inspect read health and recorded changes</strong>
+            <span>These review surfaces do not change Cloudflare.</span>
+          </div>
+          <div class="operational-review-actions">
+            <button class="button button-quiet" id="review-coverage-issues" type="button" disabled><span id="review-coverage-count">0</span> unexpected read issues</button>
+            <button class="button button-quiet" id="review-operation-activity" type="button" aria-haspopup="dialog"><span id="review-operation-count">0</span> recorded operations</button>
+          </div>
+        </nav>
       </section>
 
       <section class="workflow-section" aria-labelledby="workflow-heading">
@@ -433,7 +444,10 @@
             <p id="value-comparison-difference-summary"></p>
           </div>
         </div>
-        <div class="value-comparison-table-wrap" id="value-comparison-differences"></div>
+        <details class="value-comparison-differences-disclosure" id="value-comparison-differences-disclosure">
+          <summary>Review field-by-field table</summary>
+          <div class="value-comparison-table-wrap" id="value-comparison-differences"></div>
+        </details>
       </section>
       <details class="value-comparison-complete" id="value-comparison-complete">
         <summary>Show complete friendly values</summary>
@@ -1032,7 +1046,7 @@
       </details>
       <label class="confirm-check">
         <input type="checkbox" id="confirm-check">
-        <span>I reviewed the targets and API writes above</span>
+        <span>I reviewed the targets, value changes, and API writes above</span>
       </label>
       <div class="dialog-actions">
         <button class="button button-quiet" value="cancel">Cancel</button>

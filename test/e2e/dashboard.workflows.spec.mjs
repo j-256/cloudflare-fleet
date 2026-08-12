@@ -7,7 +7,7 @@ async function acceptCurrentWrite(page) {
   const confirmation = page.locator("#confirm-dialog")
   await expect(confirmation).toBeVisible()
   await confirmation.getByRole("checkbox", {
-    name: "I reviewed the targets and API writes above",
+    name: "I reviewed the targets, value changes, and API writes above",
   }).check()
   await confirmation.getByRole("button", { name: "Apply and verify" }).click()
 }
@@ -267,6 +267,12 @@ test("fills a missing DNS cell through live validation and guarded undo", async 
   const confirmation = page.locator("#confirm-dialog")
   await expect(confirmation).toContainText(`Fill CNAME docs on ${targetZone}`)
   await expect(confirmation).toContainText("POST")
+  const change = confirmation.locator(".operation-change")
+  await expect(change.getByText("Record", { exact: true })).toBeVisible()
+  await expect(change.getByText("missing", { exact: true })).toBeVisible()
+  await expect(change).toContainText(
+    "docs-primary.example.net",
+  )
   await acceptCurrentWrite(page)
 
   await expect(page.locator("#toast-message")).toHaveText(
@@ -282,6 +288,7 @@ test("fills a missing DNS cell through live validation and guarded undo", async 
   const activity = page.getByRole("dialog", { name: "Operation history" })
   await activity.getByRole("button", { name: "Review guarded undo" }).click()
   await expect(confirmation).toContainText("DELETE")
+  await expect(change.getByText("Removed", { exact: true })).toBeVisible()
   await acceptCurrentWrite(page)
 
   await expect(page.locator("#toast-message")).toHaveText(

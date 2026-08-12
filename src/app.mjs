@@ -24,6 +24,7 @@ import {
   EMAIL_ROUTING_RULE_IDENTIFIER,
   FLEET_ACTION_KIND,
   HOLE_RESOLUTION_KIND,
+  HTTP_METHOD,
   INVENTORY_COVERAGE_KIND,
   MATRIX_CATEGORY,
   matrixCategoryLabel,
@@ -318,6 +319,7 @@ const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
 ])
 const VALUE_COMPARISON_CONTEXT_LENGTH = 84
 const VALUE_COMPARISON_ELLIPSIS = "..."
+const VALUE_COMPARISON_EXPANDED_LIMIT = 4
 const MATRIX_COMPARISON_STATE = Object.freeze({
   MATCH: "match",
   NO_CONSENSUS: "no-consensus",
@@ -384,6 +386,7 @@ const INTENT_WORKFLOW_HISTORY_MODE = Object.freeze({
 })
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
+const OPERATION_FRIENDLY_VALUE_LIMIT = 480
 const EDITABLE_OBJECT_KEY_FIELDS = new Set([
   "headers",
 ])
@@ -810,6 +813,10 @@ const elements = {
   reviewIntentDrift: document.querySelector("#review-intent-drift"),
   reviewIntentCount: document.querySelector("#review-intent-count"),
   reviewIntentLabel: document.querySelector("#review-intent-label"),
+  reviewOperationActivity: document.querySelector("#review-operation-activity"),
+  reviewOperationCount: document.querySelector("#review-operation-count"),
+  reviewCoverageCount: document.querySelector("#review-coverage-count"),
+  reviewCoverageIssues: document.querySelector("#review-coverage-issues"),
   reviewUngovernedDifferences: document.querySelector("#review-ungoverned-differences"),
   reviewUngovernedCount: document.querySelector("#review-ungoverned-count"),
   renameCurrent: document.querySelector("#rename-current"),
@@ -874,6 +881,7 @@ const elements = {
   valueComparisonComplete: document.querySelector("#value-comparison-complete"),
   valueComparisonCompleteGrid: document.querySelector("#value-comparison-complete-grid"),
   valueComparisonDifferences: document.querySelector("#value-comparison-differences"),
+  valueComparisonDifferencesDisclosure: document.querySelector("#value-comparison-differences-disclosure"),
   valueComparisonDifferenceSummary: document.querySelector("#value-comparison-difference-summary"),
   valueComparisonDialog: document.querySelector("#value-comparison-dialog"),
   valueComparisonGroups: document.querySelector("#value-comparison-groups"),
@@ -2757,11 +2765,10 @@ function valueComparisonTextDiff(reference, candidate, options = {}) {
   const segments = compactValueDiffSegments(diffValueText(reference, candidate))
   for (const segment of segments) {
     if (options.reference && segment.kind === VALUE_TEXT_DIFF_KIND.INSERT) continue
+    if (!options.reference && segment.kind === VALUE_TEXT_DIFF_KIND.DELETE) continue
     let node
     if (options.reference && segment.kind === VALUE_TEXT_DIFF_KIND.DELETE) {
       node = document.createElement("mark")
-    } else if (segment.kind === VALUE_TEXT_DIFF_KIND.DELETE) {
-      node = document.createElement("del")
     } else if (segment.kind === VALUE_TEXT_DIFF_KIND.INSERT) {
       node = document.createElement("ins")
     } else {
@@ -2934,6 +2941,8 @@ function renderValueComparison() {
   elements.valueComparisonDifferences.replaceChildren(
     valueComparisonTable(comparison),
   )
+  elements.valueComparisonDifferencesDisclosure.open = comparison.variantCount
+    <= VALUE_COMPARISON_EXPANDED_LIMIT
   elements.valueComparisonComplete.open = false
   elements.valueComparisonCompleteGrid.replaceChildren(
     ...comparison.variants.map(
@@ -9071,6 +9080,14 @@ function renderCoverage() {
 
   const expectedCurrent = evaluation.expectedIssues.length
   elements.coverageUnexpectedCount.textContent = `${evaluation.unexpectedIssues.length} current`
+  elements.reviewCoverageCount.textContent = String(evaluation.unexpectedIssues.length)
+  elements.reviewCoverageIssues.disabled = evaluation.unexpectedIssues.length === 0
+  elements.reviewCoverageIssues.setAttribute(
+    "aria-label",
+    evaluation.unexpectedIssues.length === 0
+      ? "No unexpected API read issues"
+      : `Review ${evaluation.unexpectedIssues.length} unexpected API read issue${evaluation.unexpectedIssues.length === 1 ? "" : "s"}`,
+  )
   const expectedCounts = [`${expectedCurrent} current`]
   if (evaluation.summary.changed > 0) {
     expectedCounts.push(`${evaluation.summary.changed} review`)
@@ -9567,6 +9584,7 @@ function activityZoneNames(entry) {
 function updateActivityButton() {
   const count = state.activity.entries.length
   elements.activityCount.textContent = String(count)
+  elements.reviewOperationCount.textContent = String(count)
   const activityLabel = `Activity ${count}`
   elements.showActivity.setAttribute(
     "aria-label",
@@ -9575,6 +9593,104 @@ function updateActivityButton() {
       `Operation history, ${count === 0 ? "no" : count} entr${count === 1 ? "y" : "ies"}`,
     ),
   )
+  elements.reviewOperationActivity.setAttribute(
+    "aria-label",
+    `Review operation activity, ${count} recorded operation${count === 1 ? "" : "s"}`,
+  )
+}
+
+function operationDesiredValue(operation) {
+  if (operation.method === HTTP_METHOD.DELETE) {
+    return {
+      absent: true,
+      label: "Removed",
+    }
+  }
+  if (!Object.hasOwn(operation, "body")) return null
+  const currentValue = operation.currentValue
+  if (operation.body
+    && typeof operation.body === "object"
+    && Object.hasOwn(operation.body, "value")
+    && (currentValue === null || typeof currentValue !== "object")) {
+    return {
+      absent: false,
+      value: operation.body.value,
+    }
+  }
+  return {
+    absent: false,
+    value: operation.body,
+  }
+}
+
+function operationChangeValue(label, presentation) {
+  const value = createElement("div", { className: "operation-change-value" })
+  value.append(createElement("span", {
+    className: "operation-change-label",
+    text: label,
+  }))
+  const content = createElement("div", { className: "operation-change-content" })
+  if (presentation.absent) {
+    content.append(createElement("span", {
+      className: "operation-change-absence",
+      text: presentation.label,
+    }))
+  } else {
+    const serialized = formattedJson(presentation.value)
+    if (serialized.length > OPERATION_FRIENDLY_VALUE_LIMIT) {
+      const size = Array.isArray(presentation.value)
+        ? `${presentation.value.length} items`
+        : presentation.value && typeof presentation.value === "object"
+          ? `${Object.keys(presentation.value).length} fields`
+          : `${String(presentation.value).length} characters`
+      content.append(createElement("span", {
+        className: "operation-change-summary",
+        text: `Structured value with ${size}; exact fields remain in Request payloads`,
+      }))
+    } else {
+      content.append(structuredValueElement(presentation.value))
+    }
+  }
+  value.append(content)
+  return value
+}
+
+function operationChangeElement(operation) {
+  const desired = operationDesiredValue(operation)
+  const hasCurrent = Object.hasOwn(operation, "currentValue")
+  if (!desired || (!hasCurrent && operation.method !== HTTP_METHOD.POST)) return null
+  const change = createElement("div", { className: "operation-change" })
+  change.setAttribute("role", "group")
+  change.setAttribute("aria-label", "Value change")
+  change.append(
+    operationChangeValue("Before", hasCurrent
+      ? { absent: false, value: operation.currentValue }
+      : { absent: true, label: "Missing" }),
+    createElement("span", {
+      className: "operation-change-arrow",
+      text: "to",
+    }),
+    operationChangeValue("After", desired),
+  )
+  return change
+}
+
+function operationChangeList(entry) {
+  const changes = activityOperations(entry).flatMap(({ operation, plan }) => {
+    const change = operationChangeElement(operation)
+    if (!change) return []
+    const item = createElement("section", { className: "activity-operation-change" })
+    item.append(
+      createElement("strong", { text: `${plan.zoneName}: ${operation.label}` }),
+      change,
+    )
+    return [item]
+  })
+  if (changes.length === 0) return null
+  const list = createElement("div", { className: "activity-operation-changes" })
+  list.setAttribute("aria-label", "Recorded value changes")
+  list.append(...changes)
+  return list
 }
 
 function activityOperationList(entry) {
@@ -9746,6 +9862,9 @@ function renderActivityEntry(entry) {
     }))
   }
   article.append(summary)
+
+  const changes = operationChangeList(entry)
+  if (changes) article.append(changes)
 
   if (entry.error) {
     article.append(createElement("p", {
@@ -9995,6 +10114,8 @@ function confirmPlans(title, planSet, options = {}) {
       createElement("span", { text: operation.path }),
       createElement("small", { text: `${operation.zone}: ${operation.label}` }),
     )
+    const change = operationChangeElement(operation)
+    if (change) item.append(change)
     const rules = operationRuleDefinitions(operation)
     if (rules.length > 0) {
       const summary = createElement("div", { className: "operation-rule-summary" })
@@ -12692,6 +12813,17 @@ elements.reviewUngovernedDifferences.addEventListener("click", showUngovernedDif
 elements.showSupportedChanges.addEventListener("click", showSupportedChanges)
 elements.showDnssecWorkflow.addEventListener("click", showDnssecWorkflow)
 elements.showActivity.addEventListener("click", openOperationActivity)
+elements.reviewOperationActivity.addEventListener("click", openOperationActivity)
+elements.reviewCoverageIssues.addEventListener("click", () => {
+  if (state.coverageEvaluation?.unexpectedIssues.length === 0) return
+  state.coverageExpanded[COVERAGE_SECTION.UNEXPECTED] = true
+  syncCoverageVisibility()
+  elements.coverageUnexpectedToggle.scrollIntoView({
+    behavior: "smooth",
+    block: "start",
+  })
+  elements.coverageUnexpectedToggle.focus({ preventScroll: true })
+})
 elements.activityRefresh.addEventListener("click", () => loadOperationActivity())
 elements.activityFilter.addEventListener("change", renderOperationActivity)
 elements.activityList.addEventListener("click", (event) => {

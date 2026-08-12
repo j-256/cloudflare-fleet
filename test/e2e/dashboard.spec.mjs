@@ -127,7 +127,7 @@ test("applies and verifies a setting change through the reviewed write flow", as
     `zones/zone-${targetZone}/settings/always_use_https`,
   )
   await confirmation.getByRole("checkbox", {
-    name: "I reviewed the targets and API writes above",
+    name: "I reviewed the targets, value changes, and API writes above",
   }).check()
   await confirmation.getByRole("button", { name: "Apply and verify" }).click()
 

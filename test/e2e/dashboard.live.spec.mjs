@@ -11,6 +11,8 @@ import {
 import { HTTP_METHOD } from "../../src/constants.mjs"
 
 const CLOUDFLARE_PROXY_PATH = "/api/cloudflare/"
+const LARGE_COMPARISON_MINIMUM = 5
+const MAX_VALUE_GROUP_PANES = 3
 const LIVE_READ_ONLY_ENABLED = process.env.CLOUDFLARE_FLEET_RUN_LIVE_READ_ONLY
   === "1"
 const PROJECT_STATE_FILE = fileURLToPath(
@@ -42,6 +44,7 @@ test("loads the real account through a GET-only dashboard session", async ({ pag
   const browserCloudflareRequests = []
   const browserErrors = []
   const upstreamRequests = []
+  let ruleComparisonLayout = null
   page.on("console", (message) => {
     if (message.type() === "error") browserErrors.push(message.text())
   })
@@ -119,6 +122,45 @@ test("loads the real account through a GET-only dashboard session", async ({ pag
     }).click()
     await expect(equivalenceOpener).toBeFocused()
 
+    const ruleCategory = page.locator('#category option[value="Ruleset rules"]')
+    if (await ruleCategory.count() > 0) {
+      await page.locator("#category").selectOption("Ruleset rules")
+    }
+    const ruleComparisonOpener = page.locator(
+      '#matrix-body tr[data-category="Ruleset rules"]:not(.hidden-row) .compare-values',
+    ).first()
+    if (await ruleComparisonOpener.count() > 0) {
+      await ruleComparisonOpener.click()
+      const comparison = page.locator("#value-comparison-dialog")
+      await expect(comparison).toBeVisible()
+      const groups = comparison.locator(".value-comparison-group")
+      const valueCount = await groups.count()
+      const fieldTableExpanded = await comparison.locator(
+        "#value-comparison-differences-disclosure",
+      ).getAttribute("open") !== null
+      const groupPanes = await groups.first().evaluate((group) => (
+        group.parentElement.getBoundingClientRect().height / innerHeight
+      ))
+      ruleComparisonLayout = {
+        fieldTableExpanded,
+        groupPanes,
+        valueCount,
+      }
+      if (valueCount >= LARGE_COMPARISON_MINIMUM) {
+        expect(fieldTableExpanded).toBe(false)
+        expect(groupPanes).toBeLessThan(MAX_VALUE_GROUP_PANES)
+      }
+      const comparisonScreenshot = testInfo.outputPath(
+        "live-rule-comparison.png",
+      )
+      await page.screenshot({ path: comparisonScreenshot })
+      await testInfo.attach("live-rule-comparison", {
+        contentType: "image/png",
+        path: comparisonScreenshot,
+      })
+      await comparison.getByRole("button", { name: "Done" }).click()
+    }
+
     await page.getByRole("button", { name: "View fleet intent" }).click()
     const intent = page.getByRole("dialog", { name: "Fleet intent" })
     await expect(intent).toContainText(
@@ -156,6 +198,7 @@ test("loads the real account through a GET-only dashboard session", async ({ pag
       matrixRows: matrixRowCount,
       upstreamRequests: upstreamRequests.length,
       upstreamStatuses: statusSummary(upstreamRequests),
+      ruleComparison: ruleComparisonLayout,
       zones: zoneCount,
     }, null, 2), { mode: 0o600 })
     await testInfo.attach("live-read-only-summary", {

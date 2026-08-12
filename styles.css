@@ -753,6 +753,47 @@ dialog h2 {
   margin-top: auto;
 }
 
+.operational-review {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(10, 17, 24, 0.58);
+}
+
+.operational-review-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.operational-review-copy .task-kind {
+  margin: 0;
+  color: var(--blue);
+}
+
+.operational-review-copy strong {
+  font-size: 12px;
+}
+
+.operational-review-copy > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.operational-review-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.operational-review-actions .button {
+  white-space: nowrap;
+}
+
 .review-task-actions {
   display: grid;
   gap: 7px;
@@ -3057,6 +3098,26 @@ dialog form {
   align-items: center;
 }
 
+.activity-operation-changes {
+  display: grid;
+  gap: 7px;
+}
+
+.activity-operation-change {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(43, 60, 75, 0.72);
+  border-radius: 8px;
+  background: rgba(8, 15, 22, 0.48);
+}
+
+.activity-operation-change > strong {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .activity-chip {
   padding: 2px 6px;
   border: 1px solid rgba(43, 60, 75, 0.82);
@@ -4621,6 +4682,23 @@ dialog .intent-policy-value-option {
   background: #0d161f;
 }
 
+.value-comparison-differences-disclosure {
+  min-width: 0;
+}
+
+.value-comparison-differences-disclosure > summary {
+  width: fit-content;
+  padding: 3px 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.value-comparison-differences-disclosure[open] > summary {
+  margin-bottom: 7px;
+  color: var(--ink);
+}
+
 .value-comparison-table {
   width: max-content;
   min-width: 100%;
@@ -5453,6 +5531,67 @@ dialog details > summary {
   color: var(--muted);
 }
 
+.operation-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.operation > .operation-change {
+  grid-column: 1 / -1;
+  margin-top: 7px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.operation-change-value {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(43, 60, 75, 0.78);
+  border-radius: 7px;
+  background: rgba(20, 31, 42, 0.72);
+}
+
+.operation-change-label {
+  color: var(--muted);
+  font: 700 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operation-change-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.operation-change-content code {
+  color: var(--ink);
+}
+
+.operation-change-arrow {
+  align-self: center;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.operation-change-absence {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.operation-change-summary {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
 .operation .operation-rule-summary {
   grid-column: 1 / -1;
   margin-top: 7px;
@@ -5711,6 +5850,20 @@ dialog details > summary {
     grid-template-columns: 1fr;
   }
 
+  .operational-review {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .operational-review-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .operational-review-actions .button {
+    white-space: normal;
+  }
+
   .workflow-targeting p {
     grid-column: 1;
     grid-row: auto;
@@ -5900,6 +6053,14 @@ dialog details > summary {
 
   .activity-detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .operation-change {
+    grid-template-columns: 1fr;
+  }
+
+  .operation-change-arrow {
+    justify-self: center;
   }
 
   #category,

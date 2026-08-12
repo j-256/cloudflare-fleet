@@ -25,6 +25,7 @@ import {
 } from "../../src/session-broker.mjs"
 import {
   makeInventory,
+  makeRule,
   makeZone,
   ok,
 } from "../fixtures.mjs"
@@ -37,6 +38,8 @@ const PROJECT_DIR = fileURLToPath(new URL("../..", import.meta.url))
 const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
 const SESSION_SECRET = "e2e-session-secret"
 const ZONES_PATH = "zones"
+const DENSE_RULE_ZONE_COUNT = 12
+const DENSE_RULE_PHASE = "http_request_firewall_custom"
 
 const ZONE_NAMES = Object.freeze([
   "alpha.example",
@@ -164,6 +167,42 @@ function dashboardInventory() {
       ruleDetails: [ok(dashboardRuleset(ZONE_NAMES[2]))],
     }),
   ])
+  inventory.account.id = ACCOUNT_ID
+  inventory.loadedAt = new Date().toISOString()
+  return inventory
+}
+
+function denseRuleInventory() {
+  const zones = Array.from({ length: DENSE_RULE_ZONE_COUNT }, (_, index) => {
+    const ordinal = String(index + 1).padStart(2, "0")
+    const name = `review-${ordinal}.example`
+    const ruleset = {
+      description: "",
+      id: `dense-ruleset-${ordinal}`,
+      kind: "zone",
+      name: "default",
+      phase: DENSE_RULE_PHASE,
+      rules: [makeRule("Protect service", {
+        expression: `(http.request.uri.path contains "/variant-${ordinal}")`,
+        ref: "protect-service",
+      })],
+      version: "1",
+    }
+    return makeDashboardZone(name, {
+      ruleDetails: [{
+        ...ok(ruleset),
+        phase: DENSE_RULE_PHASE,
+      }],
+      rulesets: [{
+        id: ruleset.id,
+        kind: ruleset.kind,
+        name: ruleset.name,
+        phase: ruleset.phase,
+        version: ruleset.version,
+      }],
+    })
+  })
+  const inventory = makeInventory(zones)
   inventory.account.id = ACCOUNT_ID
   inventory.loadedAt = new Date().toISOString()
   return inventory
@@ -455,7 +494,9 @@ export async function createDashboardSession(options = {}) {
     settingValue: transport.settingValue,
     stateFile,
     url: broker.sessionUrl,
-    zoneNames: ZONE_NAMES,
+    zoneNames: inventory
+      ? inventory.zones.map((zone) => zone.meta.name)
+      : ZONE_NAMES,
   }
 }
 
@@ -516,6 +557,11 @@ async function useDashboard(page, use, testInfo, options = {}) {
 export const test = base.extend({
   dashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo)
+  },
+  denseDashboard: async ({ page }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, {
+      inventory: denseRuleInventory(),
+    })
   },
   readOnlyDashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo, { readOnly: true })
