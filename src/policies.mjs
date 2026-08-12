@@ -1497,6 +1497,27 @@ export function buildDnsRecordEditPlan(zone, liveRecord, desiredDefinition) {
   }
 }
 
+export function buildDnsRecordDeletePlan(zone, liveRecord) {
+  const capability = dnsRecordEditCapability(liveRecord)
+  if (!capability.editable) throw new Error(capability.reason)
+  const current = editableDnsRecordPayload(liveRecord)
+  return {
+    id: `dns-record-delete:${zone.meta.id}:${liveRecord.id}`,
+    kind: "dns-record-delete",
+    operations: [
+      {
+        currentValue: current,
+        label: `Delete ${liveRecord.type} ${liveRecord.name}`,
+        method: HTTP_METHOD.DELETE,
+        path: `zones/${zone.meta.id}/dns_records/${liveRecord.id}`,
+      },
+    ],
+    summary: `Delete ${liveRecord.type} ${liveRecord.name} on ${zone.meta.name}`,
+    zoneId: zone.meta.id,
+    zoneName: zone.meta.name,
+  }
+}
+
 export function buildEmailRoutingRuleEditPlan(
   zone,
   liveRule,

@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   buildDnssecStatusPlan,
   buildDnsRecordCopyPlan,
+  buildDnsRecordDeletePlan,
   buildDnsRecordEditPlan,
   buildEmailAlignmentPlan,
   buildEmailRoutingRuleEditPlan,
@@ -812,6 +813,19 @@ test("DNS record editor exposes only writable fields and plans a live update", (
       path: "zones/zone-alpha.example/dns_records/record-id",
     },
   ])
+})
+
+test("DNS record deletion preserves a reversible live definition", () => {
+  const zone = makeZone("alpha.example")
+  const record = zone.surfaces.dns.result[0]
+  const plan = buildDnsRecordDeletePlan(zone, record)
+
+  assert.deepEqual(plan.operations, [{
+    currentValue: editableDnsRecordPayload(record),
+    label: `Delete ${record.type} ${record.name}`,
+    method: "DELETE",
+    path: `zones/${zone.meta.id}/dns_records/${record.id}`,
+  }])
 })
 
 test("DNS record editor returns a no-op and rejects endpoint-foreign fields", () => {
