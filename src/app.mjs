@@ -12,6 +12,10 @@ import {
   FleetIntentApiConflictError,
 } from "./api.mjs"
 import {
+  ALIGNMENT_PREPARATION_STATUS,
+  prepareIntentAlignment,
+} from "./alignment-service.mjs"
+import {
   CACHE_MAX_AGE_HOURS,
   CACHE_RECORD_GLOBAL,
   CACHE_SNAPSHOT_GLOBAL,
@@ -34,7 +38,6 @@ import {
   RULESET_KIND,
   SESSION_TITLE,
   STATIC_LIMITATIONS,
-  SURFACES,
 } from "./constants.mjs"
 import {
   configuredEmailPolicyExceptions,
@@ -114,8 +117,6 @@ import {
 } from "./intent-adoption.mjs"
 import {
   assessIntentAlignment,
-  buildIntentAlignmentPlans,
-  intentAlignmentReadRequirement,
 } from "./intent-alignment.mjs"
 import {
   defaultFleetIntentPolicyConstraints,
@@ -161,12 +162,8 @@ import {
   MATRIX_NAVIGATION_KEYS,
 } from "./matrix-navigation.mjs"
 import {
-  buildInversePlans,
   compareVerificationGuards,
-  completeOperationActivity,
   createEmptyOperationActivityDocument,
-  createPendingOperationActivity,
-  createVerificationGuards,
   isOperationActivityDocument,
   OPERATION_ACTIVITY_STATUS,
 } from "./operation-history.mjs"
@@ -219,7 +216,6 @@ import {
   editableRulePayload,
   emailIssues,
   evaluateFleetEmailPolicyExceptions,
-  executePlans,
   wafIssues,
 } from "./policies.mjs"
 import {
@@ -275,11 +271,11 @@ import {
   VALUE_TEXT_DIFF_KIND,
 } from "./value-comparison.mjs"
 import {
-  assertWriteVerificationResponse,
+  readWriteVerificationTarget,
   verificationTargetsForPlans,
-  verificationTargetsForResults,
   WRITE_VERIFICATION_KIND,
 } from "./write-verification.mjs"
+import { executeVerifiedPlanSet } from "./write-executor.mjs"
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
@@ -502,7 +498,6 @@ const REDIRECT_PRIMARY_RULE_FIELDS = new Set([
   "expression",
   "ref",
 ])
-const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]))
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 const compactFilterMedia = window.matchMedia(COMPACT_FILTER_MEDIA_QUERY)
 const compactToolbarMedia = window.matchMedia(COMPACT_TOOLBAR_MEDIA_QUERY)
@@ -2129,10 +2124,6 @@ function rulesetSurfaceSummary(ruleset) {
   return summary
 }
 
-function zoneApiPath(zoneId, ...segments) {
-  return ["zones", zoneId, ...segments].map(encodeURIComponent).join("/")
-}
-
 function updateInventoryZone(inventory, zoneId, update) {
   let found = false
   const zones = inventory.zones.map((zone) => {
@@ -2366,90 +2357,6 @@ function inventoryWithVerifiedRulesetPhase(inventory, target, response) {
   }))
 }
 
-async function readWriteVerificationTarget(target) {
-  if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
-    const surface = SURFACE_BY_ID.get(target.surfaceId)
-    if (!surface) throw new Error(`Unknown verification surface ${target.surfaceId}`)
-    const response = await api.request(surface.path(target.zoneId))
-    assertWriteVerificationResponse(target, response)
-    return {
-      response,
-      target,
-    }
-  }
-  if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
-    return {
-      response: await api.request(
-        zoneApiPath(target.zoneId, "settings", target.settingId),
-      ),
-      target,
-    }
-  }
-  if (target.kind === WRITE_VERIFICATION_KIND.DNS_RECORD) {
-    return {
-      response: await api.request(
-        zoneApiPath(target.zoneId, "dns_records", target.recordId),
-      ),
-      target,
-    }
-  }
-  if (target.kind === WRITE_VERIFICATION_KIND.EMAIL_RULE) {
-    return {
-      response: await api.request(zoneApiPath(
-        target.zoneId,
-        "email",
-        "routing",
-        "rules",
-        target.ruleIdentifier,
-      )),
-      target,
-    }
-  }
-  if (target.kind === WRITE_VERIFICATION_KIND.RULESET) {
-    return {
-      response: await api.request(
-        zoneApiPath(target.zoneId, "rulesets", target.rulesetId),
-      ),
-      target,
-    }
-  }
-  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_DELETION) {
-    return {
-      response: await api.request(zoneApiPath(target.zoneId, "rulesets")),
-      target,
-    }
-  }
-  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_PHASE) {
-    const summariesResponse = await api.request(
-      zoneApiPath(target.zoneId, "rulesets"),
-    )
-    if (!Array.isArray(summariesResponse.result)) {
-      throw new TypeError("Ruleset phase verification returned no ruleset list")
-    }
-    const kinds = new Set(target.kinds)
-    const matching = summariesResponse.result.filter(
-      (ruleset) => ruleset.phase === target.phase && kinds.has(ruleset.kind),
-    )
-    const details = await Promise.all(matching.map(async (ruleset) => {
-      const response = await api.request(
-        zoneApiPath(target.zoneId, "rulesets", ruleset.id),
-      )
-      return response.result
-    }))
-    return {
-      response: {
-        result: {
-          details,
-          summaries: summariesResponse.result,
-        },
-        status: summariesResponse.status,
-      },
-      target,
-    }
-  }
-  throw new Error(`Unsupported write verification kind: ${target.kind}`)
-}
-
 function inventoryWithWriteVerification(inventory, entry) {
   const { response, target } = entry
   if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
@@ -2508,7 +2415,7 @@ async function verifyChangedWriteTargets(targets) {
   setStatus(`Verifying changed resources 0/${targets.length}`)
   let completed = 0
   const entries = await Promise.all(targets.map(async (target) => {
-    const entry = await readWriteVerificationTarget(target)
+    const entry = await readWriteVerificationTarget(api, target)
     completed += 1
     setStatus(`Verifying changed resources ${completed}/${targets.length}`)
     return entry
@@ -5035,40 +4942,18 @@ function intentPolicyRow(policy) {
 }
 
 function intentAlignmentAction(row, options = {}) {
+  if (options.policyId) {
+    return {
+      label: row.label,
+      policyId: options.policyId,
+    }
+  }
   return {
     category: row.category,
     key: row.key,
     label: row.label,
     phase: row.phase || "",
-    policyId: options.policyId || null,
     zoneIds: options.zoneIds ? [...options.zoneIds] : null,
-  }
-}
-
-function intentAlignmentRow(matrix, action) {
-  return matrix?.rows.find(
-    (row) => row.category === action.category
-      && row.key === action.key
-      && (row.phase || "") === action.phase,
-  ) || null
-}
-
-function evaluatedIntentAlignmentRow(inventory, action) {
-  const observedMatrix = buildMatrix(inventory)
-  const evaluation = evaluateFleetIntent(
-    state.intent,
-    inventory,
-    observedMatrix,
-  )
-  const row = intentAlignmentRow(observedMatrix, action)
-  if (!row) return null
-  const rowState = evaluation.rowStates.get(
-    fleetIntentFacetId(row.category, row.key),
-  )
-  return {
-    ...row,
-    actionable: rowState?.actionable || false,
-    intentState: rowState,
   }
 }
 
@@ -10141,7 +10026,7 @@ async function readActivityVerification(entry, message) {
   setStatus(`${message} 0/${targets.length}`)
   let completed = 0
   const entries = await Promise.all(targets.map(async (target) => {
-    const result = await readWriteVerificationTarget(target)
+    const result = await readWriteVerificationTarget(api, target)
     completed += 1
     setStatus(`${message} ${completed}/${targets.length}`)
     return result
@@ -10246,6 +10131,13 @@ function createLivePlanSet(plans) {
   })
 }
 
+function acceptPreparedPlanSet(planSet) {
+  return Object.freeze({
+    ...planSet,
+    [LIVE_PLAN_SET]: true,
+  })
+}
+
 function confirmPlans(title, planSet, options = {}) {
   if (!planSet?.[LIVE_PLAN_SET]) {
     toast("This change has not passed live validation", "error")
@@ -10317,119 +10209,70 @@ async function applyPlans(title, planSet, options = {}) {
     return false
   }
   if (!await confirmPlans(title, planSet, options)) return false
-  const plans = planSet.plans
   setBusy(true)
-  let writesCompleted = false
-  let writeAttempted = false
-  let activityEntry = null
-  const executionResults = []
-  const operationCount = plans.reduce(
-    (count, plan) => count + plan.operations.length,
-    0,
-  )
   try {
-    if (options.beforeExecute) await options.beforeExecute()
-    if (api.usesBackend) {
-      const pendingActivity = createPendingOperationActivity(title, planSet, {
-        undoOf: options.undoOf || null,
-      })
-      state.activity = await api.appendOperationActivity(pendingActivity)
-      activityEntry = pendingActivity
-      renderOperationActivity()
-    }
-    writeAttempted = true
-    await executePlans(api, plans, {
+    const activityStore = api.usesBackend
+      ? {
+          append: (entry) => api.appendOperationActivity(entry),
+          finalize: (entry) => api.finalizeOperationActivity(entry),
+        }
+      : null
+    const outcome = await executeVerifiedPlanSet({
+      activityStore,
+      api,
+      beforeExecute: options.beforeExecute,
+      onActivity: ({ document }) => {
+        state.activity = document
+        renderOperationActivity()
+      },
       onProgress: ({ completed, total, operation, plan }) => {
         if (operation) setStatus(`Writing ${completed + 1}/${total}: ${plan.zoneName}`)
       },
-      onResult: (result) => executionResults.push(result),
+      onWritesComplete: () => {
+        toast("Writes succeeded; re-reading live state for verification")
+      },
+      planSet,
+      recordInverse: options.recordInverse,
+      title,
+      undoOf: options.undoOf,
+      verify: (targets) => verifyChangedWriteTargets(targets),
     })
-    writesCompleted = true
-    toast("Writes succeeded; re-reading live state for verification")
-    const verificationTargets = verificationTargetsForResults(executionResults)
-    const verificationEntries = await verifyChangedWriteTargets(verificationTargets)
-    const inverse = options.recordInverse === false
-      ? {
-          available: false,
-          plans: [],
-          reason: "Undo operations are recorded as final to avoid an implicit redo chain",
-        }
-      : buildInversePlans(executionResults)
-    if (activityEntry) {
-      const completed = completeOperationActivity(activityEntry, {
-        execution: {
-          completed: executionResults.length,
-          total: operationCount,
-        },
-        inverse,
-        status: OPERATION_ACTIVITY_STATUS.VERIFIED,
-        verification: createVerificationGuards(verificationEntries),
-      })
-      try {
-        state.activity = await api.finalizeOperationActivity(completed)
-        renderOperationActivity()
-      } catch (error) {
+    if (outcome.ok) {
+      if (outcome.historyError) {
         setRefreshDetail(
-          `Live verification passed, but operation history was not finalized: ${error instanceof Error ? error.message : String(error)}`,
+          `Live verification passed, but operation history was not finalized: ${outcome.historyError instanceof Error ? outcome.historyError.message : String(outcome.historyError)}`,
           "error",
         )
         toast("Writes and verification succeeded, but the durable history record is incomplete", "error")
         return true
       }
+      toast(options.successMessage || "Writes succeeded and live verification passed")
+      return true
     }
-    toast(options.successMessage || "Writes succeeded and live verification passed")
-    return true
-  } catch (error) {
     setStatus(
-      writesCompleted
+      outcome.status === OPERATION_ACTIVITY_STATUS.VERIFICATION_FAILED
         ? "Verification failed"
-        : writeAttempted
-          ? "Write failed"
-          : "Validation failed",
+        : "Write failed",
       "error",
     )
+    toast(
+      outcome.error instanceof Error
+        ? outcome.error.message
+        : String(outcome.error),
+      "error",
+    )
+    if (outcome.executionResults.length === 0) restoreInventoryStatus()
+    if (outcome.historyError) {
+      setRefreshDetail(
+        `The write result could not be finalized in operation history: ${outcome.historyError instanceof Error ? outcome.historyError.message : String(outcome.historyError)}`,
+        "error",
+      )
+    }
+    return false
+  } catch (error) {
+    setStatus("Validation failed", "error")
     toast(error instanceof Error ? error.message : String(error), "error")
-    let verification = []
-    try {
-      if (executionResults.length > 0) {
-        const targets = verificationTargetsForResults(executionResults)
-        const entries = await verifyChangedWriteTargets(targets)
-        verification = createVerificationGuards(entries)
-      } else {
-        restoreInventoryStatus()
-      }
-    } catch {
-      restoreInventoryStatus()
-    }
-    if (activityEntry) {
-      const completed = completeOperationActivity(activityEntry, {
-        error: error instanceof Error ? error.message : String(error),
-        execution: {
-          completed: executionResults.length,
-          total: operationCount,
-        },
-        inverse: {
-          available: false,
-          plans: [],
-          reason: writesCompleted
-            ? "Live verification did not complete, so no safe undo guard exists"
-            : "The write sequence did not complete, so a batch inverse would be unsafe",
-        },
-        status: writesCompleted
-          ? OPERATION_ACTIVITY_STATUS.VERIFICATION_FAILED
-          : OPERATION_ACTIVITY_STATUS.WRITE_FAILED,
-        verification,
-      })
-      try {
-        state.activity = await api.finalizeOperationActivity(completed)
-        renderOperationActivity()
-      } catch (historyError) {
-        setRefreshDetail(
-          `The write result could not be finalized in operation history: ${historyError instanceof Error ? historyError.message : String(historyError)}`,
-          "error",
-        )
-      }
-    }
+    restoreInventoryStatus()
     return false
   } finally {
     setBusy(false)
@@ -10467,58 +10310,6 @@ function selectedLiveZones(inventory, zoneIds) {
   return zoneIds.map((zoneId) => byId.get(zoneId))
 }
 
-function assertIntentAlignmentFleetMembership(liveInventory) {
-  if (!state.inventory) throw new Error("The fleet snapshot is unavailable")
-  const loaded = new Map(
-    state.inventory.zones.map((zone) => [zone.meta.id, zone.meta.name]),
-  )
-  const live = new Map(
-    liveInventory.zones.map((zone) => [zone.meta.id, zone.meta.name]),
-  )
-  const unchanged = loaded.size === live.size
-    && [...loaded].every(([zoneId, zoneName]) => live.get(zoneId) === zoneName)
-  if (!unchanged) {
-    throw new Error("Fleet membership changed during live validation. Refresh the full fleet before aligning intent so no zone is omitted or evaluated under a stale name.")
-  }
-}
-
-function assertIntentAlignmentRuleDetails(inventory, requirement) {
-  if (!requirement.includeRuleDetails) return
-  const phases = requirement.ruleDetailPhases
-    ? new Set(requirement.ruleDetailPhases)
-    : null
-  const kinds = requirement.ruleDetailKinds
-    ? new Set(requirement.ruleDetailKinds)
-    : null
-  const failures = []
-  for (const zone of inventory.zones) {
-    const expected = (zone.surfaces.rulesets?.result || []).filter(
-      (ruleset) => (phases === null || phases.has(ruleset.phase))
-        && (kinds === null || kinds.has(ruleset.kind)),
-    )
-    const actualIds = new Set(
-      zone.ruleDetails
-        .filter((detail) => detail.ok)
-        .map((detail) => detail.result?.id)
-        .filter(Boolean),
-    )
-    if (zone.ruleDetails.some((detail) => !detail.ok)
-      || expected.some((ruleset) => !actualIds.has(ruleset.id))) {
-      failures.push(zone.meta.name)
-    }
-  }
-  if (failures.length > 0) {
-    throw new Error(`Intent alignment live validation could not read complete ruleset details for ${failures.join(", ")}`)
-  }
-}
-
-function intentAlignmentOptions(action) {
-  return {
-    policyId: action.policyId,
-    zoneIds: action.zoneIds,
-  }
-}
-
 async function reviewIntentAlignment(action) {
   if (!action || state.busy || readOnly || !state.transportAvailable) return false
   if (state.intentSaving || state.intentSyncing) {
@@ -10528,62 +10319,28 @@ async function reviewIntentAlignment(action) {
   let intentWasSuspended = false
   try {
     await syncFleetIntent({ silent: true, throwOnError: true })
-    const loadedRow = intentAlignmentRow(state.matrix, action)
-    if (!loadedRow) {
-      throw new Error("The selected intent facet is no longer present in the fleet matrix")
-    }
-    const loadedAssessment = assessIntentAlignment(
-      loadedRow,
-      intentAlignmentOptions(action),
-    )
-    if (!loadedAssessment.available) {
-      if (loadedAssessment.actionableCount === 0) {
-        toast(`${action.label} already matches fleet intent`)
-        return false
-      }
-      throw new Error(loadedAssessment.reason)
-    }
-
-    const requirement = intentAlignmentReadRequirement(loadedRow)
-    const liveData = await runWritePreflight(
+    const preparation = await runWritePreflight(
       `${action.label} intent alignment`,
-      () => executeReadPlan(api, [requirement], {
+      () => prepareIntentAlignment(api, state.intent, action, {
+        baselineInventory: state.inventory,
         onProgress: ({ message }) => {
           elements.refreshDetail.title = message
         },
       }),
     )
-    const liveInventory = liveData.inventory
-    assertIntentAlignmentFleetMembership(liveInventory)
-    assertSurfaceReads(
-      liveInventory,
-      requirement.surfaceIds,
-      "Intent alignment",
-    )
-    assertIntentAlignmentRuleDetails(liveInventory, requirement)
-    const liveRow = evaluatedIntentAlignmentRow(liveInventory, action)
-    if (!liveRow) {
-      throw new Error("The selected intent facet is absent from the fresh fleet state")
-    }
-    const liveAssessment = assessIntentAlignment(
-      liveRow,
-      intentAlignmentOptions(action),
-    )
-    if (liveAssessment.actionableCount === 0) {
-      toast(`${action.label} already matches fleet intent in fresh live state`)
+    if (preparation.status === ALIGNMENT_PREPARATION_STATUS.ALIGNED) {
+      toast(preparation.reason)
       return false
     }
-    if (!liveAssessment.available) throw new Error(liveAssessment.reason)
-    const plans = buildIntentAlignmentPlans(
-      liveInventory,
-      liveRow,
-      liveAssessment,
-    )
+    if (preparation.status === ALIGNMENT_PREPARATION_STATUS.BLOCKED) {
+      throw new Error(preparation.reason)
+    }
+    const plans = preparation.planSet.plans
     const dnssecNote = dnssecConfirmationNote(plans)
     intentWasSuspended = temporarilySuspendIntentWorkflow()
     return await applyPlans(
       `Align ${action.label} with fleet intent`,
-      createLivePlanSet(plans),
+      acceptPreparedPlanSet(preparation.planSet),
       {
         confirmationNote: [
           "Every unacknowledged drift cell in this action has a deterministic write plan; unsupported cells block the complete review before any write is sent.",

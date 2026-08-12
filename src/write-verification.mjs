@@ -1,4 +1,9 @@
-import { DNSSEC_STATUS, HTTP_METHOD, RULESET_KIND } from "./constants.mjs"
+import {
+  DNSSEC_STATUS,
+  HTTP_METHOD,
+  RULESET_KIND,
+  SURFACES,
+} from "./constants.mjs"
 import { dnssecStatusRequestSatisfied } from "./dnssec.mjs"
 
 export const WRITE_VERIFICATION_KIND = Object.freeze({
@@ -22,6 +27,7 @@ const DNSSEC_WRITABLE_STATUS_SET = new Set([
   DNSSEC_STATUS.ACTIVE,
   DNSSEC_STATUS.DISABLED,
 ])
+const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]))
 
 function requiredString(value, label) {
   if (typeof value !== "string" || value.length === 0) {
@@ -152,6 +158,104 @@ export function assertWriteVerificationResponse(target, response) {
   if (!dnssecStatusRequestSatisfied(actualStatus, target.expectedStatus)) {
     throw new Error(`DNSSEC verification returned ${actualStatus || "unknown"} instead of requested ${target.expectedStatus}`)
   }
+}
+
+function zoneApiPath(zoneId, ...segments) {
+  return ["zones", zoneId, ...segments].map(encodeURIComponent).join("/")
+}
+
+export async function readWriteVerificationTarget(api, target, options = {}) {
+  if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
+    const surface = SURFACE_BY_ID.get(target.surfaceId)
+    if (!surface) throw new Error(`Unknown verification surface ${target.surfaceId}`)
+    const response = await api.request(surface.path(target.zoneId), {
+      signal: options.signal,
+    })
+    assertWriteVerificationResponse(target, response)
+    return {
+      response,
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "settings", target.settingId),
+        { signal: options.signal },
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.DNS_RECORD) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "dns_records", target.recordId),
+        { signal: options.signal },
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.EMAIL_RULE) {
+    return {
+      response: await api.request(zoneApiPath(
+        target.zoneId,
+        "email",
+        "routing",
+        "rules",
+        target.ruleIdentifier,
+      ), { signal: options.signal }),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "rulesets", target.rulesetId),
+        { signal: options.signal },
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_DELETION) {
+    return {
+      response: await api.request(
+        zoneApiPath(target.zoneId, "rulesets"),
+        { signal: options.signal },
+      ),
+      target,
+    }
+  }
+  if (target.kind === WRITE_VERIFICATION_KIND.RULESET_PHASE) {
+    const summariesResponse = await api.request(
+      zoneApiPath(target.zoneId, "rulesets"),
+      { signal: options.signal },
+    )
+    if (!Array.isArray(summariesResponse.result)) {
+      throw new TypeError("Ruleset phase verification returned no ruleset list")
+    }
+    const kinds = new Set(target.kinds)
+    const matching = summariesResponse.result.filter(
+      (ruleset) => ruleset.phase === target.phase && kinds.has(ruleset.kind),
+    )
+    const details = await Promise.all(matching.map(async (ruleset) => {
+      const response = await api.request(
+        zoneApiPath(target.zoneId, "rulesets", ruleset.id),
+        { signal: options.signal },
+      )
+      return response.result
+    }))
+    return {
+      response: {
+        result: {
+          details,
+          summaries: summariesResponse.result,
+        },
+        status: summariesResponse.status,
+      },
+      target,
+    }
+  }
+  throw new Error(`Unsupported write verification kind: ${target.kind}`)
 }
 
 function verificationTargetKey(target) {
