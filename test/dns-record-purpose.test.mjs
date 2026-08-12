@@ -55,7 +55,7 @@ test("TXT purposes separate verification and unclassified values", () => {
     TXT_RECORD_PURPOSE.VERIFICATION,
   )
   assert.equal(
-    txtRecordPurpose(txt("example.com", "sfcc_verification_zzcu=token")),
+    txtRecordPurpose(txt("example.com", "sfcc_verification_site=token")),
     TXT_RECORD_PURPOSE.VERIFICATION,
   )
   assert.equal(

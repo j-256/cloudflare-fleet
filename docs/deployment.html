@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Deploy Cloudflare Fleet as an Access-protected Cloudflare Worker without giving up the local launcher.">
+  <meta name="theme-color" content="#071119">
+  <title>Deployment | Cloudflare Fleet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="index.html" aria-label="Cloudflare Fleet documentation home">
+        <span class="brand-mark" aria-hidden="true">CF</span>
+        <span class="brand-name">Cloudflare Fleet</span>
+      </a>
+      <nav class="site-nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="deployment.html" aria-current="page">Deploy</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet">Repository</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="content" id="main">
+    <header class="page-intro">
+      <p class="eyebrow">Deployment</p>
+      <h1>Stand up a protected Worker without losing local mode</h1>
+      <p class="lede">Hosted Fleet uses a custom-domain Worker, Cloudflare Access, D1, and one encrypted API-token secret. Generated deployment and operator files stay ignored; the committed defaults are safe and read-only.</p>
+    </header>
+
+    <section class="prose" aria-labelledby="prerequisites-heading">
+      <h2 id="prerequisites-heading">Prerequisites</h2>
+      <ul>
+        <li>Node.js 22 or newer and npm</li>
+        <li>A Cloudflare account with an active zone for the Fleet hostname</li>
+        <li>Permission to create Workers, a D1 database, a custom domain, and a Cloudflare Access application</li>
+        <li>An account API token scoped to the resources Fleet should inspect and, if enabled, change</li>
+        <li>A configured Cloudflare Zero Trust team domain and identity provider</li>
+      </ul>
+      <div class="callout callout-warning">
+        <strong>Begin read-only</strong>
+        <p>The configuration generator defaults to <code>FLEET_READ_ONLY=true</code>. Inspect the deployed inventory and Access boundary before regenerating with <code>--write</code>.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="hosted-steps-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Hosted path</p>
+        <h2 id="hosted-steps-heading">Provision the Worker</h2>
+      </div>
+      <div class="steps">
+        <article class="step">
+          <span class="step-number">1</span>
+          <div>
+            <h3>Install the pinned toolchain</h3>
+            <p>The lockfile pins Wrangler, the Access JWT library, and the browser test stack.</p>
+            <pre><code>npm ci</code></pre>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">2</span>
+          <div>
+            <h3>Create the D1 database</h3>
+            <p>Record the database identifier returned by Wrangler. The generated configuration binds it as <code>FLEET_DB</code>.</p>
+            <pre><code>npx wrangler d1 create cloudflare-fleet
+export CLOUDFLARE_FLEET_D1_DATABASE_ID="the-returned-database-id"</code></pre>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">3</span>
+          <div>
+            <h3>Create the Access application</h3>
+            <p>In Cloudflare Zero Trust, create a self-hosted application for the exact Fleet hostname and attach an Allow policy for the intended operators. Copy the Application Audience tag from the application settings and use the full HTTPS team domain as the issuer. The Worker validates both values on every non-loopback request.</p>
+            <p>Cloudflare documents the flow in <a href="https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/">Publish a self-hosted application</a> and explains the audience and issuer in <a href="https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/">Validate JWTs</a>.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">4</span>
+          <div>
+            <h3>Generate the ignored Wrangler configuration</h3>
+            <p>Use an exact custom-domain hostname with no existing CNAME. Cloudflare creates the DNS record and certificate when Wrangler deploys the custom domain.</p>
+            <pre><code>export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+export CLOUDFLARE_ACCESS_AUD="your-access-application-audience"
+export CLOUDFLARE_ACCESS_TEAM_DOMAIN="https://your-team.cloudflareaccess.com"
+
+npm run configure:hosted -- \
+  --account-id "$CLOUDFLARE_ACCOUNT_ID" \
+  --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
+  --hostname fleet.example.com \
+  --access-aud "$CLOUDFLARE_ACCESS_AUD" \
+  --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN"</code></pre>
+            <p>The command writes mode-restricted <code>wrangler.jsonc</code>. That file contains account and deployment identifiers, so Git ignores it. <code>wrangler.example.jsonc</code> documents the portable shape without live values.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">5</span>
+          <div>
+            <h3>Apply storage and deploy the secret with the code</h3>
+            <p>Wrangler accepts an ignored dotenv file through <code>--secrets-file</code>, allowing the first code version and encrypted secret to deploy together. Delete the local secret file after deployment if the shell environment is your preferred source of truth.</p>
+            <pre><code>npm run db:migrate:remote
+umask 077
+printf 'CLOUDFLARE_API_TOKEN="%s"\n' "$CLOUDFLARE_API_TOKEN" &gt; .dev.vars.production
+npm run deploy -- --secrets-file .dev.vars.production</code></pre>
+            <p>The custom domain is the Worker origin, so Cloudflare manages its DNS record and certificate. The Worker serves no <code>workers.dev</code> endpoint and disables preview URLs.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">6</span>
+          <div>
+            <h3>Verify Access and inventory</h3>
+            <p>Open the configured hostname in a normal browser. Access should authenticate first, then Fleet should report a read-only session and begin loading the account. Test an unauthenticated private window as well: the Worker itself must reject a request that arrives without a valid Access assertion.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">7</span>
+          <div>
+            <h3>Opt into reviewed writes</h3>
+            <p>After reviewing the account boundary, Access policy, proxy allowlist, and read-only inventory, regenerate the same ignored file with <code>--write</code> and deploy again.</p>
+            <pre><code>npm run configure:hosted -- \
+  --account-id "$CLOUDFLARE_ACCOUNT_ID" \
+  --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
+  --hostname fleet.example.com \
+  --access-aud "$CLOUDFLARE_ACCESS_AUD" \
+  --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN" \
+  --write
+
+npm run deploy</code></pre>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section prose" aria-labelledby="policy-heading">
+      <h2 id="policy-heading">Operator policy exceptions</h2>
+      <p>Fleet ships with no policy exceptions. If one zone intentionally uses an exact Email DNS record that differs from the derived fleet baseline, copy <code>fleet-policy.example.json</code> to ignored <code>fleet-policy.json</code> and edit the exact component, content, TTL, zone, and reason. Local launches load it directly; <code>configure:hosted</code> validates and embeds the same document into the ignored Wrangler variables.</p>
+      <pre><code>cp fleet-policy.example.json fleet-policy.json
+npm run configure:hosted -- ...</code></pre>
+      <p>An exception does not hide the matrix difference. It removes only the exact allowed variant from actionable policy drift. Missing, duplicated, unreadable, or changed records remain actionable.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="state-import-heading">
+      <h2 id="state-import-heading">Import existing local intent and activity</h2>
+      <p>When moving an established local fleet to hosted mode, apply the migration first and import the ignored account-scoped state file once.</p>
+      <pre><code>npm run state:import:hosted -- state.json</code></pre>
+      <p>The importer reads the D1 identifier from the ignored Wrangler configuration and refuses to replace populated hosted state. Use <code>--force</code> only after reviewing both local and remote data.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="local-heading">
+      <h2 id="local-heading">Keep the local launcher</h2>
+      <p>Hosted deployment does not replace local mode. On macOS, provide the account token and identifier in the shell and launch the ordinary browser workflow. It shares the same UI, policy, intent schema, write planner, activity model, and verification code.</p>
+      <pre><code>export CLOUDFLARE_API_TOKEN="your-account-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+./launch.sh --read-only</code></pre>
+      <p>Use <code>./launch.sh --write</code> for the full local workflow. Local state defaults to ignored <code>state.json</code>; set <code>CLOUDFLARE_FLEET_STATE_FILE</code> to an absolute path for another profile.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="pages-heading">
+      <h2 id="pages-heading">Publish these docs with GitHub Pages</h2>
+      <p>The site is dependency-free and uses relative links, so it works beneath a project path. After the standalone repository exists, open repository Settings, choose Pages, select <strong>Deploy from a branch</strong>, choose the default branch and <code>/docs</code>, then save. GitHub documents this branch-source option in <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site">Configuring a publishing source</a>.</p>
+      <p>Run <code>npm run docs:serve</code> to preview the same files at <code>http://127.0.0.1:4173/</code>. The publication check validates every local documentation link and rejects symbolic links so the branch-source Pages build remains compatible.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="standalone-heading">
+      <h2 id="standalone-heading">Create a clean standalone source tree</h2>
+      <p>The private monorepo history can contain files that should never become part of a public repository. Export the project from its tracked publication state instead of carrying that history forward.</p>
+      <pre><code>npm run check:publication
+npm run export:standalone -- --output ../cloudflare-fleet-public</code></pre>
+      <p>The exporter copies regular tracked files, refuses a non-empty destination, and excludes operator state and deployment configuration. It does not initialize a repository, create a remote, or push anything.</p>
+    </section>
+
+    <section class="cta" aria-labelledby="deployment-cta-heading">
+      <div>
+        <p class="eyebrow">Before writes</p>
+        <h2 id="deployment-cta-heading">Review the security model.</h2>
+        <p>Understand the Access, Worker, proxy, persistence, and browser boundaries before enabling mutations.</p>
+      </div>
+      <a class="button button-primary" href="security.html">Open security</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>Cloudflare Fleet is licensed under AGPL-3.0-only.</span>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="https://github.com/j-256/cloudflare-fleet/blob/main/CONTRIBUTING.md">Contributing</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

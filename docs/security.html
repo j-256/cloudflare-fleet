@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Cloudflare Fleet security model, trust boundaries, credential handling, write controls, and sensitive data guidance.">
+  <meta name="theme-color" content="#071119">
+  <title>Security | Cloudflare Fleet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="index.html" aria-label="Cloudflare Fleet documentation home">
+        <span class="brand-mark" aria-hidden="true">CF</span>
+        <span class="brand-name">Cloudflare Fleet</span>
+      </a>
+      <nav class="site-nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="deployment.html">Deploy</a>
+        <a href="security.html" aria-current="page">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet">Repository</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="content" id="main">
+    <header class="page-intro">
+      <p class="eyebrow">Security</p>
+      <h1>Credentials stay behind a narrow, authenticated backend</h1>
+      <p class="lede">Fleet is an operator tool with meaningful authority. Its design keeps Cloudflare credentials out of browser JavaScript, constrains every proxied endpoint, and treats a mutation as a reviewed and verified state transition.</p>
+    </header>
+
+    <section class="section" aria-labelledby="principles-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Security principles</p>
+        <h2 id="principles-heading">Defense is layered around explicit authority</h2>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <p class="card-accent">IDENTITY</p>
+          <h3>Authenticate twice</h3>
+          <p>Access enforces the application policy at the edge. The Worker still verifies the assertion signature, issuer, and application audience before serving an asset or API response.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">CAPABILITY</p>
+          <h3>Constrain the backend</h3>
+          <p>The hosted proxy accepts only Fleet's inventory and supported-write shapes. Account identifiers are fixed by configuration, and zone writes require ownership verification.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">MUTATION</p>
+          <h3>Confirm exact operations</h3>
+          <p>Every supported write depends on a fresh read and displays targets, before and after values, methods, endpoints, and payloads before execution.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="review-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Human checkpoint</p>
+        <h2 id="review-heading">The confirmation is the operation plan</h2>
+        <p>A confirmation is rebuilt from live state and cannot execute until the operator checks the explicit review acknowledgement. The screenshot uses only synthetic <code>.example</code> data.</p>
+      </div>
+      <figure class="screenshot-frame">
+        <img src="screenshots/reviewed-write.png" width="1440" height="1000" alt="Cloudflare Fleet write confirmation showing a synthetic zone setting PATCH, before and after values, request payload disclosure, and review acknowledgement.">
+        <figcaption class="screenshot-caption">The Apply and verify control remains disabled until the targets, values, and API writes are acknowledged.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section prose prose-wide" aria-labelledby="boundaries-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Trust boundaries</p>
+        <h2 id="boundaries-heading">What each layer can do</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>Receives</th><th>Authority</th><th>Primary controls</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Browser application</td><td>Rendered inventory, intent, activity, read-only flag, and a backend location or local session capability</td><td>Can request allowed backend operations but has no Cloudflare credential</td><td>Same-origin transport, no remote scripts, no credential persistence, explicit confirmation</td></tr>
+            <tr><td>Cloudflare Access</td><td>User identity and application policy</td><td>Allows or denies access to the hosted hostname</td><td>Identity provider, Allow policy, application session, edge enforcement</td></tr>
+            <tr><td>Hosted Worker</td><td>Access assertion, account boundary, encrypted API token, D1 binding, read-only mode</td><td>Can serve Fleet, persist Fleet documents, and call allowlisted Cloudflare API shapes</td><td>JWT verification, same-origin mutation check, bounded bodies and duration, no redirects, path allowlists, zone ownership checks</td></tr>
+            <tr><td>Local broker</td><td>API token, account ID, random session secret, private runtime and state paths</td><td>Equivalent Fleet reads and writes for one local session</td><td>Loopback binding, random capability, origin checks, private file modes, liveness-bound cleanup</td></tr>
+            <tr><td>Cloudflare D1 or local state</td><td>Inventory snapshots, desired state, acknowledgements, and operation journal</td><td>Persists configuration evidence but no Cloudflare API token</td><td>Schema validation, account scoping, revisions, transactions or atomic file locks</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section prose" aria-labelledby="hosted-heading">
+      <h2 id="hosted-heading">Hosted boundary</h2>
+      <p>The Worker expects the Cloudflare API token only as a secret binding. Wrangler variables hold the account ID, D1 binding, Access issuer and audience, read-only flag, and validated operator policy, but never the credential. Static assets are built from the browser dependency graph and pass through the Worker before they are served.</p>
+      <p>For production requests, missing or invalid Access assertions fail closed. The implementation uses the assertion header recommended by Cloudflare and verifies the signing key, issuer, and audience through <code>jose</code>. Cloudflare explains why the origin must validate the token in <a href="https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/">Validate JWTs</a>.</p>
+      <p>The Cloudflare proxy rejects paths outside its read and write allowlists before attaching the secret. It refuses upstream redirects, bounds request bodies and upstream duration, scopes account reads to the configured account, and confirms zone ownership before forwarding a zone write. Setting <code>FLEET_READ_ONLY=true</code> rejects Cloudflare writes plus intent and activity mutations at the backend, not just in the interface.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="local-security-heading">
+      <h2 id="local-security-heading">Local boundary</h2>
+      <p>A normal local launch binds a temporary broker only to <code>127.0.0.1</code> on a random port. The token moves into the broker through a mode-restricted startup file that is consumed before readiness. The browser receives a random, timing-safe session capability in its generated bootstrap script. Requests also enforce the expected origin and same-site browser context.</p>
+      <p>The launcher opens the regular browser profile without a DevTools port or weakened cross-origin security. Debug mode is deliberately different: it uses a disposable profile, permits direct browser-to-Cloudflare traffic, and exposes a loopback DevTools endpoint. Do not browse unrelated sites in that debug window.</p>
+      <p>Local state and cache records contain the account configuration shown by Fleet. They are sensitive even though they contain no API token. Keep ignored state and policy files private, protect workstation backups, and use an explicit absolute state path when separating accounts.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="writes-heading">
+      <h2 id="writes-heading">Write safety</h2>
+      <ul>
+        <li>Read-only mode removes interface controls and causes the backend to reject mutations.</li>
+        <li>A supported action declares the exact live facts it must reread before planning.</li>
+        <li>Endpoint adapters allowlist writable fields and strip server-managed identifiers.</li>
+        <li>The operator reviews target zones, current values, desired values, HTTP methods, endpoints, and request bodies.</li>
+        <li>A durable pending record exists before the first API mutation.</li>
+        <li>Post-write verification rereads the smallest authoritative resources and updates the matrix once.</li>
+        <li>An inverse is offered only when the completed operation has a lossless adapter and the saved post-write state still matches live Cloudflare state.</li>
+      </ul>
+      <div class="callout callout-warning">
+        <strong>The dashboard is not an authorization substitute</strong>
+        <p>Scope the Cloudflare API token to the minimum accounts, zones, and permissions required for the intended workflow. Fleet's proxy and review model add controls, but the underlying token remains the ultimate Cloudflare capability.</p>
+      </div>
+    </section>
+
+    <section class="section prose" aria-labelledby="data-heading">
+      <h2 id="data-heading">Data classification</h2>
+      <p>Do not publish <code>state.json</code>, <code>fleet-policy.json</code>, <code>wrangler.jsonc</code>, <code>.dev.vars*</code>, <code>.env*</code>, Playwright traces, live screenshots, or audit reports. Those artifacts can contain account identifiers, domains, configuration, intended state, operation evidence, or secrets. The repository ignores them, and <code>npm run check:publication</code> rejects the operator file names from a publication tree.</p>
+      <p>The committed product screenshots are generated through the local deterministic fixture. They contain only reserved <code>.example</code> hostnames, documentation IP addresses, synthetic settings, and a literal fake API token that never leaves the test broker.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="reporting-heading">
+      <h2 id="reporting-heading">Report a vulnerability</h2>
+      <p>Do not open a public issue for a suspected vulnerability. Follow the private reporting instructions in <a href="https://github.com/j-256/cloudflare-fleet/blob/main/SECURITY.md">SECURITY.md</a> and include the affected boundary, reproduction steps, impact, and any proposed mitigation. Do not include live API tokens or private fleet data.</p>
+    </section>
+
+    <section class="cta" aria-labelledby="security-cta-heading">
+      <div>
+        <p class="eyebrow">Safe first deploy</p>
+        <h2 id="security-cta-heading">Start with backend-enforced read-only mode.</h2>
+        <p>Validate Access, account scope, and inventory before opting into writes.</p>
+      </div>
+      <a class="button button-primary" href="deployment.html">Open deployment</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>Cloudflare Fleet is licensed under AGPL-3.0-only.</span>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="https://github.com/j-256/cloudflare-fleet/security/advisories/new">Report a vulnerability</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

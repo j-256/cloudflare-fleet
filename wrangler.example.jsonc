@@ -39,5 +39,10 @@
       "enabled": true,
       "invocation_logs": true
     }
+  },
+  "secrets": {
+    "required": [
+      "CLOUDFLARE_API_TOKEN"
+    ]
   }
 }

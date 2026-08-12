@@ -1,182 +1,117 @@
 # Cloudflare Fleet
 
-Cloudflare Fleet is a private control plane for comparing and aligning Cloudflare zones. It loads zone configuration into a matrix, highlights missing and divergent values, persists fleet intent for exact zone scopes with independent presence and value rules, and supports explicit, previewed writes for common fleet policies. The same browser application runs through an Access-protected Cloudflare Worker or a short-lived local loopback broker. Neither transport exposes the Cloudflare API token to browser JavaScript.
+Cloudflare Fleet is a self-hosted control plane for auditing and aligning Cloudflare zones. It turns settings, DNS, DNSSEC, Email Routing, rules, and account resources into one comparable matrix; lets operators define expected state for exact zone scopes; and keeps supported mutations behind fresh reads, exact plans, human confirmation, durable activity, and scoped verification.
 
-## Hosted dashboard
+![Cloudflare Fleet dashboard with a synthetic example fleet](docs/screenshots/dashboard-overview.png)
 
-The hosted dashboard is served at [fleet.zone-a.example](https://fleet.zone-a.example). A Cloudflare Access application protects the custom domain, and the Worker verifies the Access assertion before serving static assets, bootstrap state, or API responses. The Worker serves only the browser dependency graph, proxies only the Cloudflare read and write paths used by Fleet, and verifies zone ownership before forwarding a write. Fleet intent, operation activity, and inventory snapshots are stored in the bound `cloudflare-fleet` D1 database. The Cloudflare API token is a Worker secret and is never included in `auth.js`, an asset, browser storage, a URL, or D1.
+The same browser application runs in two modes:
 
-The committed `wrangler.jsonc` defines the custom domain, D1 binding, Access audience, account boundary, and read/write mode. Initial provisioning applies the migration and imports the existing account-scoped `state.json` before deployment:
+- An Access-protected Cloudflare Worker with D1 persistence for hosted access
+- An ephemeral local loopback broker on macOS for a complete local workflow
+
+Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted configuration defaults to read-only, and local capabilities remain available after a hosted deployment.
+
+## What Fleet does
+
+- Compares normalized configuration across every selected zone without hiding raw source values
+- Separates observed differences from saved fleet intent, acknowledged exceptions, and expected coverage gaps
+- Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
+- Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
+- Displays targets, before and after values, methods, endpoints, and request bodies before a write
+- Saves pending activity before mutation, verifies authoritative resources afterward, and offers guarded undo only when the inverse is lossless
+- Keeps the hosted Cloudflare proxy inside explicit read and write allowlists
+
+The [documentation site](docs/index.html) includes the complete [architecture](docs/architecture.html), [deployment guide](docs/deployment.html), [security model](docs/security.html), and accessible visual diagrams.
+
+## Hosted quick start
+
+Hosted Fleet needs a Cloudflare zone, D1 database, self-hosted Access application, custom-domain Worker, and account API token. Node.js 22 or newer is required for the toolchain.
 
 ```sh
 npm ci
+npx wrangler d1 create cloudflare-fleet
+
+npm run configure:hosted -- \
+  --account-id "$CLOUDFLARE_ACCOUNT_ID" \
+  --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
+  --hostname fleet.example.com \
+  --access-aud "$CLOUDFLARE_ACCESS_AUD" \
+  --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN"
+
 npm run db:migrate:remote
-npm run state:import:hosted
-npm run deploy
-printf %s "$CLOUDFLARE_API_TOKEN" | npx wrangler secret put CLOUDFLARE_API_TOKEN
+umask 077
+printf 'CLOUDFLARE_API_TOKEN="%s"\n' "$CLOUDFLARE_API_TOKEN" > .dev.vars.production
+npm run deploy -- --secrets-file .dev.vars.production
 ```
 
-The import command refuses to replace populated hosted state. `npm run state:import:hosted -- --force` is reserved for an intentional, reviewed replacement of hosted intent and activity with the selected local state file. Normal code updates need only `npm run deploy`; Wrangler rebuilds the browser asset graph before uploading the Worker.
+The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. See the [deployment guide](docs/deployment.html) for Access setup, secret handling, verification, optional state import, and the deliberate `--write` opt-in.
 
-The `fleet.zone-a.example` hostname must remain excluded from the zone's catch-all subdomain redirect and HookRelay path-blocking WAF rule so requests can reach Access and the Worker. The committed zone-a.example-scoped fleet intent records both exclusions, while the all-zone policies retain their general definitions. Review those scoped policies before changing either edge rule through Fleet or the Cloudflare dashboard.
+`wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
 
-For local Worker development, put `CLOUDFLARE_API_TOKEN` and `FLEET_LOCAL_DEV="true"` in the ignored `.dev.vars` file, apply the local D1 migration with `npm run db:migrate:local`, then run `npm run dev:hosted`. The local Workerd process must trust the network's HTTPS certificate chain to reach the Cloudflare API. The ordinary launcher below remains the most direct local workflow and does not depend on Wrangler or D1.
+## Local launch
 
-## Launch
-
-The launcher requires macOS, a Chromium-compatible browser (Google Chrome by default), Node.js with built-in `fetch` and `AbortSignal.timeout`, `jq`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. Debug sessions also require built-in `WebSocket`.
+The local launcher requires macOS, Node.js 22 or newer, `jq`, a Chromium-compatible browser, and account credentials in the shell.
 
 ```sh
-./launch.sh
+export CLOUDFLARE_API_TOKEN="your-account-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+./launch.sh --read-only
 ```
 
-The default session is read/write with previewed and confirmed write controls. It opens as a regular tab in the existing Chrome profile without DevTools, a dedicated profile, or weakened browser security. Use `./launch.sh --read-only` to remove every write control and make the loopback broker reject Cloudflare, fleet-intent, and operation-history writes. Use `./launch.sh --debug-port 9224` only to open an isolated direct-client browser through Chrome DevTools for development and browser automation. A debug session can inspect the loaded intent but cannot persist changes or operation history because it has no broker.
+Use `./launch.sh --write` for the full reviewed-write workflow. The launcher opens a normal browser tab through a random loopback broker, persists intent and activity to ignored `state.json`, and removes its private runtime after the last dashboard connection closes. `CLOUDFLARE_FLEET_STATE_FILE` and `CLOUDFLARE_FLEET_POLICY_FILE` accept absolute paths for explicit profiles.
 
-The launcher explicitly activates the registered broker job and retries once if it does not publish readiness. Executable modules resolve synthetic and symlinked paths before deciding whether to run their command entrypoint. The launcher exits after Chrome establishes the tab's liveness connection. The loopback broker remains available while the tab is open, then removes its launchd service and temporary files after the final connection closes. The dashboard retries transient liveness interruptions while keeping the loaded matrix visible and every live read and write control locked. If automatic reconnection does not succeed before the broker exits, the dashboard tells the user to relaunch while preserving the cached review surface.
-
-The address-bar URL reflects the matrix filters, selected zone columns, and open fleet-intent workspace. Opening intent adds one browser-history entry, child screens update that entry, browser Back exits to the matrix, and Forward restores the retained in-memory screen path when possible. Because the port and session path change every launch, a shared link is useful for its query string: opening it in any session restores the same filters and, for zones still present in the fleet, the same selected columns. A reloaded child-screen route falls back to the intent manager because editor drafts and source rows are not serialized. Unknown filters or zone identifiers are ignored, so a hand-edited or stale link still loads.
+Debug mode is intentionally separate. `./launch.sh --debug-port 9224` creates an isolated browser profile with direct Cloudflare transport for development and browser automation; it cannot persist intent or activity through the broker.
 
 ## Read-only audit
 
-The audit command reads the complete live inventory and the configured fleet-state file without sending Cloudflare mutations. Its core report covers unexpected read gaps, saved intent, DNSSEC transition age, Email Routing and fleet WAF alignment, editable zone-setting drift, legacy edge TLS, origin certificate validation, HTTP-to-HTTPS enforcement, duplicate or conflicting DNS records, apex SPF records that lack a DMARC policy, empty and disabled rulesets, and certificate health. Disabled-rule evidence distinguishes explicit archives and long-dormant rules from recently parked rules. Findings carry stable identifiers and one of four severities: critical, warning, review, or info. Progress goes to stderr so stdout remains valid Markdown or JSON for piping.
+The CLI reads live Cloudflare inventory and configured Fleet state without sending mutations. Progress goes to stderr so stdout remains pipeable.
 
 ```sh
-node src/audit.mjs
-node src/audit.mjs --format json
-node src/audit.mjs --format html > audit.html
-node src/audit.mjs --deep
-node src/audit.mjs --deep --format json --fail-on warning
+npm run audit
+npm run audit -- --format json
+npm run audit -- --format html > audit.html
+npm run audit -- --deep --fail-on warning
 ```
 
-By default, any successfully rendered report exits zero regardless of its findings. `--fail-on LEVEL` makes automation exit 2 when the report contains that severity or a more severe finding while still emitting the complete report. For example, `--fail-on warning` fails for critical or warning findings but not review or info findings. Authentication, argument, inventory, and report-generation errors exit 1, keeping operational failure distinct from a completed audit that crossed policy. Use `--state-file PATH` to select another state document, `--format json` for machine processing, or `--format html` for a self-contained browser report with severity summaries and collapsible evidence.
+Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
 
-`--deep` also compares public NS delegation with each full zone, reads parent DS and child CDS/CDNSKEY signals, resolves non-DCV CNAME targets, and sends bounded header-only HTTPS probes to proxied hostnames with recent request counts for failure context. Account reads cover Registrar status, renewal and locks, Pages production deployment health, Worker invocation errors and settings, service and Durable Object bindings, tail consumers, zone and Email routes, custom domains, workers.dev, cron schedules, Queues, Workflows, and Pages references. Invocation errors are correlated with event-only Workers exposed through workers.dev. KV, D1, and R2 resources without a discovered Worker or Pages binding become review candidates only when all dependency reads succeed, and D1 candidates include recent query activity when analytics are readable. Binding secret and plain-text values are never included in findings. Deep mode can take several minutes when endpoints do not respond. An unresolved target, unreachable hostname, unbound resource, or Worker without discovered ingress is not deletion proof: direct API clients, local Wrangler configuration, Cloudflare for SaaS, validation flows, dispatch namespaces, and intentionally offline origins can produce those observations.
+`--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors.
 
-## Cache and concurrent windows
+## Fleet intent and writes
 
-Each successful full refresh is saved as an account-scoped configuration snapshot by the active protected backend. The local broker uses the macOS user cache directory, while the hosted Worker uses D1. A later launch renders the newest valid snapshot immediately and labels it with its collection time. A snapshot remains fresh for eight hours from its complete fleet audit. An older snapshot still provides the immediate reading experience, but the dashboard automatically refreshes the full fleet in the background. Scoped write verification updates the cached resources it read without extending the full-audit freshness window.
+Fleet intent defines presence and value constraints independently. Broader groups act as baselines, contained groups refine them, and partial overlaps remain peers. Exact acknowledgements bind one policy, zone, and observed normalized value, then become stale if that context changes. Saving intent evaluates drift but never writes Cloudflare.
 
-Every write action performs a scoped live preflight before showing its confirmation. Actions declare the facts they require, and a read composer merges and deduplicates those requirements into direct resource reads or a scoped inventory read. Email alignment rereads only the live Email Routing and DNS inputs needed to rebuild the fleet policy, DNSSEC intent alignment rereads only the affected DNSSEC surfaces, an Email Routing rule edit rereads that exact route, WAF alignment rereads its rule phase, a DNS hole reads only its source and destination, a rule copy rereads only its source, targets, and phase, a new rule rereads every quota-bearing ruleset in its target phase, a fleet rename reads exact rulesets, and an individual cell edit rereads that resource. **Refresh full fleet** remains the explicit operation that rereads every configured surface, updates the entire matrix, and replaces the persistent snapshot.
+An actionable control derives the smallest live read set needed to rebuild its plan. Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, current and desired values, methods, endpoints, and payloads. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
 
-Use `./launch.sh --fresh` to bypass the cache for one launch without deleting it. Use `./launch.sh --clear-cache` to remove this account's snapshots before loading live state. Set `CLOUDFLARE_FLEET_CACHE_DIR` to override the cache directory for development or isolation.
+Clearing or bypassing the inventory cache never removes intent or activity. Hosted sessions use transactional D1 state; local sessions use revisioned sections in the ignored account-scoped state file.
 
-Fleet intent and operation history are authoritative project state. In local sessions, both live in separately revisioned sections of `state.json` beside the dashboard source, where the account identifier is readable and the document can be reviewed and versioned with Git. A local launch for another account rejects the file instead of silently creating parallel opaque state. Set `CLOUDFLARE_FLEET_STATE_FILE` to an absolute path such as `state.personal.json` when an explicit local profile needs separate state. In hosted sessions, D1 stores the same validated documents and uses conditional intent revisions plus transactional, append-oriented activity records so independent windows cannot silently overwrite one another. Clearing or bypassing the inventory cache never touches intent or activity state. Dashboard tabs check for intent changes while visible and whenever they regain focus, and refresh activity when its dialog is opened or visible.
+## Documentation and screenshots
 
-Concurrent local dashboard tabs use separate loopback brokers, random session capabilities, and runtime files. Debug launches also use separate disposable Chrome profiles and debugging ports. Local sessions share the snapshot cache and project state document, while snapshot writes use separate per-session files. Hosted tabs share the account's D1 state behind Access. Both backends select the latest verified snapshot update while retaining the full-audit collection time separately, so a scoped write patch can supersede its older base snapshot without claiming a complete reread. Closing one local tab ends only its broker and leaves the shared snapshots, project state, and other tabs intact.
+The dependency-free site under [`docs/`](docs/) is ready for GitHub Pages branch publishing from `/docs`. Preview it locally with:
 
-## Architecture
-
-The control plane keeps UI intent separate from Cloudflare endpoint shape. A single desired-state edit can therefore require no write, one direct write, or a sequence of dependent operations.
-
-```text
-cached inventory -> normalized matrix -> desired-state intent
-                                          |
-                                          v
-live read composer -> endpoint adapter -> operation plan
-                                          |
-                                          v
-reviewed confirmation -> durable pending record -> executor -> scoped verification
-                                                            |             |
-                                                            v             v
-                                                guarded inverse plan   cached matrix patch
-                                                            |
-                                                            +-> explicit reviewed undo
+```sh
+npm run docs:serve
 ```
 
-`src/inventory.mjs` owns complete and scoped inventory reads plus stable coverage issue signatures. `src/cache-store.mjs` persists only completed local snapshots, while `src/hosted/d1-store.mjs` provides the hosted intent, activity, and snapshot store. `src/fleet-intent.mjs` defines desired-state groups, facet policies, exact acknowledgements, expected inventory gaps, conflicts, and evaluation. `src/intent-adoption.mjs` classifies ungoverned drift, derives conservative policy suggestions, and previews their evaluation effects. `src/fleet-state.mjs` defines the account-scoped project-state envelope. `src/atomic-file.mjs` flushes and atomically replaces private cache, state, and runtime handoff files, while `src/state-store.mjs` provides serialized locking, migration, and account-scoped persistence. `src/intent-store.mjs` and `src/activity-store.mjs` update their separately revisioned local sections without overwriting the other. `src/operation-history.mjs` validates durable write records, normalizes verification guards, and derives lossless inverse plans. `src/session-broker.mjs` serves the local static runtime, forwards bounded same-origin API requests, saves snapshots and project state, and owns normal-tab cleanup. `src/session-watcher.mjs` manages direct-client debug sessions. `src/hosted/worker.mjs` serves the hosted API and asset boundary, `src/hosted/access.mjs` verifies Access JWTs, `src/hosted/proxy-policy.mjs` constrains Cloudflare paths, and `src/hosted/cloudflare-proxy.mjs` attaches the Worker secret and verifies write targets. `src/matrix.mjs` turns raw inventory into stable comparable facets and capability metadata. `src/facet-equivalence.mjs` exposes the shared identity, phase, normalization, exact-value, and edit-access contract used by matrix and intent views. `src/ruleset-workspace.mjs` normalizes parent rulesets, resolves managed deployments, produces safe drafts, and composes search, status, and paging. `src/rule-presentation.mjs` turns rule actions into scannable labels and structured facts, while `src/redirect-presentation.mjs` identifies redirect target forms and produces shared redirect semantics for every UI surface. `src/fleet-policy.mjs` contains intentional enforcement exceptions without hiding differences. `src/audit-report.mjs` builds deterministic core findings and Markdown or JSON output, while `src/audit-deep.mjs` adds bounded public-DNS, endpoint, and Workers dependency checks. `src/read-composer.mjs` merges action requirements, deduplicates direct reads, and resolves dependent phase reads. `src/write-verification.mjs` maps planned and completed write paths back to the smallest authoritative resources that can confirm them. `src/policies.mjs` validates desired state against endpoint-specific writable fields and produces ordered operation plans. `src/app.mjs` coordinates browser state, intent editing, coverage review, ruleset workspaces, confirmations, durable activity, execution, guarded undo, scoped verification, and explicit full refreshes.
+Public product screenshots are automated:
 
-## Security model
+```sh
+npx playwright install chromium
+npm run screenshots
+```
 
-The hosted custom domain is protected by Cloudflare Access, and the Worker independently verifies the Access assertion's issuer and application audience before handling a request. All assets pass through that check. The Worker receives the Cloudflare credential only through its encrypted secret binding. Browser API requests remain same-origin and contain neither that credential nor a reusable Fleet capability. The proxy rejects every API path outside Fleet's explicit inventory and write allowlists, scopes account reads to the configured account, checks a write target's zone membership, bounds request bodies and upstream duration, refuses redirects, and can be switched to read-only through `FLEET_READ_ONLY`. Security headers keep the dashboard same-origin, non-frameable, and free of remote script execution.
+The capture script drives the real dashboard through its deterministic local test broker. It uses only `alpha.example`, `bravo.example`, `charlie.example`, documentation IP addresses, synthetic configuration, and a literal fake test token. It does not read shell Cloudflare credentials, ignored operator files, D1, the hosted Worker, or a live API endpoint.
 
-Cloudflare's API rejects the cross-origin preflight from a normal `file://` page. The default local launcher therefore creates a mode-0700 temporary runtime and an ephemeral HTTP broker bound only to `127.0.0.1` on a random port. The token is transferred through a mode-0600 startup file that the broker reads and deletes before accepting browser traffic. It remains only in the broker process and is never sent to the browser.
+## Development
 
-The page receives a random session capability instead of the Cloudflare credential. Broker API requests require that capability, reject cross-site browser requests, and can target only the Cloudflare API boundary with `DELETE`, `GET`, `PATCH`, `POST`, or `PUT`. Static responses are same-origin-only and non-frameable. The Content Security Policy loads no remote code, images, fonts, or frames. Neither the token nor the session capability is placed in browser storage or the persistent cache, rendered, logged, or passed in the dashboard URL. The URL query string carries only non-sensitive view state, including matrix filters, selected zone identifiers, and the active intent screen name, so a link reproduces a view without carrying editor drafts, the token, or the session capability.
-
-The broker validates account, snapshot, intent, and operation-history schemas before saving mode-0600 files. Its streaming liveness connection keeps the session available while the dashboard is open and triggers cleanup after the last tab disconnects. The hosted Worker validates the same browser-facing schemas before committing D1 transactions. Cached snapshots and project state contain the configuration displayed, defined, or changed by the dashboard, so treat the local files and hosted D1 database as sensitive data even though neither contains an API token.
-
-`--debug-port` is the only mode that creates a disposable profile, enables direct browser-to-Cloudflare requests, weakens cross-origin enforcement inside that profile, and exposes a loopback DevTools endpoint. Do not open unrelated sites in that debug window. Debug mode does not change the normal Chrome profile.
-
-## Inventory
-
-The dashboard reads zone metadata, zone settings, DNS records, DNSSEC, Email Routing settings and rules, rulesets and zone-owned rule details, Workers routes, legacy firewall views, and other comparable zone surfaces supported by the account. Each failed or blocked surface is reported in the coverage panel.
-
-Opaque identifiers and timestamps are removed before comparison. Zone names inside values are normalized to `{zone}`, unordered collections are sorted, and semantically meaningful settings remain visible. The legacy firewall category is labeled as a priority projection because it provides an ordering view of rules that are managed through their ruleset rows. Inventory coverage has independent disclosures for unexpected issues, expected gaps, and healthy surfaces. A failed zone/surface read or fleet-wide static limitation can be marked expected with a required reason. The saved expectation includes its target and normalized HTTP status or Cloudflare error signature. An exact repeat stays visible in yellow, a different failure returns to red with an update action, and a recovered or absent failure remains reviewable as inactive intent. Read-only sessions apply the classification without exposing mutation controls.
-
-## Writes
-
-The dashboard supports these write paths:
-
-- Align Email Routing with the verified fleet catch-all destination, required DNS records, unlocked record state, plus-addressing, and the unique live SPF and zone-relative DMARC consensus
-- Edit API-managed Email Routing rules and the catch-all rule while preserving endpoint-specific fields
-- Create or update named `[fleet]` WAF rules from the unique live fleet consensus
-- Edit Cloudflare zone settings that the API marks editable
-- Align DNSSEC active or disabled status with exact fleet intent after a scoped live read and registrar-aware confirmation; generated key material remains inspection-only
-- Edit existing unlocked DNS records, including Email DNS specification rows backed by live DNS records
-- Add, edit, enable or disable, duplicate, reorder, and delete rules in editable zone entrypoint and custom rulesets
-- Edit an editable ruleset description while preserving its complete live rule order
-- Delete an empty editable ruleset after an exact live reread
-- Copy a self-contained rule from a zone entrypoint to selected zones
-- Fill a missing DNS cell from a type-compatible fleet variant
-- Fill the same missing DNS facet across selected target zones from one recommended fleet variant
-- Fill a missing portable rule from an existing zone
-- Route a missing Email policy cell through the full Email Routing policy composer
-- Rename every present editable instance of a rule across the fleet
-
-The **Fleet intent** card turns descriptive drift into an explicit desired-state queue. The top-level verdict reports how many loaded zones satisfy their effective policies and labels ungoverned observed differences separately, so an ungoverned difference is never presented as an intent failure. Create named groups with stable zone membership, then use **Set intent** on a matrix row to choose two independent rules. **Presence** decides whether each covered zone is **Required** to have the facet, **Optional by zone**, or **Forbidden** from having it. **Value when present** separately decides whether present values must match one **Exact value**, **May differ**, or **Must differ** from every other present value. Optional plus May differ is the explicit "may or may not have, and any present value is allowed" policy. New policy suggestions preserve the observed shape of the selected scope: complete coverage defaults to Required, sparse coverage defaults to Optional, one present variant defaults to Exact, and multiple present variants default to May differ. These defaults are creation suggestions only; ungoverned zones do not inherit them. Older saved policies migrate to Required presence so their prior behavior is preserved.
-
-Observed Exact expectations require the complete facet intent projection to match. Custom Exact objects are recursive partial constraints: every authored key must match, while observed object keys omitted from the custom value are ignored. Custom arrays still require the same length, order, and recursively matching elements. The type-aware editor supports strings, numbers, booleans, nulls, objects, and arrays, with synchronized raw JSON for uncommon fields and `{zone}` for each destination zone's domain. This makes Optional plus a custom `{ "enabled": false }` value an explicit inactive-or-absent rule policy; rule facets offer that combination as a shortcut. Observed values retain a representative source and complete remediation value for safe fills, while a novel custom expectation remains useful for detection even when no direct editor or matching create source exists.
-
-Group containment is a cascade. On a zone covered by both a broad policy and a strictly narrower fixed-membership group, only the narrower policy is effective; the broad baseline remains effective elsewhere. A chain keeps its most specific policy. New fixed scopes cannot duplicate another fixed membership. Externally loaded equal-membership groups and partial overlaps remain peers whose compatible constraints compose and whose Required versus Forbidden or incompatible Exact constraints remain explicit conflicts. Must-differ uniqueness is calculated across the zones where that policy remains effective. A group member absent from the loaded account remains named and puts its policies into review instead of disappearing or appearing aligned. The manager reports targeted, effective, overridden, matching, and actionable results so a baseline is not marked as drift for zones delegated to refinements.
-
-Every facet-level intent action opens the focused facet editor, even when several scope policies exist. The manager, adoption review, policy editor, scope editor, acknowledgement editor, coverage editor, and removal confirmation behave as one routed workspace: only one screen is visible, its path and Back control make the hierarchy explicit, Back restores the suspended parent with its draft intact, and Close exits the complete workspace after confirming unsaved changes where needed. A searchable checkbox picker can combine arbitrary zones directly, while concise saved-scope shortcuts load existing independent policies or adaptive observed defaults. Observed choices are limited to the applied scope's loaded zones, cascade relationships are explained in context, and a before-save panel previews matches, actionable cells, conflicts, overrides, and named problem zones. The global manager separates policies, saved scopes, coverage, and acknowledgements; policy search and status, category, and scope filters keep the default review queue focused on policies needing attention. Compact cards defer equivalence and complete values to disclosures. A saved policy for a facet absent from every loaded zone is labeled **Not in matrix** instead of offering a dead navigation action. Required policies can use supported create or copy flows for missing facets, Optional policies may offer explicit fills without treating absence as drift, Forbidden policies block fills and treat every present facet as drift, and Must-differ policies never fill a required hole with an existing duplicate. Exact DNSSEC intent exposes **Align N zones** in both the manager and filtered matrix. It rereads only those zones, previews each remaining status request, treats an in-flight transition as requested, and surfaces stalled transitions without offering the same write as their fix. Every remediation still uses the normal live read, operation-plan preview, and confirmation flow.
-
-Every successful fleet-intent edit made by a dashboard window adds its exact prior document to that window's undo stack. **Undo** appears beside intent save status in the workflow card and manager, persists the prior content as a new revision through the normal broker path, and can walk backward through multiple local edits. A newer revision loaded from another window or returned by a save conflict clears the local stack instead of risking an overwrite. Undo history ends with the dashboard session, while each restored intent revision remains durable project state.
-
-**Review ungoverned drift** turns observed differences into a searchable adoption queue without writing to Cloudflare. It distinguishes fleet-level consensus, close splits, tied variants, zone-specific values, and sparse coverage. The initial view limits the queue to consensus values covering most of the loaded fleet, while pattern and category filters expose every lower-confidence decision. Each suggestion can target any saved zone scope and choose Presence independently from Value when present. Suggestions default to Optional when their selected scope has absent facets, so adopting sparse observed coverage does not manufacture actionable holes. Exact suggestions can choose any observed normalized variant. Changing a suggestion selects it and recomputes a before-save effect showing covered matches, required missing values, variants, conflicts, and the cells that would enter actionable drift. Saving persists all selected policies in one revision-checked project-state update.
-
-Zone-scope controls keep membership as the policy identity while saved-scope cards lead with the display name and identify it as automatic, custom, or built in. The facet-policy editor keeps its searchable zone picker in the policy flow, with Selected only, Select visible, and Clear visible controls for assembling random subsets quickly. Applying an exact saved membership loads that scope's independent policy. A new combination stays transient until its policy is saved, then the fixed-membership group and policy are persisted together so canceling cannot leave an orphan scope. Scope names are optional, show and announce the exact automatic fallback while membership is selected, and receive a concise unique name derived from the selected domains when omitted. Duplicate custom names are reported while typing. Automatic names remain stored snapshots; when current domain labels would produce a different fallback, the saved-scope card offers an explicit refresh action. The saved-scope catalog pins All zones first and supports search, name-source filtering, and name or policy-count sorting. Cards omit repeated membership explanations and unavailable removal controls, while policy usage still opens the policy view already filtered to that scope. Editing a scope preserves its catalog position. The standalone membership editor includes unavailable zones and previews how changing a used shared scope affects effective, overridden, actionable, and conflict cells. Guided adoption can also create or reuse saved scopes without restarting the review.
-
-An actionable cell can instead be acknowledged with a required reason. The acknowledgement applies only to that exact policy, zone, and observed normalized value. It becomes stale when the value, policy, group membership, or applicable policy set changes, so acknowledgement cannot silently excuse future drift. The manager exposes active and stale acknowledgements and removes dependent acknowledgements when their policy is removed.
-
-Facet identity and exact equivalence are separate contracts. Identity determines which values occupy one row and includes phase wherever phase distinguishes the Cloudflare resource. Every matrix title identifies its source, such as rule description, setting ID, or record type and owner, because titles are display metadata rather than one shared Cloudflare property. Exact equivalence compares only the normalized **Compared value** shown by **How matching works** or a cell's **Inspect** action; the modal places that projection beside the source value and provides the matching editor, the parent ruleset workspace, or a concrete read-only reason. Each ruleset-derived facet represents one rule rather than its containing ruleset. Flattened non-redirect rules compare their editable payload, including explicit custom refs, actions, expressions, parameters, enabled state, and supported additional fields. A redirect rule policy compares behavioral fields while ignoring its absolute ruleset position, description, and explicit ref. Ruleset IDs, timestamps, rule IDs, default refs that repeat an ID, versions, and API fields unsupported by the editor do not participate.
-
-Populated matrix cells keep inspection separate from editing. Structured values stay compact in the matrix and open the equivalence modal for labeled fields and raw compared or source JSON. In write mode, the explicit **Edit** action opens a compact inline control for primitive zone settings or a type-aware field dialog for structured settings, DNS records, and rules. Strings, numbers, booleans, nulls, nested objects, and arrays receive controls that preserve their JSON types; exact JSON remains synchronized under the collapsed **Show raw JSON** escape hatch for uncommon fields. Click an outlined missing cell to use the unique fleet value or choose among tied variants, inspect the live operation plan, and fill the hole. A record chooser appears when one DNS cell contains multiple records. Use **Select targets** before running a fleet alignment or rule-copy action. **Edit settings** filters the matrix to zone settings and focuses the first editable cell.
-
-Ruleset configuration appears only through individual rules. Redirects receive the dedicated **Redirects** category and align by normalized matching expression rather than mutable names; every other flattened rule stays under **Ruleset rules** and aligns by its normalized rule name. Each rule row supports its own inspection, intent, acknowledgement, editing, copying, and fleet rename where the underlying API permits them. A present child cell can open its parent ruleset workspace, which lazily rereads that exact ruleset and presents ordered rules as compact cards with structured details, search, status filters, and incremental paging. Editable workspaces expose direct rule operations plus description editing and empty-ruleset deletion. Managed catalogs are inventory dependencies rather than confirmable matrix facets; when Cloudflare represents managed configuration through an editable `execute` rule, that deployment rule appears individually with its typed override editor. Redirect cells show the destination first, label literal and computed destinations as static or dynamic targets, and use **Inspect** to expose response code, query handling, disabled state, name drift, and the exact match-to-destination definition. Absolute order and display-name differences remain workspace review information rather than whole-ruleset intent. The redirect editor provides semantic controls for every common field and keeps exact JSON collapsed as an advanced escape hatch.
-
-The matrix opens on differences among fleet patterns, defined as facets present in at least two zones, so records unique to one zone do not dominate the initial view. The scope filter exposes fleet-wide, zone-specific, and unfiltered views without dropping any inventory. Category, phase, DNS-type, contextual TXT-purpose, and contextual redirect-target filters include facet counts. TXT remains the DNS record type; when a hostname has multiple TXT records, each comparable record receives its own row so SPF, verification, and other values can be reviewed independently across zones. Each zone cell labels the record purpose, and choosing one purpose retains only matching record rows. By default, the sort control groups phase-bearing facets according to [Cloudflare's documented Ruleset Engine execution order](https://developers.cloudflare.com/ruleset-engine/reference/phases-list/), with unknown phases and then non-phase facets following in stable order; category A-Z remains available as an alternate sort. Each ruleset phase has a stable badge color and stacks its friendly label above the exact API token; the color stays inside the badge so it does not compete with matrix comparison states. Search uses all entered terms and covers facet names, values, TXT purposes, redirect semantics, and the zones where each facet is present. **Reset** restores the initial filters and phase execution sort, while narrow screens keep secondary filters and sorting behind a count-bearing disclosure. **Focus matrix** converts the page into a full-height comparison workspace without discarding any filter, selection, scroll, or matrix state. **Selected zones only** hides unselected columns while continuing to calculate consensus and intent across the complete fleet; clearing the selection restores every column. On phone-width screens the category moves into the sticky facet header so one complete zone value remains visible beside it. Each row derives a consensus only when one normalized present value is uniquely most common; missing cells do not vote and a tie is labeled **No consensus**. Green and **Match** are reserved for consensus cells, while other populated cells are explicitly labeled **Variant** or **No consensus**. After selecting target zones, **Target holes** limits the matrix to facets missing from at least one target, producing a focused queue of cells that can be filled through their live plan previews.
-
-Each facet header pairs observed consensus with its composed intent result. A fully evaluated governed facet shows **Matches intent** with its satisfied and applicable zone count; drift, unresolved intent, and ungoverned facets remain distinct. The intent-result filter isolates matches, drift, needs-review, or intent-not-set facets, carries facet counts, and participates in reset and shareable URL state. Choosing a specific intent result turns off the initial **Needs review** toggle so the selected result is visible immediately.
-
-For an ungoverned row, the **Drift** filter retains the descriptive difference behavior. Once a row has fleet intent, the same filter becomes an actionable queue: matches, acknowledged exceptions, and zones outside policy coverage are excluded while required missing values, forbidden presence, value variants, unresolved policy references, and conflicts remain. The matrix continues to expose the observed value independently, so defining intent never rewrites or hides inventory.
-
-Keyboard users can skip directly to the fleet controls or matrix, press `/` to focus search, and press Escape in search to clear it. Escape also returns a focused matrix workspace to the overview when no dialog or inline editor owns the key. The matrix exposes one tab stop for its cell controls; arrow keys move between disclosures and actions, Home and End move within a row, and Ctrl/Command+Home and End move across the visible matrix. Filtering or hiding unselected columns preserves a valid matrix tab stop. Dialogs have programmatic names, deliberate initial focus, focus restoration, announced validation errors, and non-destructive Escape and backdrop dismissal. Reduced-motion and forced-color preferences receive explicit presentation support.
-
-The matrix reports capabilities instead of treating every non-editable cell as globally read-only. A zone setting with `editable=false` cannot be changed through the Zone Settings endpoint, but another Cloudflare product API may expose equivalent behavior. Rule facets identify whether the matrix title came from the rule description, explicit reference, or a generated fallback, then show the action and phase separately. Rules remain directly editable even when they cannot be copied. Self-contained rules in a zone entrypoint expose **Copy to selected** as a secondary action. Managed rules, custom rulesets that need deployment, and rules with target-specific identifiers stay blocked from copying with a reason.
-
-A rule copy strips Cloudflare-managed identifiers, replaces source-zone names with the destination zone, and checks the live destination for an exact match, a stable reference, or a unique description before deciding whether to skip, update, append, or create the phase entrypoint. Known plan quotas are checked before append operations. The exact decision and request body remain visible in the confirmation.
-
-An editable rule row exposes **Rename across fleet**. The action rereads every exact live ruleset represented in the row, preserves each zone's action, expression, parameters, enabled state, logging, rate limits, stable reference, and dependencies, and changes only the rule description. A `{zone}` placeholder materializes to each zone's domain. Missing zones remain holes under the new name and can be filled separately. If any present instance is managed or otherwise lacks the direct rule adapter, the fleet rename action is withheld instead of applying a partial rename.
-
-The editor captures desired state rather than exposing an endpoint-shaped form. A resource planner compares that state with the composed live reads and emits zero, one, or several Cloudflare API operations. An actionable plan opens a confirmation dialog containing the validation time, target zones, current value when applicable, HTTP methods, endpoints, and JSON bodies. Every dialog can be dismissed with its X, a backdrop click, Escape, or Cancel where shown; dismissal never performs a write. After confirmation, a durable pending record is saved before the first Cloudflare request. Post-write verification rereads exact settings, DNS records, Email Routing rules, and existing rulesets. A successful collection create narrows verification to the returned DNS record or ruleset identifier, rule creates reread their exact parent, and Email Routing DNS operations reread the affected zone's routing, routing DNS, and DNS record surfaces because one endpoint can change all three. The verified resources are patched into the matrix and persistent snapshot once. **Refresh full fleet** is never an implicit write side effect. Destructive support is limited to explicit rule deletion and deletion of an already empty editable ruleset.
-
-The **Start Here** operational review bar and toolbar **Activity** action open the durable journal. Each record presents friendly operation, zone, before-and-after value, verification, and status sections, with exact request payloads kept under a disclosure. A verified record offers **Review guarded undo** only when every completed API write has a lossless inverse. Before showing the normal confirmation, the dashboard rereads the recorded verification targets and requires them to match the saved post-write state. It repeats that guard immediately after confirmation before sending inverse requests, then executes, verifies, patches the matrix, and journals the undo through the same path as any other write. The shared state lock permits only one pending or verified undo for an operation, so concurrent windows cannot race the same inverse. A later change blocks undo instead of being overwritten. Compound Email Routing DNS setup, DNSSEC status changes whose safe rollback depends on parent DS timing, an incomplete write sequence, failed verification, and any endpoint without a lossless adapter remain visible but explicitly non-reversible. A pending record left by an interrupted tab remains visible as incomplete rather than being guessed successful or discarded.
-
-DNS and Ruleset payload allowlists follow Cloudflare's official [OpenAPI schemas](https://github.com/cloudflare/api-schemas). Computed DNS `content` is excluded for structured record types that write through `data`, server-managed rule fields are stripped, and an unknown DNS type remains inspectable instead of receiving an unsafe generic write control.
-
-The matrix is descriptive and always shows real differences. Typed enforcement exceptions live in `src/fleet-policy.mjs`; the bundled policy pins the exact storefront-specific SPF content and TTL on `zone-c.example`, keeps that difference visible in the matrix, excludes only that exact variant from actionable policy drift, and preserves it during Email Routing alignment. Any missing, duplicate, unreadable, or unexpectedly changed SPF record remains actionable. The Email Routing policy card exposes configured exceptions with their status, reason, allowed variant, current value, and fleet baseline. Review selected zones and payloads before applying a write.
-
-## Tests
-
-Install the pinned browser-test toolchain and Chromium once per checkout:
+Install the exact lockfile and browser once per checkout:
 
 ```sh
 npm ci
 npx playwright install chromium
 ```
 
-Run the dependency-free unit suite, UI-driven browser journeys, and shell validation:
+Run the complete deterministic verification surface:
 
 ```sh
 npm test
@@ -184,23 +119,35 @@ npm run test:e2e
 npm run test:e2e:ergonomics
 shellcheck launch.sh
 npm run build:hosted
-npx wrangler deploy --dry-run
+npx wrangler deploy --dry-run --config wrangler.example.jsonc
+npm run check:publication
 ```
 
-`npm test` includes the hosted Access boundary, asset graph, D1 concurrency and cache semantics, proxy policy, Worker routing, and dual browser transport alongside the existing domain tests. `npm run test:all` runs both deterministic JavaScript suites. The browser journeys host the shipped dashboard through its real loopback broker, seed deterministic cached inventory, and replace only the upstream Cloudflare transport with a stateful local fake. They do not require Cloudflare credentials or send account requests. The journeys cover cached startup, filtering and URL state, responsive controls, target selection, value comparison, intent and coverage persistence, workflow navigation, keyboard focus, read-only enforcement, reviewed writes, scoped verification, durable Activity history, and guarded undo for settings and DNS records. Playwright retains a trace, screenshot, and video for failures under the ignored `test-results/` directory.
+`npm run test:all` combines the unit and browser suites. The browser suite serves the shipped dashboard through its real loopback broker and replaces only the upstream Cloudflare transport with a stateful local fake. Playwright failure artifacts stay under ignored `test-results/` because traces and screenshots can contain rendered configuration.
 
-`npm run test:e2e:ergonomics` runs the desktop persona journeys serially and retains evidence for successful runs as well as failures. Each journey writes an `ergonomics-report.json` with categorized interactions, automatic and manual viewport travel, disclosure use, reversals, and explicit task budgets. Named viewport screenshots preserve the visual state that produced the measurements. Completion and write safety remain hard assertions; screenshots support visual interpretation without turning harmless rendering variation into pixel-diff failures. The large-fleet journey keeps one rule aligned across many zones and verifies that its value groups can be scanned before opening the horizontally wide field table. Mobile-only product checks are intentionally outside these budgets until the dashboard has a remotely reachable deployment, though the helper can measure a phone viewport when that work begins.
+An opt-in live read-only journey is available through `npm run test:e2e:live:read-only`. It requires account credentials, bypasses cached inventory, isolates state and cache, and enforces `GET` at both the broker and test transport. Keep its ignored artifacts private.
 
-Run the opt-in live account journey separately:
+## Standalone publication
+
+Run the publication gate before creating a public repository:
 
 ```sh
-npm run test:e2e:live:read-only
+npm run check:publication
+npm run export:standalone -- --output ../cloudflare-fleet-public
 ```
 
-The live journey requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. It bypasses cached inventory, copies project state into an isolated temporary file, and loads the shipped UI through the real loopback broker while every Cloudflare request goes to the configured account. The broker rejects mutations and a second transport guard rejects any upstream method other than `GET`, so the test cannot issue a Cloudflare write even if a hidden UI path regresses. The journey verifies the real matrix, target selection, equivalence inspector, fleet-intent and Activity views, missing write affordances, browser errors, and observed request methods. When an individual rule has competing values, it also records the value-group depth and field-table disclosure state, then captures the rendered comparison. Its browser closes and its temporary state and cache are removed after the run; its success trace, screenshot, and sanitized request summary remain under the ignored `test-results/live-read-only/` directory. Live screenshots and traces contain rendered account configuration, so keep the ignored result directory private.
+The checker rejects operator files, symlinks, machine-private paths, malformed screenshots, and broken local documentation links. The exporter copies regular tracked files to an empty directory while excluding operator state and deployment configuration. It does not initialize a repository or create a remote, which allows a new public repository to begin from a clean source snapshot instead of private monorepo history.
 
-Use `npm run test:e2e:ui` for Playwright's interactive runner, `npm run test:e2e:headed` to watch the suite in Chromium, or `npm run test:e2e:serve` to print a deterministic fixture URL for exploratory browser testing. Stop the fixture server with Ctrl-C when the browser session should remain open longer than the broker's normal last-tab lifecycle.
+## Security
+
+Read [SECURITY.md](SECURITY.md) and the [security architecture](docs/security.html) before enabling writes. Do not report suspected vulnerabilities through a public issue, and never attach live tokens, state files, audit reports, or fleet screenshots to a public report.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, verification, screenshot, documentation, and pull request guidance.
 
 ## License
 
-Cloudflare Fleet is licensed under AGPL-3.0-only. See `LICENSE`.
+Cloudflare Fleet is licensed under [AGPL-3.0-only](LICENSE).
+
+Cloudflare is a trademark of Cloudflare, Inc. This independent project is not affiliated with or endorsed by Cloudflare, Inc.

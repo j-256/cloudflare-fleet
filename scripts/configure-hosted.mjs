@@ -170,6 +170,9 @@ export async function hostedWranglerConfiguration(options) {
         invocation_logs: true,
       },
     },
+    secrets: {
+      required: ["CLOUDFLARE_API_TOKEN"],
+    },
   }
 }
 

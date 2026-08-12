@@ -1,16 +1,26 @@
 {
   "name": "cloudflare-fleet",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "A private control plane for comparing and aligning Cloudflare zones",
+  "description": "A self-hosted control plane for auditing and aligning Cloudflare zones",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "audit": "node src/audit.mjs",
     "build:hosted": "node scripts/build-worker-assets.mjs",
+    "check:publication": "node scripts/check-publication.mjs",
+    "configure:hosted": "node scripts/configure-hosted.mjs",
     "db:migrate:local": "wrangler d1 migrations apply cloudflare-fleet --local",
     "db:migrate:remote": "wrangler d1 migrations apply cloudflare-fleet --remote",
     "deploy": "wrangler deploy",
+    "docs:serve": "node scripts/serve-docs.mjs",
     "dev:hosted": "wrangler dev",
+    "export:standalone": "node scripts/export-standalone.mjs",
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "screenshots:ci": "node scripts/capture-screenshots.mjs --output test-results/publication-screenshots",
     "state:import:hosted": "node scripts/import-hosted-state.mjs",
     "test": "node --test test/*.test.mjs",
     "test:all": "npm test && npm run test:e2e",

@@ -54,6 +54,7 @@ test("hosted configuration writes portable Wrangler bindings", async (context) =
     emailDnsRecordExceptions: [],
     schemaVersion: 1,
   })
+  assert.deepEqual(configuration.secrets.required, ["CLOUDFLARE_API_TOKEN"])
   assert.equal(mode, 0o600)
 })
 

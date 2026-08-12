@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title description">
+  <title id="title">Cloudflare Fleet deployment architecture</title>
+  <desc id="description">The same browser application connects through either Cloudflare Access and a Worker or a local loopback broker. The Worker stores state in D1, both backends call the constrained Cloudflare API, and operator configuration stays outside the published source tree.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#122735"/>
+      <stop offset="1" stop-color="#0b1923"/>
+    </linearGradient>
+    <marker id="arrow-cyan" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#5de1d4"/>
+    </marker>
+    <marker id="arrow-violet" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#bc8cff"/>
+    </marker>
+    <style>
+      .box { fill: url(#panel); stroke: #36566a; stroke-width: 2 }
+      .box-hosted { stroke: #5de1d4 }
+      .box-local { stroke: #bc8cff }
+      .title { fill: #eff8f7; font: 700 22px ui-sans-serif, system-ui, sans-serif }
+      .label { fill: #eff8f7; font: 700 17px ui-sans-serif, system-ui, sans-serif }
+      .copy { fill: #a7bac6; font: 14px ui-sans-serif, system-ui, sans-serif }
+      .tag { fill: #5de1d4; font: 700 12px ui-monospace, monospace; letter-spacing: 1.4px }
+      .tag-local { fill: #bc8cff }
+      .tag-config { fill: #ffb454 }
+      .flow-hosted { fill: none; stroke: #5de1d4; stroke-width: 3; marker-end: url(#arrow-cyan) }
+      .flow-local { fill: none; stroke: #bc8cff; stroke-width: 3; marker-end: url(#arrow-violet) }
+      .flow-config { fill: none; stroke: #ffb454; stroke-width: 2; stroke-dasharray: 7 6 }
+    </style>
+  </defs>
+  <rect width="1280" height="720" rx="24" fill="#07121a"/>
+  <text x="44" y="52" class="title">One interface, two protected transports</text>
+  <g transform="translate(44 94)">
+    <circle cx="7" cy="7" r="6" fill="#5de1d4"/>
+    <text x="22" y="12" class="copy">Hosted path</text>
+    <circle cx="137" cy="7" r="6" fill="#bc8cff"/>
+    <text x="152" y="12" class="copy">Local path</text>
+    <path d="M254 7h34" stroke="#ffb454" stroke-width="2" stroke-dasharray="7 6"/>
+    <text x="300" y="12" class="copy">Operator configuration</text>
+  </g>
+
+  <g transform="translate(44 250)">
+    <rect class="box" width="214" height="142" rx="16"/>
+    <text x="22" y="32" class="tag">BROWSER</text>
+    <text x="22" y="66" class="label">Fleet dashboard</text>
+    <text x="22" y="94" class="copy">Matrix, intent, review,</text>
+    <text x="22" y="116" class="copy">confirmation, activity</text>
+  </g>
+
+  <g transform="translate(344 142)">
+    <rect class="box box-hosted" width="222" height="126" rx="16"/>
+    <text x="22" y="32" class="tag">HOSTED EDGE</text>
+    <text x="22" y="65" class="label">Cloudflare Access</text>
+    <text x="22" y="93" class="copy">Identity and allow policy</text>
+  </g>
+
+  <g transform="translate(644 142)">
+    <rect class="box box-hosted" width="230" height="126" rx="16"/>
+    <text x="22" y="32" class="tag">WORKER</text>
+    <text x="22" y="65" class="label">Protected backend</text>
+    <text x="22" y="93" class="copy">JWT check and API allowlist</text>
+  </g>
+
+  <g transform="translate(968 90)">
+    <rect class="box box-hosted" width="264" height="126" rx="16"/>
+    <text x="22" y="32" class="tag">DURABLE STATE</text>
+    <text x="22" y="65" class="label">Cloudflare D1</text>
+    <text x="22" y="93" class="copy">Intent, activity, snapshots</text>
+  </g>
+
+  <g transform="translate(344 452)">
+    <rect class="box box-local" width="222" height="126" rx="16"/>
+    <text x="22" y="32" class="tag tag-local">LOCAL MACOS</text>
+    <text x="22" y="65" class="label">Loopback broker</text>
+    <text x="22" y="93" class="copy">Ephemeral session capability</text>
+  </g>
+
+  <g transform="translate(644 452)">
+    <rect class="box box-local" width="230" height="126" rx="16"/>
+    <text x="22" y="32" class="tag tag-local">LOCAL STATE</text>
+    <text x="22" y="65" class="label">Private files</text>
+    <text x="22" y="93" class="copy">Intent, policy, snapshots</text>
+  </g>
+
+  <g transform="translate(968 300)">
+    <rect class="box" width="264" height="142" rx="16"/>
+    <text x="22" y="32" class="tag">CONTROLLED EGRESS</text>
+    <text x="22" y="65" class="label">Cloudflare API</text>
+    <text x="22" y="93" class="copy">Inventory reads and reviewed</text>
+    <text x="22" y="115" class="copy">resource-scoped writes</text>
+  </g>
+
+  <g transform="translate(644 624)">
+    <rect width="588" height="62" rx="14" fill="#1c211c" stroke="#85662e" stroke-width="2"/>
+    <text x="20" y="25" class="tag tag-config">IGNORED OPERATOR CONFIGURATION</text>
+    <text x="20" y="47" class="copy">Account, Access, D1, policy exceptions, API secret</text>
+  </g>
+
+  <path class="flow-hosted" d="M258 288C298 288 300 205 344 205"/>
+  <path class="flow-hosted" d="M566 205H644"/>
+  <path class="flow-hosted" d="M874 184C914 184 922 153 968 153"/>
+  <path class="flow-hosted" d="M874 226C925 226 918 343 968 343"/>
+  <path class="flow-local" d="M258 354C300 354 300 515 344 515"/>
+  <path class="flow-local" d="M566 515H644"/>
+  <path class="flow-local" d="M874 515C932 515 918 399 968 399"/>
+  <path class="flow-config" d="M760 624V578"/>
+  <path class="flow-config" d="M1020 624V442"/>
+  <text x="272" y="184" class="copy">Access JWT</text>
+  <text x="350" y="430" class="copy">Session capability</text>
+  <text x="893" y="137" class="copy">Transactions</text>
+  <text x="894" y="289" class="copy">Scoped requests</text>
+</svg>

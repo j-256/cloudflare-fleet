@@ -126,7 +126,7 @@ function dashboardRuleset(zoneName, options = {}) {
   }
 }
 
-function dashboardInventory() {
+export function dashboardInventory(options = {}) {
   const inventory = makeInventory([
     makeDashboardZone(ZONE_NAMES[0], {
       dns: dnsRecords(ZONE_NAMES[0], {
@@ -171,7 +171,7 @@ function dashboardInventory() {
     }),
   ])
   inventory.account.id = ACCOUNT_ID
-  inventory.loadedAt = new Date().toISOString()
+  inventory.loadedAt = options.loadedAt || new Date().toISOString()
   return inventory
 }
 
