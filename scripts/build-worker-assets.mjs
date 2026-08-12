@@ -2,6 +2,8 @@ import { copyFile, mkdir, readFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { isMainModule } from "../src/entrypoint.mjs"
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = path.dirname(SCRIPT_DIR)
 const DEFAULT_DESTINATION = path.join(PROJECT_ROOT, ".worker-assets")
@@ -63,7 +65,7 @@ export async function buildWorkerAssets(destination = DEFAULT_DESTINATION) {
   }
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   buildWorkerAssets().then((result) => {
     process.stdout.write(`${JSON.stringify(result)}\n`)
   }).catch((error) => {

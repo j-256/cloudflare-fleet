@@ -3,6 +3,8 @@ import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { isMainModule } from "../src/entrypoint.mjs"
+
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DOCS_ROOT = path.join(PROJECT_ROOT, "docs")
 const DEFAULT_PORT = 4173
@@ -57,7 +59,7 @@ export function createDocumentationServer() {
   })
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   let port
   try {
     port = parsePort(process.argv.slice(2))

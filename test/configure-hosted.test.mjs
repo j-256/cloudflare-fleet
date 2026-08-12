@@ -1,14 +1,20 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { promises as fs } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 
 import {
   hostedWranglerConfiguration,
   parseHostedConfigurationArguments,
   writeHostedWranglerConfiguration,
 } from "../scripts/configure-hosted.mjs"
+
+const CONFIGURE_SCRIPT = fileURLToPath(
+  new URL("../scripts/configure-hosted.mjs", import.meta.url),
+)
 
 function options(root) {
   return {
@@ -69,4 +75,25 @@ test("hosted configuration rejects incomplete deployment identity", async () => 
     hostedWranglerConfiguration({ ...configured, accountId: "account" }),
     /account ID is invalid/,
   )
+})
+
+test("hosted configuration CLI resolves a symlinked entry path", async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fleet-hosted-config-cli."))
+  context.after(() => fs.rm(root, { force: true, recursive: true }))
+  const entryPath = path.join(root, "configure-hosted.mjs")
+  const outputFile = path.join(root, "wrangler.jsonc")
+  await fs.symlink(CONFIGURE_SCRIPT, entryPath)
+
+  const result = spawnSync(process.execPath, [
+    entryPath,
+    "--access-aud", "b".repeat(64),
+    "--access-team-domain", "https://team.cloudflareaccess.com",
+    "--account-id", "a".repeat(32),
+    "--database-id", "11111111-2222-4333-8444-555555555555",
+    "--hostname", "fleet.example.com",
+    "--output", outputFile,
+  ], { encoding: "utf8" })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(JSON.parse(await fs.readFile(outputFile, "utf8")).name, "cloudflare-fleet")
 })

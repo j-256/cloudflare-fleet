@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 
 import { readFleetPolicyConfiguration } from "../src/fleet-policy-store.mjs"
 import { atomicWriteFile } from "../src/atomic-file.mjs"
+import { isMainModule } from "../src/entrypoint.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_OUTPUT_FILE = path.join(PROJECT_ROOT, "wrangler.jsonc")
@@ -186,7 +187,7 @@ export async function writeHostedWranglerConfiguration(options) {
   return configuration
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   let options
   try {
     options = parseHostedConfigurationArguments(process.argv.slice(2))

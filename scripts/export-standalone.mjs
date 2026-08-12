@@ -3,6 +3,8 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
+import { isMainModule } from "../src/entrypoint.mjs"
+
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const PRIVATE_FILES = new Set([
   "fleet-policy.json",
@@ -91,7 +93,7 @@ export async function exportStandalone(options) {
   return { files: files.length, outputDirectory }
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   let options
   try {
     options = parseArguments(process.argv.slice(2))

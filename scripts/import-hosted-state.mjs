@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import {
   isFleetStateDocument,
 } from "../src/fleet-state.mjs"
+import { isMainModule } from "../src/entrypoint.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_STATE_FILE = path.join(PROJECT_ROOT, "state.json")
@@ -237,7 +238,7 @@ export async function importHostedState(options = {}) {
   }
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   let parsed
   try {
     parsed = parseImportHostedStateArguments(process.argv.slice(2))

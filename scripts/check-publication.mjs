@@ -3,6 +3,8 @@ import path from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
+import { isMainModule } from "../src/entrypoint.mjs"
+
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DOCS_ROOT = path.join(PROJECT_ROOT, "docs")
 const REQUIRED_FILES = Object.freeze([
@@ -207,7 +209,7 @@ export async function checkPublication() {
   return { files: files.length }
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   checkPublication().then((result) => {
     process.stdout.write(`Publication tree is ready (${result.files} files checked)\n`)
   }).catch((error) => {

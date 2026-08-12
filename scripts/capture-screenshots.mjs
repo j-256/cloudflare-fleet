@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 
 import { chromium } from "@playwright/test"
 
+import { isMainModule } from "../src/entrypoint.mjs"
 import {
   closeDashboardSession,
   createDashboardSession,
@@ -146,7 +147,7 @@ export async function capturePublicationScreenshots(options = {}) {
   return screenshots
 }
 
-if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   let options
   try {
     options = parseArguments(process.argv.slice(2))
