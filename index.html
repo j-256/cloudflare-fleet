@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A static local control plane for auditing and aligning Cloudflare zones.">
+  <meta name="description" content="A private control plane for auditing and aligning Cloudflare zones.">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self' https://api.cloudflare.com; script-src 'self'; style-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'">
   <title>Cloudflare Fleet</title>
@@ -17,8 +17,8 @@
   </nav>
 
   <div class="fatal" id="fatal" role="alert" hidden>
-    <p class="eyebrow">Launch required</p>
-    <h1>Open this dashboard from the terminal</h1>
+    <p class="eyebrow">Protected connection required</p>
+    <h1>Open this dashboard through its protected host or launcher</h1>
     <p id="fatal-message">The protected Cloudflare session is unavailable.</p>
   </div>
 
@@ -26,7 +26,7 @@
     <header class="hero">
       <div class="hero-heading">
         <div>
-          <p class="eyebrow">Cloudflare control plane / live local session</p>
+          <p class="eyebrow">Cloudflare control plane / protected live session</p>
           <h1>Cloudflare Fleet</h1>
         </div>
         <div class="session-state" role="status" aria-live="polite" aria-atomic="true">
@@ -1007,7 +1007,7 @@
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close operation history">&times;</button>
       <header class="activity-heading">
         <div>
-          <p class="dialog-kicker">Durable local journal</p>
+          <p class="dialog-kicker">Durable operation journal</p>
           <h2 id="activity-title">Operation history</h2>
           <p id="activity-summary">Reviewed Cloudflare writes, verification results, and guarded undo availability.</p>
         </div>

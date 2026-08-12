@@ -2,10 +2,16 @@
   "name": "cloudflare-fleet",
   "version": "0.0.0",
   "private": true,
-  "description": "A local control plane for comparing and aligning Cloudflare zones",
+  "description": "A private control plane for comparing and aligning Cloudflare zones",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
+    "build:hosted": "node scripts/build-worker-assets.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply cloudflare-fleet --local",
+    "db:migrate:remote": "wrangler d1 migrations apply cloudflare-fleet --remote",
+    "deploy": "wrangler deploy",
+    "dev:hosted": "wrangler dev",
+    "state:import:hosted": "node scripts/import-hosted-state.mjs",
     "test": "node --test test/*.test.mjs",
     "test:all": "npm test && npm run test:e2e",
     "test:e2e": "playwright test",
@@ -16,6 +22,10 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1"
+    "@playwright/test": "1.62.1",
+    "wrangler": "4.121.0"
+  },
+  "dependencies": {
+    "jose": "6.2.8"
   }
 }

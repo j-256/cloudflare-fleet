@@ -6,6 +6,7 @@ import {
 } from "./constants.mjs"
 
 export const BROKER_SESSION_HEADER = "X-Cloudflare-Fleet-Session"
+export const FLEET_BOOTSTRAP_ERROR_GLOBAL = "__CLOUDFLARE_FLEET_BOOTSTRAP_ERROR__"
 
 const API_BASE = new URL(API_BASE_URL)
 const SESSION_MONITOR_RETRY_MS = 1000
@@ -65,21 +66,22 @@ export class CloudflareApi {
   constructor({
     apiToken,
     accountId,
+    backendBaseUrl,
     brokerBaseUrl,
     brokerSecret,
     fetchImpl = globalThis.fetch,
   }) {
-    if (!apiToken && !brokerSecret) {
-      throw new TypeError("apiToken or brokerSecret is required")
+    if (!apiToken && !backendBaseUrl && !brokerSecret) {
+      throw new TypeError("apiToken or backend transport is required")
     }
     if (!accountId) throw new TypeError("accountId is required")
     if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl must be a function")
 
     this.apiToken = apiToken
     this.accountId = accountId
-    this.brokerBaseUrl = brokerSecret
+    this.backendBaseUrl = (backendBaseUrl || brokerSecret)
       ? new URL(
-          brokerBaseUrl || "./api/",
+          backendBaseUrl || brokerBaseUrl || "./api/",
           globalThis.location?.href || API_BASE_URL,
         )
       : null
@@ -91,17 +93,30 @@ export class CloudflareApi {
     return Boolean(this.brokerSecret)
   }
 
+  get usesBackend() {
+    return Boolean(this.backendBaseUrl)
+  }
+
+  backendHeaders(options = {}) {
+    const headers = {
+      Accept: "application/json",
+    }
+    if (options.json) headers["Content-Type"] = "application/json"
+    if (this.usesBroker) headers[BROKER_SESSION_HEADER] = this.brokerSecret
+    return headers
+  }
+
   async request(path, options = {}) {
     const method = options.method || HTTP_METHOD.GET
     const cloudflareUrl = resolveCloudflareApiUrl(path)
-    const url = this.usesBroker
-      ? new URL(`cloudflare/${apiRelativeUrl(cloudflareUrl)}`, this.brokerBaseUrl)
+    const url = this.usesBackend
+      ? new URL(`cloudflare/${apiRelativeUrl(cloudflareUrl)}`, this.backendBaseUrl)
       : cloudflareUrl
     const headers = {
       Accept: "application/json",
     }
     if (this.usesBroker) headers[BROKER_SESSION_HEADER] = this.brokerSecret
-    else headers.Authorization = `Bearer ${this.apiToken}`
+    else if (!this.usesBackend) headers.Authorization = `Bearer ${this.apiToken}`
     const request = {
       method,
       headers,
@@ -170,15 +185,15 @@ export class CloudflareApi {
       throw new TypeError("GraphQL variables must be an object")
     }
     const cloudflareUrl = new URL("graphql", API_BASE_URL)
-    const url = this.usesBroker
-      ? new URL("cloudflare/graphql", this.brokerBaseUrl)
+    const url = this.usesBackend
+      ? new URL("cloudflare/graphql", this.backendBaseUrl)
       : cloudflareUrl
     const headers = {
       Accept: "application/json",
       "Content-Type": "application/json",
     }
     if (this.usesBroker) headers[BROKER_SESSION_HEADER] = this.brokerSecret
-    else headers.Authorization = `Bearer ${this.apiToken}`
+    else if (!this.usesBackend) headers.Authorization = `Bearer ${this.apiToken}`
     let response
     try {
       response = await this.fetchImpl(url, {
@@ -226,14 +241,10 @@ export class CloudflareApi {
   }
 
   async persistSnapshot(serializedSnapshot, options = {}) {
-    if (!this.usesBroker) return
-    const response = await this.fetchImpl(new URL("cache", this.brokerBaseUrl), {
+    if (!this.usesBackend) return
+    const response = await this.fetchImpl(new URL("cache", this.backendBaseUrl), {
       body: serializedSnapshot,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        [BROKER_SESSION_HEADER]: this.brokerSecret,
-      },
+      headers: this.backendHeaders({ json: true }),
       method: HTTP_METHOD.POST,
       signal: options.signal,
     })
@@ -243,14 +254,11 @@ export class CloudflareApi {
   }
 
   async loadFleetIntent(options = {}) {
-    if (!this.usesBroker) {
-      throw new Error("Fleet intent persistence requires the loopback session broker")
+    if (!this.usesBackend) {
+      throw new Error("Fleet intent persistence requires a protected backend")
     }
-    const response = await this.fetchImpl(new URL("intent", this.brokerBaseUrl), {
-      headers: {
-        Accept: "application/json",
-        [BROKER_SESSION_HEADER]: this.brokerSecret,
-      },
+    const response = await this.fetchImpl(new URL("intent", this.backendBaseUrl), {
+      headers: this.backendHeaders(),
       signal: options.signal,
     })
     const envelope = await response.json()
@@ -261,19 +269,15 @@ export class CloudflareApi {
   }
 
   async persistFleetIntent(document, options = {}) {
-    if (!this.usesBroker) {
-      throw new Error("Fleet intent persistence requires the loopback session broker")
+    if (!this.usesBackend) {
+      throw new Error("Fleet intent persistence requires a protected backend")
     }
-    const response = await this.fetchImpl(new URL("intent", this.brokerBaseUrl), {
+    const response = await this.fetchImpl(new URL("intent", this.backendBaseUrl), {
       body: JSON.stringify({
         document,
         expectedRevision: document.revision,
       }),
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        [BROKER_SESSION_HEADER]: this.brokerSecret,
-      },
+      headers: this.backendHeaders({ json: true }),
       method: HTTP_METHOD.PUT,
       signal: options.signal,
     })
@@ -291,14 +295,11 @@ export class CloudflareApi {
   }
 
   async loadOperationActivity(options = {}) {
-    if (!this.usesBroker) {
-      throw new Error("Operation history requires the loopback session broker")
+    if (!this.usesBackend) {
+      throw new Error("Operation history requires a protected backend")
     }
-    const response = await this.fetchImpl(new URL("activity", this.brokerBaseUrl), {
-      headers: {
-        Accept: "application/json",
-        [BROKER_SESSION_HEADER]: this.brokerSecret,
-      },
+    const response = await this.fetchImpl(new URL("activity", this.backendBaseUrl), {
+      headers: this.backendHeaders(),
       signal: options.signal,
     })
     const envelope = await response.json()
@@ -317,16 +318,12 @@ export class CloudflareApi {
   }
 
   async persistOperationActivity(entry, method, options = {}) {
-    if (!this.usesBroker) {
-      throw new Error("Operation history requires the loopback session broker")
+    if (!this.usesBackend) {
+      throw new Error("Operation history requires a protected backend")
     }
-    const response = await this.fetchImpl(new URL("activity", this.brokerBaseUrl), {
+    const response = await this.fetchImpl(new URL("activity", this.backendBaseUrl), {
       body: JSON.stringify({ entry }),
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        [BROKER_SESSION_HEADER]: this.brokerSecret,
-      },
+      headers: this.backendHeaders({ json: true }),
       method,
       signal: options.signal,
     })
@@ -354,7 +351,7 @@ export class CloudflareApi {
     const monitor = async () => {
       while (!controller.signal.aborted) {
         try {
-          const response = await this.fetchImpl(new URL("liveness", this.brokerBaseUrl), {
+          const response = await this.fetchImpl(new URL("liveness", this.backendBaseUrl), {
             headers: {
               Accept: "text/event-stream",
               [BROKER_SESSION_HEADER]: this.brokerSecret,

@@ -124,6 +124,36 @@ test("broker transport keeps the Cloudflare token out of browser requests", asyn
   assert.equal(Object.hasOwn(captured.request.headers, "Authorization"), false)
 })
 
+test("hosted transport uses the same-origin backend without browser credentials", async () => {
+  const calls = []
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    backendBaseUrl: "https://fleet.example/api/",
+    fetchImpl: async (url, request) => {
+      calls.push({ request, url: new URL(url) })
+      return jsonResponse({
+        result: { revision: "revision-one" },
+        success: true,
+      })
+    },
+  })
+
+  await api.getZoneSetting("zone-id", "always_use_https")
+  await api.loadFleetIntent()
+
+  assert.equal(
+    calls[0].url.href,
+    "https://fleet.example/api/cloudflare/zones/zone-id/settings/always_use_https",
+  )
+  assert.equal(calls[1].url.href, "https://fleet.example/api/intent")
+  assert.equal(api.usesBackend, true)
+  assert.equal(api.usesBroker, false)
+  for (const call of calls) {
+    assert.equal(Object.hasOwn(call.request.headers, "Authorization"), false)
+    assert.equal(Object.hasOwn(call.request.headers, BROKER_SESSION_HEADER), false)
+  }
+})
+
 test("request rejects paths outside the Cloudflare API boundary before sending auth", async () => {
   let calls = 0
   const api = new CloudflareApi({
@@ -422,18 +452,18 @@ test("direct browser transport keeps fleet intent view-only", async () => {
     },
   })
 
-  await assert.rejects(api.loadFleetIntent(), /requires the loopback session broker/)
+  await assert.rejects(api.loadFleetIntent(), /requires a protected backend/)
   await assert.rejects(
     api.persistFleetIntent({ revision: "" }),
-    /requires the loopback session broker/,
+    /requires a protected backend/,
   )
   await assert.rejects(
     api.loadOperationActivity(),
-    /requires the loopback session broker/,
+    /requires a protected backend/,
   )
   await assert.rejects(
     api.appendOperationActivity({}),
-    /requires the loopback session broker/,
+    /requires a protected backend/,
   )
 })
 

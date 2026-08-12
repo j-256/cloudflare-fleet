@@ -14,25 +14,25 @@ test("intent save status stays visibly pending until persistence finishes", () =
     saving: true,
     transportAvailable: true,
     updatedAt: "2026-08-05T01:20:00.000Z",
-    usesBroker: true,
+    usesBackend: true,
   })
 
   assert.equal(status, FLEET_INTENT_SAVE_STATUS.SAVING)
   assert.deepEqual(intentSaveStatusPresentation(status), {
     label: "Saving...",
     modifier: "saving",
-    title: "Fleet intent is being saved to project state",
+    title: "Fleet intent is being saved to durable Fleet state",
   })
 })
 
-test("intent save status confirms the broker-provided save time", () => {
+test("intent save status confirms the backend-provided save time", () => {
   const status = resolveIntentSaveStatus({
     failureMessage: "",
     readOnly: false,
     saving: false,
     transportAvailable: true,
     updatedAt: "2026-08-05T01:20:00.000Z",
-    usesBroker: true,
+    usesBackend: true,
   })
 
   assert.equal(status, FLEET_INTENT_SAVE_STATUS.SAVED)
@@ -41,7 +41,7 @@ test("intent save status confirms the broker-provided save time", () => {
     {
       label: "Saved Aug 5, 1:20 AM",
       modifier: "saved",
-      title: "Fleet intent was saved to project state Aug 5, 1:20 AM",
+      title: "Fleet intent was saved to durable Fleet state Aug 5, 1:20 AM",
     },
   )
 })
@@ -54,7 +54,7 @@ test("intent save status keeps persistence failures visible", () => {
     saving: false,
     transportAvailable: true,
     updatedAt: "2026-08-05T01:20:00.000Z",
-    usesBroker: true,
+    usesBackend: true,
   })
 
   assert.equal(status, FLEET_INTENT_SAVE_STATUS.FAILED)
@@ -75,7 +75,7 @@ test("intent save status distinguishes unsaved, read-only, and offline sessions"
     saving: false,
     transportAvailable: true,
     updatedAt: null,
-    usesBroker: true,
+    usesBackend: true,
   }
 
   assert.equal(
@@ -91,7 +91,7 @@ test("intent save status distinguishes unsaved, read-only, and offline sessions"
     FLEET_INTENT_SAVE_STATUS.OFFLINE,
   )
   assert.equal(
-    resolveIntentSaveStatus({ ...base, usesBroker: false }),
+    resolveIntentSaveStatus({ ...base, usesBackend: false }),
     FLEET_INTENT_SAVE_STATUS.UNAVAILABLE,
   )
 })

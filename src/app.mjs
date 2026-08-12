@@ -8,6 +8,7 @@ import {
 } from "./capabilities.mjs"
 import {
   CloudflareApi,
+  FLEET_BOOTSTRAP_ERROR_GLOBAL,
   FleetIntentApiConflictError,
 } from "./api.mjs"
 import {
@@ -277,6 +278,8 @@ import {
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
+const bootstrapError = window[FLEET_BOOTSTRAP_ERROR_GLOBAL]
+delete window[FLEET_BOOTSTRAP_ERROR_GLOBAL]
 const injectedCache = window[CACHE_RECORD_GLOBAL]
 delete window[CACHE_RECORD_GLOBAL]
 delete window[CACHE_SNAPSHOT_GLOBAL]
@@ -286,9 +289,16 @@ delete window[FLEET_INTENT_DOCUMENT_GLOBAL]
 const fatal = document.querySelector("#fatal")
 const application = document.querySelector("#application")
 
-if ((!auth?.apiToken && !auth?.brokerSecret) || !auth?.accountId) {
+if (bootstrapError) {
   fatal.hidden = false
-  document.querySelector("#fatal-message").textContent = "Run ./launch.sh so the terminal can create a protected local session from CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID."
+  document.querySelector("#fatal-message").textContent = `The protected Fleet backend could not start: ${bootstrapError}`
+  throw new Error("Cloudflare Fleet bootstrap failed")
+}
+
+if ((!auth?.apiToken && !auth?.backendBaseUrl && !auth?.brokerSecret)
+  || !auth?.accountId) {
+  fatal.hidden = false
+  document.querySelector("#fatal-message").textContent = "Open the hosted dashboard or run ./launch.sh so Fleet can create a protected Cloudflare session."
   throw new Error("Cloudflare session auth is unavailable")
 }
 
@@ -906,10 +916,18 @@ elements.intentPolicyCustomKind.replaceChildren(...Object.values(JSON_VALUE_KIND
   option.value = kind
   return option
 }))
-elements.sessionMode.textContent = readOnly ? "Read-only session" : "Read/write session"
+elements.sessionMode.textContent = auth.hosted
+  ? readOnly
+    ? "Hosted read-only deployment"
+    : "Hosted read/write deployment"
+  : readOnly
+    ? "Read-only session"
+    : "Read/write session"
 elements.writePanel.classList.toggle("read-only", readOnly)
 elements.writeReadiness.textContent = readOnly
-  ? "Read-only session; relaunch with write access to apply changes"
+  ? auth.hosted
+    ? "Hosted deployment is read-only; enable writes to apply changes"
+    : "Read-only session; relaunch with write access to apply changes"
   : "Loading live state; writes are locked"
 elements.alignEmail.hidden = readOnly
 elements.alignWaf.hidden = readOnly
@@ -1134,7 +1152,7 @@ function zoneById(zoneId) {
 }
 
 function intentMutationSupported() {
-  return !readOnly && api.usesBroker
+  return !readOnly && api.usesBackend
 }
 
 function intentWritable() {
@@ -4713,8 +4731,8 @@ function setIntentSaving(saving) {
 
 function intentUndoUnavailableReason() {
   if (readOnly) return "This session is read-only"
-  if (!api.usesBroker) return "Intent undo requires a normal dashboard session"
-  if (!state.transportAvailable) return "The session broker is offline"
+  if (!api.usesBackend) return "Intent undo requires a protected Fleet backend"
+  if (!state.transportAvailable) return "The Fleet backend is offline"
   if (state.intentSaving) return "Wait for the fleet intent save to finish"
   if (state.busy) return "Wait for the current fleet operation to finish"
   return "No fleet intent change from this window is available to undo"
@@ -4741,7 +4759,7 @@ function renderIntentSaveStatus() {
     saving: state.intentSaving,
     transportAvailable: state.transportAvailable,
     updatedAt: state.intent.updatedAt,
-    usesBroker: api.usesBroker,
+    usesBackend: api.usesBackend,
   })
   const presentation = intentSaveStatusPresentation(status, {
     failureMessage: state.intentSaveFailure,
@@ -4782,9 +4800,9 @@ function setIntentSaveButtonSaving(button, saving, savingLabel = "") {
 async function persistIntentDocument(document, successMessage, options = {}) {
   if (!intentWritable()) {
     toast(
-      api.usesBroker
-        ? "Fleet intent is read-only while this session is unavailable"
-        : "Fleet intent persistence requires a normal dashboard session",
+      api.usesBackend
+        ? "Fleet intent is read-only while the Fleet backend is unavailable"
+        : "Fleet intent persistence requires a protected Fleet backend",
       "error",
     )
     return false
@@ -4800,7 +4818,7 @@ async function persistIntentDocument(document, successMessage, options = {}) {
   try {
     const saved = await api.persistFleetIntent(document)
     if (!isFleetIntentDocument(saved, auth.accountId)) {
-      throw new Error("The broker returned an invalid fleet intent document")
+      throw new Error("The Fleet backend returned an invalid fleet intent document")
     }
     if (options.recordUndo !== false) {
       state.intentUndoStack = recordIntentUndo(
@@ -4978,12 +4996,12 @@ async function saveCoverageIntent(event) {
 }
 
 async function syncFleetIntent(options = {}) {
-  if (!api.usesBroker || state.intentSaving || state.intentSyncing) return false
+  if (!api.usesBackend || state.intentSaving || state.intentSyncing) return false
   state.intentSyncing = true
   try {
     const latest = await api.loadFleetIntent()
     if (!isFleetIntentDocument(latest, auth.accountId)) {
-      throw new Error("The broker returned an invalid fleet intent document")
+      throw new Error("The Fleet backend returned an invalid fleet intent document")
     }
     if (latest.revision === state.intent.revision) return false
     state.intent = latest
@@ -8081,8 +8099,10 @@ function renderIntentManager() {
   }
   const modeDetail = readOnly
     ? "This read-only session can inspect intent but cannot change it."
-    : api.usesBroker
-      ? "Intent is persisted as project state and shared by normal dashboard windows."
+    : api.usesBackend
+      ? auth.hosted
+        ? "Intent is persisted in durable hosted state and shared by authorized dashboard windows."
+        : "Intent is persisted as project state and shared by normal dashboard windows."
       : "This debug session can inspect injected intent but cannot persist changes."
   elements.intentSummary.textContent = modeDetail
   elements.intentMetrics.replaceChildren(
@@ -8745,7 +8765,7 @@ function renderMatrix() {
       valueComparisonRowByButton.set(compareButton, row)
       facetActions.append(compareButton)
     }
-    if (!readOnly && api.usesBroker) {
+    if (!readOnly && api.usesBackend) {
       const policies = row.intentState?.policies || []
       const policyGroup = policies.length === 1
         ? intentGroupById(policies[0].groupId)
@@ -9935,7 +9955,7 @@ function renderOperationActivity() {
 }
 
 async function loadOperationActivity(options = {}) {
-  if (!api.usesBroker) {
+  if (!api.usesBackend) {
     elements.activityLoadError.textContent = "Operation history is unavailable in a direct debug session"
     elements.activityLoadError.hidden = false
     renderOperationActivity()
@@ -10172,7 +10192,7 @@ async function applyPlans(title, planSet, options = {}) {
   )
   try {
     if (options.beforeExecute) await options.beforeExecute()
-    if (api.usesBroker) {
+    if (api.usesBackend) {
       const pendingActivity = createPendingOperationActivity(title, planSet, {
         undoOf: options.undoOf || null,
       })
