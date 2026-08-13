@@ -9,6 +9,8 @@ export const BROKER_SESSION_HEADER = "X-Cloudflare-Fleet-Session"
 export const FLEET_BOOTSTRAP_ERROR_GLOBAL = "__CLOUDFLARE_FLEET_BOOTSTRAP_ERROR__"
 
 const API_BASE = new URL(API_BASE_URL)
+const DEFAULT_READ_THROTTLE_DELAY_MS = 1000
+const MAX_READ_THROTTLE_RETRIES = 3
 const SESSION_MONITOR_RETRY_MS = 1000
 
 export function resolveCloudflareApiUrl(path) {
@@ -27,19 +29,29 @@ function apiRelativeUrl(url) {
 
 function abortableDelay(delayMs, signal) {
   return new Promise((resolve) => {
-    if (signal.aborted) {
+    if (delayMs <= 0 || signal?.aborted) {
       resolve()
       return
     }
     let timer
     const finish = () => {
       clearTimeout(timer)
-      signal.removeEventListener("abort", finish)
+      signal?.removeEventListener("abort", finish)
       resolve()
     }
     timer = setTimeout(finish, delayMs)
-    signal.addEventListener("abort", finish, { once: true })
+    signal?.addEventListener("abort", finish, { once: true })
   })
+}
+
+function retryAfterDelay(value) {
+  const seconds = typeof value === "string" && value.trim() !== ""
+    ? Number(value)
+    : Number.NaN
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+  const date = Date.parse(value)
+  if (Number.isFinite(date)) return Math.max(0, date - Date.now())
+  return DEFAULT_READ_THROTTLE_DELAY_MS
 }
 
 export class CloudflareApiError extends Error {
@@ -87,6 +99,7 @@ export class CloudflareApi {
       : null
     this.brokerSecret = brokerSecret
     this.fetchImpl = fetchImpl.bind(globalThis)
+    this.readThrottleUntil = 0
   }
 
   get usesBroker() {
@@ -129,14 +142,32 @@ export class CloudflareApi {
     }
 
     let response
-    try {
-      response = await this.fetchImpl(url, request)
-    } catch (error) {
-      throw new CloudflareApiError(`Network request failed for ${method} ${cloudflareUrl.pathname}`, {
-        method,
-        path: cloudflareUrl.pathname,
-        errors: [{ message: error instanceof Error ? error.message : String(error) }],
-      })
+    let throttleRetries = 0
+    while (true) {
+      if (method === HTTP_METHOD.GET) {
+        await abortableDelay(
+          Math.max(0, this.readThrottleUntil - Date.now()),
+          options.signal,
+        )
+      }
+      try {
+        response = await this.fetchImpl(url, request)
+      } catch (error) {
+        throw new CloudflareApiError(`Network request failed for ${method} ${cloudflareUrl.pathname}`, {
+          method,
+          path: cloudflareUrl.pathname,
+          errors: [{ message: error instanceof Error ? error.message : String(error) }],
+        })
+      }
+      if (method !== HTTP_METHOD.GET || response.status !== 429) break
+      const retryAt = Date.now()
+        + retryAfterDelay(response.headers.get("Retry-After"))
+      this.readThrottleUntil = Math.max(this.readThrottleUntil, retryAt)
+      if (throttleRetries >= MAX_READ_THROTTLE_RETRIES) break
+      throttleRetries += 1
+      try {
+        await response.body?.cancel()
+      } catch {}
     }
 
     if (response.ok && response.status === 204) {

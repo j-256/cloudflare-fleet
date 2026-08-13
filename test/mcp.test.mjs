@@ -14,6 +14,24 @@ const DIGEST = `sha256:${"a".repeat(64)}`
 const DIFFERENT_DIGEST = `sha256:${"b".repeat(64)}`
 const SECRET = "test-cloudflare-token"
 const SELECTOR = Object.freeze({ policyId: "policy-one" })
+const BATCH_SELECTORS = Object.freeze([
+  SELECTOR,
+  Object.freeze({
+    category: "Zone settings",
+    key: "early_hints",
+    zoneIds: ["zone-one"],
+  }),
+])
+const NORMALIZED_BATCH_SELECTORS = Object.freeze([
+  Object.freeze({ kind: "policy", policyId: "policy-one" }),
+  Object.freeze({
+    category: "Zone settings",
+    key: "early_hints",
+    kind: "cell",
+    phase: "",
+    zoneIds: ["zone-one"],
+  }),
+])
 
 function plannedAlignment(overrides = {}) {
   return {
@@ -87,18 +105,111 @@ function verifiedAlignment() {
   }
 }
 
+function plannedAlignmentBatch(overrides = {}) {
+  return {
+    accountId: "account-one",
+    alignments: [
+      {
+        facet: {
+          category: "settings",
+          key: "always_use_https",
+          label: "Always Use HTTPS",
+          phase: "",
+        },
+        selector: NORMALIZED_BATCH_SELECTORS[0],
+        status: "planned",
+      },
+      {
+        facet: {
+          category: "settings",
+          key: "early_hints",
+          label: "Early Hints",
+          phase: "",
+        },
+        selector: NORMALIZED_BATCH_SELECTORS[1],
+        status: "planned",
+      },
+    ],
+    planSet: {
+      digest: DIGEST,
+      intentRevision: "intent-one",
+      plans: [
+        {
+          operations: [{
+            body: { value: "on" },
+            label: "Enable Always Use HTTPS",
+            method: "PATCH",
+            path: "zones/zone-one/settings/always_use_https",
+          }],
+          zoneId: "zone-one",
+          zoneName: "one.example",
+        },
+        {
+          operations: [{
+            body: { value: "on" },
+            label: "Enable Early Hints",
+            method: "PATCH",
+            path: "zones/zone-one/settings/early_hints",
+          }],
+          zoneId: "zone-one",
+          zoneName: "one.example",
+        },
+      ],
+      preview: [
+        {
+          body: { value: "on" },
+          label: "Enable Always Use HTTPS",
+          method: "PATCH",
+          path: "zones/zone-one/settings/always_use_https",
+          zoneId: "zone-one",
+          zoneName: "one.example",
+        },
+        {
+          body: { value: "on" },
+          label: "Enable Early Hints",
+          method: "PATCH",
+          path: "zones/zone-one/settings/early_hints",
+          zoneId: "zone-one",
+          zoneName: "one.example",
+        },
+      ],
+      selectors: NORMALIZED_BATCH_SELECTORS,
+      validatedAt: "2026-08-13T00:00:00.000Z",
+    },
+    reason: "Two targets differ",
+    schemaVersion: 1,
+    selectors: NORMALIZED_BATCH_SELECTORS,
+    status: "planned",
+    ...overrides,
+  }
+}
+
+function verifiedAlignmentBatch() {
+  return {
+    ...verifiedAlignment(),
+    selector: undefined,
+    selectors: NORMALIZED_BATCH_SELECTORS,
+  }
+}
+
 function serviceFixture(overrides = {}) {
   const calls = {
     apply: [],
+    applyBatch: [],
     listActivity: 0,
     listAlignments: 0,
     plan: [],
+    planBatch: [],
   }
   const service = {
     accountId: "account-one",
     async applyAlignment(selector, digest) {
       calls.apply.push({ digest, selector })
       return overrides.applyResult || verifiedAlignment()
+    },
+    async applyAlignments(selectors, digest) {
+      calls.applyBatch.push({ digest, selectors })
+      return overrides.applyBatchResult || verifiedAlignmentBatch()
     },
     async listActivity() {
       calls.listActivity += 1
@@ -131,6 +242,10 @@ function serviceFixture(overrides = {}) {
     async planAlignment(selector) {
       calls.plan.push(selector)
       return overrides.planResult || plannedAlignment()
+    },
+    async planAlignments(selectors) {
+      calls.planBatch.push(selectors)
+      return overrides.planBatchResult || plannedAlignmentBatch()
     },
     stateFile: "/unused/fleet-state.json",
   }
@@ -205,6 +320,7 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
       "list_alignment_candidates",
       "plan_alignment",
       "apply_alignment",
+      "apply_alignments",
       "list_activity",
     ],
   )
@@ -217,6 +333,12 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   })
   assert.deepEqual(apply.inputSchema.required, ["planDigest", "selector"])
   assert.deepEqual(apply.outputSchema.required, ["schemaVersion", "status"])
+  const applyBatch = result.tools.find((entry) => entry.name === "apply_alignments")
+  assert.deepEqual(applyBatch.inputSchema.required, ["selectors"])
+  assert.equal(
+    Object.hasOwn(applyBatch.inputSchema.properties, "planDigest"),
+    false,
+  )
   const activity = result.tools.find((entry) => entry.name === "list_activity")
   assert.equal(activity.annotations.openWorldHint, false)
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
@@ -367,6 +489,55 @@ test("MCP apply refuses a changed plan before requesting confirmation", async (c
   assert.equal(calls.apply.length, 0)
 })
 
+test("MCP batch apply elicits one combined review and fresh apply", async (context) => {
+  let request
+  let elicitations = 0
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async (incoming) => {
+      elicitations += 1
+      request = incoming
+      return {
+        action: "accept",
+        content: { approve: true },
+      }
+    },
+  })
+
+  const result = await client.callTool({
+    arguments: { selectors: BATCH_SELECTORS },
+    name: "apply_alignments",
+  })
+
+  assert.equal(result.structuredContent.status, "verified")
+  assert.equal(result.isError, undefined)
+  assert.equal(elicitations, 1)
+  assert.deepEqual(calls.planBatch, [NORMALIZED_BATCH_SELECTORS])
+  assert.deepEqual(calls.applyBatch, [{
+    digest: DIGEST,
+    selectors: NORMALIZED_BATCH_SELECTORS,
+  }])
+  assert.match(request.params.message, /alignment batch/)
+  assert.match(request.params.message, /Always Use HTTPS: planned/)
+  assert.match(request.params.message, /Early Hints: planned/)
+  assert.match(request.params.message, /settings\/always_use_https/)
+  assert.match(request.params.message, /settings\/early_hints/)
+  assert.deepEqual(request.params.requestedSchema.required, ["approve"])
+})
+
+test("MCP batch apply stops without writing when confirmation is declined", async (context) => {
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async () => ({ action: "decline" }),
+  })
+
+  const result = await client.callTool({
+    arguments: { selectors: BATCH_SELECTORS },
+    name: "apply_alignments",
+  })
+
+  assert.equal(result.structuredContent.status, "confirmation-declined")
+  assert.equal(calls.applyBatch.length, 0)
+})
+
 test("MCP tool errors redact the Cloudflare API token", async (context) => {
   const { client } = await connectedFixture(context, {
     serviceOverrides: {
@@ -424,6 +595,7 @@ test("MCP stdio entrypoint negotiates the modern protocol without stdout noise",
       "list_alignment_candidates",
       "plan_alignment",
       "apply_alignment",
+      "apply_alignments",
       "list_activity",
     ],
   )

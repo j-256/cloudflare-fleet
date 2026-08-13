@@ -136,8 +136,12 @@
         <article class="mode-card">
           <p class="card-accent">MCP</p>
           <h3>Interactive protocol confirmation</h3>
-          <p>The stdio server exposes named audit, alignment, and activity tools. Apply displays every method, path, zone, label, body, and digest, then elicits one explicit approval through authenticated short-lived request state before replanning and execution.</p>
+          <p>The stdio server exposes named audit, alignment, and activity tools. Batched apply reuses an intent-bound candidate baseline, composes shared live reads once, displays every method, path, zone, label, body, and digest, then elicits one explicit approval through authenticated short-lived request state. It repeats the composed live plan inside the write lock before sequential execution.</p>
         </article>
+      </div>
+      <div class="callout">
+        <strong>Throttle-aware reads</strong>
+        <p>Cloudflare GET requests honor Retry-After after HTTP 429 responses. An exhausted throttle aborts inventory collection instead of becoming an ordinary coverage gap, while mutation requests are never automatically retried.</p>
       </div>
       <div class="callout">
         <strong>No raw control-plane tool</strong>

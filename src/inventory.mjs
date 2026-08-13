@@ -3,25 +3,38 @@ import {
   INVENTORY_COVERAGE_KIND,
   SURFACES,
 } from "./constants.mjs"
-import { serializeApiError } from "./api.mjs"
+import {
+  CloudflareApiError,
+  serializeApiError,
+} from "./api.mjs"
 import { stableString } from "./normalize.mjs"
 
 async function runPool(tasks, worker, concurrency, onProgress) {
   let cursor = 0
   let completed = 0
+  let failure = null
 
   async function consume() {
-    while (cursor < tasks.length) {
+    while (cursor < tasks.length && failure === null) {
       const index = cursor
       cursor += 1
-      await worker(tasks[index], index)
+      try {
+        await worker(tasks[index], index)
+      } catch (error) {
+        failure ||= error
+        throw error
+      }
       completed += 1
       onProgress?.({ completed, total: tasks.length })
     }
   }
 
   const workerCount = Math.min(concurrency, tasks.length)
-  await Promise.all(Array.from({ length: workerCount }, consume))
+  const settled = await Promise.allSettled(
+    Array.from({ length: workerCount }, consume),
+  )
+  const rejected = settled.find((entry) => entry.status === "rejected")
+  if (rejected) throw rejected.reason
 }
 
 async function readSurface(api, path, signal) {
@@ -34,6 +47,7 @@ async function readSurface(api, path, signal) {
     }
   } catch (error) {
     if (signal?.aborted) throw error
+    if (error instanceof CloudflareApiError && error.status === 429) throw error
     return {
       ok: false,
       error: serializeApiError(error),
@@ -51,6 +65,7 @@ async function readEmailAddresses(api, signal) {
     }
   } catch (error) {
     if (signal?.aborted) throw error
+    if (error instanceof CloudflareApiError && error.status === 429) throw error
     return {
       ok: false,
       error: serializeApiError(error),

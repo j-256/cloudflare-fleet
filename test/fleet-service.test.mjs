@@ -17,6 +17,10 @@ import { OPERATION_ACTIVITY_STATUS } from "../src/operation-history.mjs"
 import { AlignmentPlanChangedError } from "../src/write-executor.mjs"
 
 const SELECTOR = Object.freeze({ policyId: "policy-one" })
+const BATCH_SELECTORS = Object.freeze([
+  SELECTOR,
+  Object.freeze({ policyId: "policy-two" }),
+])
 const PLAN_SET = Object.freeze({
   digest: "sha256:approved",
   intentRevision: "intent-one",
@@ -55,13 +59,44 @@ function preparation(overrides = {}) {
   }
 }
 
+function batchPreparation(overrides = {}) {
+  return {
+    alignments: [
+      preparation(),
+      preparation({
+        facet: {
+          category: "settings",
+          key: "early_hints",
+          label: "Early Hints",
+          phase: "",
+        },
+        selector: BATCH_SELECTORS[1],
+      }),
+    ].map(({ planSet: _planSet, ...entry }) => entry),
+    planSet: {
+      ...PLAN_SET,
+      selectors: BATCH_SELECTORS,
+    },
+    reason: "Two targets differ",
+    selectors: BATCH_SELECTORS,
+    status: ALIGNMENT_PREPARATION_STATUS.PLANNED,
+    ...overrides,
+  }
+}
+
 function serviceFixture(overrides = {}) {
+  const calls = {
+    baselineInventories: [],
+    batchBaselineInventories: [],
+    loadInventory: 0,
+  }
   const events = []
   let stateReads = 0
   const currentRevision = overrides.currentRevision || (() => "intent-one")
   const service = createFleetService({
     accountId: "account-one",
     api: { accountId: "account-one" },
+    baselineInventoryTtlMs: overrides.baselineInventoryTtlMs,
     appendActivity: overrides.appendActivity || (async () => ({ entries: [] })),
     executePlanSet: overrides.executePlanSet || (async (options) => {
       events.push("execute")
@@ -95,8 +130,19 @@ function serviceFixture(overrides = {}) {
       inventory: { privatePayload: true },
       summary: { candidates: 1, zones: 1 },
     })),
-    loadInventory: overrides.loadInventory || (async () => ({ zones: [] })),
-    prepareAlignment: overrides.prepareAlignment || (async () => preparation()),
+    loadInventory: overrides.loadInventory || (async () => {
+      calls.loadInventory += 1
+      return { zones: [] }
+    }),
+    prepareAlignment: overrides.prepareAlignment || (async (_api, _intent, _selector, options) => {
+      calls.baselineInventories.push(options.baselineInventory)
+      return preparation()
+    }),
+    prepareAlignments: overrides.prepareAlignments || (async (_api, _intent, _selectors, options) => {
+      calls.batchBaselineInventories.push(options.baselineInventory)
+      return batchPreparation()
+    }),
+    now: overrides.now,
     readActivity: overrides.readActivity || (async () => ({
       entries: [
         { id: "older", startedAt: "2026-08-11T00:00:00.000Z" },
@@ -119,7 +165,7 @@ function serviceFixture(overrides = {}) {
       return operation()
     }),
   })
-  return { events, service }
+  return { calls, events, service }
 }
 
 test("fleet service lists public alignment candidates without returning raw inventory", async () => {
@@ -142,6 +188,82 @@ test("fleet service returns a digest-bound read-only alignment plan", async () =
   assert.equal(result.status, ALIGNMENT_PREPARATION_STATUS.PLANNED)
   assert.equal(result.planSet.digest, "sha256:approved")
   assert.deepEqual(result.selector, SELECTOR)
+})
+
+test("fleet service reuses the candidate inventory as a planning baseline", async () => {
+  const { calls, service } = serviceFixture()
+
+  await service.listAlignments()
+  await service.planAlignment(SELECTOR)
+
+  assert.equal(calls.loadInventory, 1)
+  assert.equal(calls.baselineInventories.length, 1)
+})
+
+test("fleet service misses a cached baseline after intent changes", async () => {
+  const { calls, service } = serviceFixture({
+    currentRevision(read) {
+      return read === 1 ? "intent-one" : "intent-two"
+    },
+  })
+
+  await service.listAlignments()
+  await service.planAlignment(SELECTOR)
+
+  assert.equal(calls.loadInventory, 2)
+})
+
+test("fleet service misses an expired planning baseline", async () => {
+  let clock = 0
+  const { calls, service } = serviceFixture({
+    baselineInventoryTtlMs: 10,
+    now: () => clock,
+  })
+
+  await service.listAlignments()
+  clock = 11
+  await service.planAlignment(SELECTOR)
+
+  assert.equal(calls.loadInventory, 2)
+})
+
+test("fleet service plans and applies one digest-bound alignment batch", async () => {
+  const { calls, events, service } = serviceFixture()
+
+  const plan = await service.planAlignments(BATCH_SELECTORS)
+  const result = await service.applyAlignments(
+    BATCH_SELECTORS,
+    "sha256:approved",
+  )
+
+  assert.equal(plan.status, ALIGNMENT_PREPARATION_STATUS.PLANNED)
+  assert.deepEqual(plan.selectors, BATCH_SELECTORS)
+  assert.equal(result.status, OPERATION_ACTIVITY_STATUS.VERIFIED)
+  assert.deepEqual(result.selectors, BATCH_SELECTORS)
+  assert.equal(calls.loadInventory, 1)
+  assert.equal(calls.batchBaselineInventories.length, 2)
+  assert.deepEqual(events, ["lock", "execute"])
+})
+
+test("fleet service rejects a changed batch digest before execution", async () => {
+  const { events, service } = serviceFixture()
+
+  await assert.rejects(
+    service.applyAlignments(BATCH_SELECTORS, "sha256:reviewed"),
+    (error) => error instanceof AlignmentPlanChangedError
+      && error.actualDigest === "sha256:approved",
+  )
+  assert.deepEqual(events, ["lock"])
+})
+
+test("fleet service invalidates the baseline after execution", async () => {
+  const { calls, service } = serviceFixture()
+
+  await service.planAlignment(SELECTOR)
+  await service.applyAlignment(SELECTOR, "sha256:approved")
+  await service.planAlignment(SELECTOR)
+
+  assert.equal(calls.loadInventory, 2)
 })
 
 test("fleet service applies an unchanged plan inside the exclusive write scope", async () => {

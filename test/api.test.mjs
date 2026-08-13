@@ -9,12 +9,23 @@ import {
   serializeApiError,
 } from "../src/api.mjs"
 
-function jsonResponse(body, status = 200) {
+function jsonResponse(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
     headers: {
       "Content-Type": "application/json",
+      ...headers,
     },
     status,
+  })
+}
+
+function throttledResponse(retryAfter = "0") {
+  return jsonResponse({
+    errors: [{ message: "Please wait and consider throttling your request speed" }],
+    result: null,
+    success: false,
+  }, 429, {
+    "Retry-After": retryAfter,
   })
 }
 
@@ -47,6 +58,64 @@ test("listZones paginates and keeps auth out of the URL", async () => {
   assert.equal(calls[1].url.searchParams.get("page"), "2")
   assert.equal(calls[0].request.headers.Authorization, "Bearer secret-token")
   assert.equal(calls[0].url.href.includes("secret-token"), false)
+})
+
+test("read requests honor Retry-After and recover from throttling", async () => {
+  let calls = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => {
+      calls += 1
+      return calls === 1
+        ? throttledResponse()
+        : jsonResponse({ result: { value: "on" }, success: true })
+    },
+  })
+
+  const response = await api.request("zones/zone-one/settings/always_use_https")
+
+  assert.equal(calls, 2)
+  assert.deepEqual(response.result, { value: "on" })
+})
+
+test("read requests stop after the bounded throttle retry budget", async () => {
+  let calls = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => {
+      calls += 1
+      return throttledResponse()
+    },
+  })
+
+  await assert.rejects(
+    api.request("zones/zone-one/settings"),
+    (error) => error instanceof CloudflareApiError && error.status === 429,
+  )
+  assert.equal(calls, 4)
+})
+
+test("mutating requests are not retried after throttling", async () => {
+  let calls = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => {
+      calls += 1
+      return throttledResponse()
+    },
+  })
+
+  await assert.rejects(
+    api.request("zones/zone-one/settings/always_use_https", {
+      body: { value: "on" },
+      method: "PATCH",
+    }),
+    (error) => error instanceof CloudflareApiError && error.status === 429,
+  )
+  assert.equal(calls, 1)
 })
 
 test("graphql sends variables securely and returns the data envelope", async () => {

@@ -76,6 +76,18 @@ export function normalizeAlignmentSelector(selector) {
   }
 }
 
+export function normalizeAlignmentSelectors(selectors) {
+  if (!Array.isArray(selectors) || selectors.length === 0) {
+    throw new TypeError("Alignment selectors require at least one value")
+  }
+  const normalized = selectors.map(normalizeAlignmentSelector)
+  const keys = normalized.map(stableString)
+  if (new Set(keys).size !== keys.length) {
+    throw new TypeError("Alignment selectors must be unique")
+  }
+  return normalized
+}
+
 function selectorForPolicy(policy) {
   return normalizeAlignmentSelector({ policyId: policy.id })
 }
@@ -360,6 +372,27 @@ export async function createAlignmentPlanSet(options) {
   })
 }
 
+export async function createAlignmentBatchPlanSet(options) {
+  if (typeof options.intentRevision !== "string") {
+    throw new TypeError("Alignment intent revision is required")
+  }
+  const content = {
+    accountId: requiredString(options.accountId, "Alignment account identifier"),
+    fleet: fleetMembership(options.inventory),
+    intentRevision: options.intentRevision,
+    plans: structuredClone(options.plans),
+    preview: operationPreview(options.plans),
+    schemaVersion: ALIGNMENT_PLAN_SCHEMA_VERSION,
+    selectors: normalizeAlignmentSelectors(options.selectors),
+  }
+  const digest = `sha256:${await sha256(stableString(content))}`
+  return Object.freeze({
+    ...content,
+    digest,
+    validatedAt: options.validatedAt || new Date().toISOString(),
+  })
+}
+
 function stoppedPreparation(status, selector, row, assessment, reason) {
   return {
     assessment: assessment ? assessmentSummary(assessment) : null,
@@ -381,6 +414,211 @@ function stoppedPreparation(status, selector, row, assessment, reason) {
 function scopedRow(inventory, intent, facet) {
   const { matrix } = evaluatedIntent(inventory, intent)
   return rowForFacet(matrix, facet)
+}
+
+function batchAlignmentEntry(row, selector, assessment, status, reason) {
+  return {
+    assessment: assessment ? assessmentSummary(assessment) : null,
+    facet: row
+      ? {
+          category: row.category,
+          key: row.key,
+          label: row.label,
+          phase: row.phase || "",
+        }
+      : null,
+    reason,
+    selector,
+    status,
+  }
+}
+
+function batchReason(entries, status) {
+  if (status === ALIGNMENT_PREPARATION_STATUS.ALIGNED) {
+    return "Every selected scope already matches fleet intent in fresh live state"
+  }
+  if (status === ALIGNMENT_PREPARATION_STATUS.BLOCKED) {
+    const blocked = entries.filter(
+      (entry) => entry.status === ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+    )
+    return `Batch alignment is blocked. ${blocked.map((entry) => (
+      `${entry.facet?.label || "Unknown facet"}: ${entry.reason}`
+    )).join("; ")}`
+  }
+  const planned = entries.filter(
+    (entry) => entry.status === ALIGNMENT_PREPARATION_STATUS.PLANNED,
+  )
+  return `${planned.length} selected scopes are ready for alignment`
+}
+
+function overlappingOperation(plansBySelector) {
+  const owners = new Map()
+  for (const [selectorIndex, plans] of plansBySelector.entries()) {
+    for (const plan of plans) {
+      for (const operation of plan.operations) {
+        const owner = owners.get(operation.path)
+        if (owner !== undefined && owner !== selectorIndex) return operation
+        owners.set(operation.path, selectorIndex)
+      }
+    }
+  }
+  return null
+}
+
+export async function prepareIntentAlignments(api, intent, requestedSelectors, options = {}) {
+  const selectors = normalizeAlignmentSelectors(requestedSelectors)
+  const baseline = options.baselineInventory || await (
+    options.loadInventory || loadInventory
+  )(api, {
+    onProgress: options.onProgress,
+    signal: options.signal,
+  })
+  const { matrix: baselineMatrix } = evaluatedIntent(baseline, intent)
+  const contexts = selectors.map((selector) => {
+    const facet = facetForSelector(intent, selector)
+    const row = rowForFacet(baselineMatrix, facet)
+    return {
+      facet,
+      requirement: row ? intentAlignmentReadRequirement(row) : null,
+      row,
+      selector,
+    }
+  })
+  const missing = contexts.filter((context) => !context.row)
+  if (missing.length > 0) {
+    const entries = contexts.map((context) => batchAlignmentEntry(
+      context.row,
+      context.selector,
+      null,
+      ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+      context.row
+        ? "The selected scope was not evaluated because another batch facet is absent"
+        : "The selected intent facet is absent from the fleet",
+    ))
+    return {
+      alignments: entries,
+      planSet: null,
+      reason: batchReason(entries, ALIGNMENT_PREPARATION_STATUS.BLOCKED),
+      selectors,
+      status: ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+    }
+  }
+
+  const read = options.executeReadPlan || executeReadPlan
+  const liveData = await read(
+    api,
+    contexts.map((context) => context.requirement),
+    {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    },
+  )
+  const liveInventory = liveData.inventory
+  assertFleetMembership(baseline, liveInventory)
+  for (const context of contexts) {
+    assertSurfaceReads(liveInventory, context.requirement.surfaceIds)
+    assertRuleDetails(liveInventory, context.requirement)
+  }
+
+  const plansBySelector = []
+  const { matrix: liveMatrix } = evaluatedIntent(liveInventory, intent)
+  const entries = contexts.map((context) => {
+    const row = rowForFacet(liveMatrix, context.facet)
+    if (!row) {
+      plansBySelector.push([])
+      return batchAlignmentEntry(
+        null,
+        context.selector,
+        null,
+        ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+        "The selected intent facet is absent from the fresh fleet state",
+      )
+    }
+    const assessment = assessIntentAlignment(
+      row,
+      alignmentOptions(context.selector),
+    )
+    if (assessment.actionableCount === 0) {
+      plansBySelector.push([])
+      return batchAlignmentEntry(
+        row,
+        context.selector,
+        assessment,
+        ALIGNMENT_PREPARATION_STATUS.ALIGNED,
+        "The selected scope already matches fleet intent in fresh live state",
+      )
+    }
+    if (!assessment.available) {
+      plansBySelector.push([])
+      return batchAlignmentEntry(
+        row,
+        context.selector,
+        assessment,
+        ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+        assessment.reason,
+      )
+    }
+    plansBySelector.push(buildIntentAlignmentPlans(
+      liveInventory,
+      row,
+      assessment,
+    ))
+    return batchAlignmentEntry(
+      row,
+      context.selector,
+      assessment,
+      ALIGNMENT_PREPARATION_STATUS.PLANNED,
+      assessment.reason,
+    )
+  })
+  if (entries.some(
+    (entry) => entry.status === ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+  )) {
+    return {
+      alignments: entries,
+      planSet: null,
+      reason: batchReason(entries, ALIGNMENT_PREPARATION_STATUS.BLOCKED),
+      selectors,
+      status: ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+    }
+  }
+  if (entries.every(
+    (entry) => entry.status === ALIGNMENT_PREPARATION_STATUS.ALIGNED,
+  )) {
+    return {
+      alignments: entries,
+      planSet: null,
+      reason: batchReason(entries, ALIGNMENT_PREPARATION_STATUS.ALIGNED),
+      selectors,
+      status: ALIGNMENT_PREPARATION_STATUS.ALIGNED,
+    }
+  }
+  const overlap = overlappingOperation(plansBySelector)
+  if (overlap) {
+    const reason = `Batch selectors produce overlapping writes to ${overlap.path}`
+    return {
+      alignments: entries,
+      planSet: null,
+      reason,
+      selectors,
+      status: ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+    }
+  }
+  const planSet = await createAlignmentBatchPlanSet({
+    accountId: api.accountId,
+    intentRevision: intent.revision,
+    inventory: liveInventory,
+    plans: plansBySelector.flat(),
+    selectors,
+    validatedAt: options.validatedAt,
+  })
+  return {
+    alignments: entries,
+    planSet,
+    reason: batchReason(entries, ALIGNMENT_PREPARATION_STATUS.PLANNED),
+    selectors,
+    status: ALIGNMENT_PREPARATION_STATUS.PLANNED,
+  }
 }
 
 export async function prepareIntentAlignment(api, intent, requestedSelector, options = {}) {

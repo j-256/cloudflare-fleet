@@ -4,10 +4,13 @@ import test from "node:test"
 import {
   ALIGNMENT_PREPARATION_STATUS,
   ALIGNMENT_SELECTOR_KIND,
+  createAlignmentBatchPlanSet,
   createAlignmentPlanSet,
   listIntentAlignmentCandidates,
   normalizeAlignmentSelector,
+  normalizeAlignmentSelectors,
   prepareIntentAlignment,
+  prepareIntentAlignments,
 } from "../src/alignment-service.mjs"
 import {
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
@@ -70,6 +73,58 @@ function settingFixture(options = {}) {
   }
 }
 
+function settingBatchFixture(options = {}) {
+  const settingIds = ["always_use_https", "early_hints"]
+  const alpha = makeZone("alpha.example", {
+    settings: settingIds.map((id) => ({ editable: true, id, value: "on" })),
+  })
+  const bravo = makeZone("bravo.example", {
+    settings: settingIds.map((id) => ({
+      editable: id !== "early_hints" || options.earlyHintsEditable !== false,
+      id,
+      value: "off",
+    })),
+  })
+  const inventory = makeInventory([alpha, bravo])
+  const matrix = buildMatrix(inventory)
+  let intent = createEmptyFleetIntentDocument(inventory.account.id)
+  const policies = settingIds.map((settingId) => {
+    const row = matrix.rows.find((entry) => (
+      entry.category === "Zone settings" && entry.key === settingId
+    ))
+    const source = row.cells.get(alpha.meta.name)
+    const policy = {
+      expected: {
+        canonical: source.intentCanonical,
+        display: source.display,
+        origin: FLEET_INTENT_EXPECTED_ORIGIN.OBSERVED,
+        resolutionCanonical: source.resolutionCanonical,
+        sourceZoneId: alpha.meta.id,
+        sourceZoneName: alpha.meta.name,
+        value: facetCellComparisonValue(source),
+      },
+      facet: {
+        category: row.category,
+        description: row.description,
+        key: row.key,
+        label: row.label,
+      },
+      groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+      id: `policy-${settingId}`,
+      presenceConstraint: FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+      valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.EXACT,
+    }
+    intent = replaceFleetIntentPolicy(intent, policy)
+    return policy
+  })
+  return {
+    api: { accountId: inventory.account.id },
+    intent,
+    inventory,
+    policies,
+  }
+}
+
 test("alignment selectors distinguish policy, row, and cell scopes", () => {
   assert.deepEqual(
     normalizeAlignmentSelector({ policyId: "policy-one" }),
@@ -108,6 +163,20 @@ test("alignment selectors distinguish policy, row, and cell scopes", () => {
   assert.throws(
     () => normalizeAlignmentSelector({ policyId: "policy-one", zoneIds: ["zone-one"] }),
     /cannot include facet or zone fields/,
+  )
+  assert.deepEqual(
+    normalizeAlignmentSelectors([
+      { policyId: "policy-one" },
+      { category: "Zone settings", key: "early_hints" },
+    ]).map((selector) => selector.kind),
+    [ALIGNMENT_SELECTOR_KIND.POLICY, ALIGNMENT_SELECTOR_KIND.ROW],
+  )
+  assert.throws(
+    () => normalizeAlignmentSelectors([
+      { policyId: "policy-one" },
+      { policyId: "policy-one" },
+    ]),
+    /must be unique/,
   )
 })
 
@@ -197,6 +266,121 @@ test("alignment plan digests ignore validation time and bind exact operations", 
 
   assert.equal(first.digest, second.digest)
   assert.notEqual(first.digest, changed.digest)
+})
+
+test("batch alignment composes shared surface reads and binds every selector", async () => {
+  const fixture = settingBatchFixture()
+  const selectors = fixture.policies.map((policy) => ({ policyId: policy.id }))
+  const requests = []
+  let zoneReads = 0
+  const api = {
+    accountId: fixture.api.accountId,
+    async listZones() {
+      zoneReads += 1
+      return fixture.inventory.zones.map((zone) => zone.meta)
+    },
+    async request(path) {
+      requests.push(path)
+      const zone = fixture.inventory.zones.find(
+        (entry) => path === `zones/${entry.meta.id}/settings`,
+      )
+      return {
+        result: zone.surfaces.settings.result,
+        status: 200,
+      }
+    },
+  }
+  const result = await prepareIntentAlignments(
+    api,
+    fixture.intent,
+    selectors,
+    {
+      baselineInventory: fixture.inventory,
+      validatedAt: "2026-08-13T00:00:00.000Z",
+    },
+  )
+
+  assert.equal(zoneReads, 1)
+  assert.deepEqual(requests, [
+    "zones/zone-alpha.example/settings",
+    "zones/zone-bravo.example/settings",
+  ])
+  assert.equal(result.status, ALIGNMENT_PREPARATION_STATUS.PLANNED)
+  assert.equal(result.alignments.length, 2)
+  assert.equal(result.planSet.preview.length, 2)
+  assert.deepEqual(result.planSet.selectors, normalizeAlignmentSelectors(selectors))
+  assert.match(result.planSet.digest, /^sha256:[a-f0-9]{64}$/)
+})
+
+test("batch plan digests bind selector order and exact operations", async () => {
+  const fixture = settingBatchFixture()
+  const selectors = fixture.policies.map((policy) => ({ policyId: policy.id }))
+  const plans = [{
+    id: "plan-one",
+    kind: "intent-alignment",
+    operations: [{
+      body: { value: "on" },
+      currentValue: "off",
+      label: "Set always_use_https",
+      method: "PATCH",
+      path: "zones/zone-bravo.example/settings/always_use_https",
+    }],
+    summary: "Align Always Use HTTPS",
+    zoneId: "zone-bravo.example",
+    zoneName: "bravo.example",
+  }]
+  const common = {
+    accountId: fixture.inventory.account.id,
+    intentRevision: fixture.intent.revision,
+    inventory: fixture.inventory,
+    plans,
+  }
+  const first = await createAlignmentBatchPlanSet({
+    ...common,
+    selectors,
+  })
+  const reordered = await createAlignmentBatchPlanSet({
+    ...common,
+    selectors: [...selectors].reverse(),
+  })
+
+  assert.notEqual(first.digest, reordered.digest)
+})
+
+test("one blocked selector blocks the complete alignment batch", async () => {
+  const fixture = settingBatchFixture({ earlyHintsEditable: false })
+  const result = await prepareIntentAlignments(
+    fixture.api,
+    fixture.intent,
+    fixture.policies.map((policy) => ({ policyId: policy.id })),
+    {
+      baselineInventory: fixture.inventory,
+      executeReadPlan: async () => ({ inventory: fixture.inventory }),
+    },
+  )
+
+  assert.equal(result.status, ALIGNMENT_PREPARATION_STATUS.BLOCKED)
+  assert.equal(result.planSet, null)
+  assert.match(result.reason, /early_hints/)
+})
+
+test("batch alignment rejects selectors with overlapping write targets", async () => {
+  const fixture = settingFixture()
+  const result = await prepareIntentAlignments(
+    fixture.api,
+    fixture.intent,
+    [
+      { policyId: fixture.policy.id },
+      { category: "Zone settings", key: "always_use_https" },
+    ],
+    {
+      baselineInventory: fixture.inventory,
+      executeReadPlan: async () => ({ inventory: fixture.inventory }),
+    },
+  )
+
+  assert.equal(result.status, ALIGNMENT_PREPARATION_STATUS.BLOCKED)
+  assert.match(result.reason, /overlapping writes/)
 })
 
 test("alignment preparation reports deterministic blockers without a live read", async () => {

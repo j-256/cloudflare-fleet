@@ -16,6 +16,7 @@ import { z } from "zod"
 import {
   ALIGNMENT_PREPARATION_STATUS,
   normalizeAlignmentSelector,
+  normalizeAlignmentSelectors,
 } from "./alignment-service.mjs"
 import { collectFleetAudit } from "./audit.mjs"
 import { isMainModule } from "./entrypoint.mjs"
@@ -48,6 +49,7 @@ const selectorSchema = z.union([
   policySelectorSchema,
   facetSelectorSchema,
 ])
+const selectorsSchema = z.array(selectorSchema).min(1).max(20)
 const emptyInputSchema = z.strictObject({})
 const selectorInputSchema = z.strictObject({
   selector: selectorSchema,
@@ -55,6 +57,9 @@ const selectorInputSchema = z.strictObject({
 const applyInputSchema = z.strictObject({
   planDigest: digestSchema.describe("Exact digest returned by plan_alignment"),
   selector: selectorSchema,
+})
+const batchApplyInputSchema = z.strictObject({
+  selectors: selectorsSchema.describe("Distinct alignment selectors to review and apply together"),
 })
 const confirmationSchema = z.strictObject({
   approve: z.boolean().describe("Set true only after reviewing the exact plan shown above"),
@@ -74,6 +79,11 @@ const requestStateSchema = z.strictObject({
   accountId: identifierSchema,
   planDigest: digestSchema,
   selector: selectorSchema,
+})
+const batchRequestStateSchema = z.strictObject({
+  accountId: identifierSchema,
+  planDigest: digestSchema,
+  selectors: selectorsSchema,
 })
 const toolOutputSchema = z.looseObject({
   schemaVersion: z.number().int(),
@@ -186,6 +196,13 @@ function planSummary(result) {
   return `${result.facet.label} plan ${result.planSet.digest} contains ${operationCount(result.planSet)} operations across ${result.planSet.plans.length} zones`
 }
 
+function batchPlanSummary(result) {
+  if (result.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
+    return `Alignment batch is ${result.status}: ${result.reason}`
+  }
+  return `Alignment batch ${result.planSet.digest} contains ${operationCount(result.planSet)} operations across ${result.planSet.plans.length} zones`
+}
+
 function applySummary(result) {
   if ([
     ALIGNMENT_PREPARATION_STATUS.ALIGNED,
@@ -212,6 +229,29 @@ function confirmationMessage(plan) {
     `Facet: ${plan.facet.label}`,
     `Plan digest: ${plan.planSet.digest}`,
     `Validated: ${plan.planSet.validatedAt}`,
+    "",
+    ...operations,
+    "",
+    "Set approve to true only after reviewing every operation.",
+  ].join("\n")
+}
+
+function batchConfirmationMessage(plan) {
+  const scopes = plan.alignments.map((alignment) => (
+    `- ${alignment.facet?.label || "Unknown facet"}: ${alignment.status}`
+  ))
+  const operations = plan.planSet.preview.map((operation, index) => [
+    `${index + 1}. ${operation.method} ${operation.path}`,
+    `Zone: ${operation.zoneName} (${operation.zoneId})`,
+    `Change: ${operation.label}`,
+    `Body: ${JSON.stringify(operation.body)}`,
+  ].join("\n"))
+  return [
+    `Approve Cloudflare Fleet alignment batch for account ${plan.accountId}?`,
+    `Plan digest: ${plan.planSet.digest}`,
+    `Validated: ${plan.planSet.validatedAt}`,
+    "Scopes:",
+    ...scopes,
     "",
     ...operations,
     "",
@@ -255,6 +295,20 @@ function validRequestState(value, accountId, selector, planDigest) {
   return stableString(stateSelector) === stableString(selector)
 }
 
+function batchRequestState(value, accountId, selectors) {
+  const parsed = batchRequestStateSchema.safeParse(value)
+  if (!parsed.success || parsed.data.accountId !== accountId) return null
+  let stateSelectors
+  try {
+    stateSelectors = normalizeAlignmentSelectors(parsed.data.selectors)
+  } catch {
+    return null
+  }
+  return stableString(stateSelectors) === stableString(selectors)
+    ? parsed.data
+    : null
+}
+
 function resultIsExecutionError(result) {
   return [
     OPERATION_ACTIVITY_STATUS.VERIFICATION_FAILED,
@@ -290,7 +344,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Inspect Cloudflare Fleet with read-only tools, prepare exact intent alignment plans, and call apply_alignment only with a reviewed plan digest. apply_alignment requires interactive confirmation and performs a fresh plan check before writes.",
+      instructions: "Inspect Cloudflare Fleet with read-only tools, prepare exact intent alignment plans, and use apply_alignments to review several selectors through one confirmation. Every apply tool performs a fresh plan check before writes.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -451,6 +505,111 @@ export function createFleetMcpServer(options = {}) {
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
             message: confirmationMessage(plan),
+            requestedSchema: confirmationRequestSchema,
+          }),
+        },
+        requestState: signedState,
+      })
+    }, secrets),
+  )
+
+  server.registerTool(
+    "apply_alignments",
+    {
+      annotations: APPLY_ANNOTATIONS,
+      description: "Plan and apply several alignment selectors through one interactive review, one signed batch digest, a fresh composed replan, pending journaling, sequential writes, and scoped verification.",
+      inputSchema: batchApplyInputSchema,
+      outputSchema: toolOutputSchema,
+      title: "Apply reviewed fleet alignment batch",
+    },
+    safeToolHandler(async ({ selectors: requestedSelectors }, context) => {
+      const selectors = normalizeAlignmentSelectors(requestedSelectors)
+      const requestState = context.mcpReq.requestState()
+      if (requestState !== undefined) {
+        const state = batchRequestState(
+          requestState,
+          service.accountId,
+          selectors,
+        )
+        if (!state) {
+          const result = {
+            accountId: service.accountId,
+            reason: "Signed confirmation state does not match this account or selector batch",
+            schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+            selectors,
+            status: "confirmation-invalid",
+          }
+          return toolResult(result, result.reason, { isError: true })
+        }
+        const response = inputResponse(
+          context.mcpReq.inputResponses,
+          CONFIRMATION_KEY,
+        )
+        if (response.kind === "elicit"
+          && ["cancel", "decline"].includes(response.action)) {
+          const result = {
+            accountId: service.accountId,
+            reason: `Alignment confirmation was ${response.action}d`,
+            schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+            selectors,
+            status: "confirmation-declined",
+          }
+          return toolResult(result, result.reason)
+        }
+        const confirmation = acceptedContent(
+          context.mcpReq.inputResponses,
+          CONFIRMATION_KEY,
+          confirmationSchema,
+        )
+        if (!confirmation || confirmation.approve !== true) {
+          const result = {
+            accountId: service.accountId,
+            reason: "Alignment confirmation must explicitly approve the displayed batch",
+            schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+            selectors,
+            status: "confirmation-invalid",
+          }
+          return toolResult(result, result.reason, { isError: true })
+        }
+        const result = await service.applyAlignments(
+          selectors,
+          state.planDigest,
+          {
+            onProgress: progressReporter(stderr, "apply_alignments"),
+            signal: context.mcpReq.signal,
+          },
+        )
+        return toolResult(result, applySummary(result), {
+          isError: resultIsExecutionError(result),
+        })
+      }
+      if (context.mcpReq.inputResponses !== undefined) {
+        const result = {
+          accountId: service.accountId,
+          reason: "Alignment confirmation responses require signed request state",
+          schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+          selectors,
+          status: "confirmation-invalid",
+        }
+        return toolResult(result, result.reason, { isError: true })
+      }
+
+      const plan = await service.planAlignments(selectors, {
+        onProgress: progressReporter(stderr, "apply_alignments"),
+        signal: context.mcpReq.signal,
+      })
+      if (plan.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
+        return toolResult(plan, batchPlanSummary(plan))
+      }
+      const signedState = await requestStateCodec.mint({
+        accountId: service.accountId,
+        planDigest: plan.planSet.digest,
+        selectors: requestedSelectors,
+      }, context)
+      return inputRequired({
+        inputRequests: {
+          [CONFIRMATION_KEY]: inputRequired.elicit({
+            message: batchConfirmationMessage(plan),
             requestedSchema: confirmationRequestSchema,
           }),
         },

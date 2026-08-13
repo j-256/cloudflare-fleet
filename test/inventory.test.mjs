@@ -7,6 +7,7 @@ import {
   loadInventory,
   staticCoverageIssues,
 } from "../src/inventory.mjs"
+import { CloudflareApiError } from "../src/api.mjs"
 import { STATIC_LIMITATIONS } from "../src/constants.mjs"
 
 function zone(name) {
@@ -209,6 +210,28 @@ test("scoped inventory rejects unknown surfaces", async () => {
       surfaceIds: ["not-a-surface"],
     }),
     /Unknown inventory surface/,
+  )
+})
+
+test("inventory fails closed when a surface remains throttled", async () => {
+  const api = {
+    accountId: "account-id",
+    async listZones() {
+      return [zone("alpha.example")]
+    },
+    async request() {
+      throw new CloudflareApiError("Cloudflare read throttled", {
+        status: 429,
+      })
+    },
+  }
+
+  await assert.rejects(
+    loadInventory(api, {
+      includeEmailAddresses: false,
+      surfaceIds: ["settings"],
+    }),
+    (error) => error instanceof CloudflareApiError && error.status === 429,
   )
 })
 

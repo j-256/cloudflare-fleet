@@ -8,6 +8,7 @@ import {
   ALIGNMENT_PREPARATION_STATUS,
   listIntentAlignmentCandidates,
   prepareIntentAlignment,
+  prepareIntentAlignments,
 } from "./alignment-service.mjs"
 import { CloudflareApi } from "./api.mjs"
 import { resolveStateFile } from "./audit.mjs"
@@ -21,6 +22,7 @@ import {
 import { readWriteVerificationTarget } from "./write-verification.mjs"
 
 export const FLEET_SERVICE_SCHEMA_VERSION = 1
+const BASELINE_INVENTORY_TTL_MS = 300000
 
 export const FLEET_SERVICE_STATUS = Object.freeze({
   OK: "ok",
@@ -65,6 +67,24 @@ function preparationResult(accountId, preparation) {
     selector: preparation.selector,
     status: preparation.status,
   }
+}
+
+function batchPreparationResult(accountId, preparation) {
+  return {
+    accountId,
+    alignments: preparation.alignments,
+    planSet: preparation.planSet,
+    reason: preparation.reason,
+    schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+    selectors: preparation.selectors,
+    status: preparation.status,
+  }
+}
+
+function publicPreparationResult(accountId, preparation) {
+  return Array.isArray(preparation.selectors)
+    ? batchPreparationResult(accountId, preparation)
+    : preparationResult(accountId, preparation)
 }
 
 function verificationSummary(entries) {
@@ -136,6 +156,7 @@ export function createFleetService(options) {
     listCandidates: options.listCandidates || listIntentAlignmentCandidates,
     loadInventory: options.loadInventory || loadInventory,
     prepareAlignment: options.prepareAlignment || prepareIntentAlignment,
+    prepareAlignments: options.prepareAlignments || prepareIntentAlignments,
     readActivity: options.readActivity || readOperationActivityDocument,
     readState: options.readState || readFleetStateDocument,
     readVerificationTarget: options.readVerificationTarget
@@ -146,6 +167,38 @@ export function createFleetService(options) {
   for (const [name, dependency] of Object.entries(dependencies)) {
     requiredFunction(dependency, `Fleet service dependency ${name}`)
   }
+  const baselineInventoryTtlMs = Number.isFinite(options.baselineInventoryTtlMs)
+    && options.baselineInventoryTtlMs >= 0
+    ? options.baselineInventoryTtlMs
+    : BASELINE_INVENTORY_TTL_MS
+  const now = options.now || Date.now
+  let baselineInventoryCache = null
+
+  function cacheBaseline(inventory, intentRevision) {
+    baselineInventoryCache = {
+      expiresAt: now() + baselineInventoryTtlMs,
+      intentRevision,
+      inventory,
+    }
+    return inventory
+  }
+
+  async function baselineInventory(state, commandOptions) {
+    if (baselineInventoryCache
+      && baselineInventoryCache.intentRevision === state.intent.revision
+      && baselineInventoryCache.expiresAt > now()) {
+      return baselineInventoryCache.inventory
+    }
+    const inventory = await dependencies.loadInventory(api, {
+      onProgress: commandOptions.onProgress,
+      signal: commandOptions.signal,
+    })
+    return cacheBaseline(inventory, state.intent.revision)
+  }
+
+  function invalidateBaseline() {
+    baselineInventoryCache = null
+  }
 
   async function listAlignments(commandOptions = {}) {
     const state = await dependencies.readState(stateFile, accountId)
@@ -153,6 +206,7 @@ export function createFleetService(options) {
       onProgress: commandOptions.onProgress,
       signal: commandOptions.signal,
     })
+    cacheBaseline(inventory, state.intent.revision)
     const result = dependencies.listCandidates(inventory, state.intent)
     return {
       accountId,
@@ -166,11 +220,13 @@ export function createFleetService(options) {
 
   async function planAlignment(selector, commandOptions = {}) {
     const state = await dependencies.readState(stateFile, accountId)
+    const baseline = await baselineInventory(state, commandOptions)
     const preparation = await dependencies.prepareAlignment(
       api,
       state.intent,
       selector,
       {
+        baselineInventory: baseline,
         onProgress: commandOptions.onProgress,
         signal: commandOptions.signal,
         validatedAt: commandOptions.validatedAt,
@@ -179,95 +235,158 @@ export function createFleetService(options) {
     return preparationResult(accountId, preparation)
   }
 
+  async function planAlignments(selectors, commandOptions = {}) {
+    const state = await dependencies.readState(stateFile, accountId)
+    const baseline = await baselineInventory(state, commandOptions)
+    const preparation = await dependencies.prepareAlignments(
+      api,
+      state.intent,
+      selectors,
+      {
+        baselineInventory: baseline,
+        onProgress: commandOptions.onProgress,
+        signal: commandOptions.signal,
+        validatedAt: commandOptions.validatedAt,
+      },
+    )
+    return batchPreparationResult(accountId, preparation)
+  }
+
+  async function executeAlignment(
+    state,
+    preparation,
+    expectedDigest,
+    commandOptions,
+  ) {
+    if (preparation.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
+      return {
+        ...publicPreparationResult(accountId, preparation),
+        applied: false,
+      }
+    }
+    if (preparation.planSet.digest !== expectedDigest) {
+      throw new AlignmentPlanChangedError(
+        expectedDigest,
+        preparation.planSet.digest,
+      )
+    }
+
+    invalidateBaseline()
+    const outcome = await dependencies.executePlanSet({
+      activityStore: activityStore(
+        stateFile,
+        accountId,
+        expectedDigest,
+        preparation.planSet.intentRevision,
+        dependencies,
+      ),
+      api,
+      async beforeExecute() {
+        const current = await dependencies.readState(stateFile, accountId)
+        if (current.intent.revision !== preparation.planSet.intentRevision) {
+          throw new FleetIntentChangedError(expectedDigest)
+        }
+      },
+      expectedDigest,
+      onProgress(progress) {
+        commandOptions.onProgress?.({
+          ...progress,
+          message: progress.operation
+            ? `Applying ${progress.completed + 1}/${progress.total}: ${progress.operation.label}`
+            : `Applied ${progress.completed}/${progress.total} operations`,
+          stage: "writes",
+        })
+      },
+      planSet: preparation.planSet,
+      signal: commandOptions.signal,
+      title: preparation.facet
+        ? `Align ${preparation.facet.label} to fleet intent`
+        : `Align ${preparation.alignments.length} fleet intent scopes`,
+      verify(targets, verificationOptions = {}) {
+        commandOptions.onProgress?.({
+          completed: 0,
+          message: `Verifying ${targets.length} affected resources`,
+          stage: "verification",
+          total: targets.length,
+        })
+        return verifyTargets(api, targets, {
+          bestEffort: verificationOptions.bestEffort === true,
+          signal: commandOptions.signal,
+        }, dependencies)
+      },
+    })
+    return {
+      accountId,
+      activity: outcome.activity,
+      applied: outcome.executionResults.length > 0,
+      error: outcome.error instanceof Error
+        ? outcome.error.message
+        : outcome.error || null,
+      execution: outcome.activity?.execution || {
+        completed: outcome.executionResults.length,
+        total: operationTotal(preparation.planSet),
+      },
+      historyError: outcome.historyError instanceof Error
+        ? outcome.historyError.message
+        : outcome.historyError || null,
+      inverse: outcome.inverse,
+      planDigest: preparation.planSet.digest,
+      schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+      ...(preparation.selector
+        ? { selector: preparation.selector }
+        : { selectors: preparation.selectors }),
+      status: outcome.status,
+      verification: verificationSummary(outcome.verificationEntries),
+    }
+  }
+
   async function applyAlignment(selector, expectedDigest, commandOptions = {}) {
     requiredString(expectedDigest, "Expected alignment plan digest")
     return dependencies.withWriteLock(async () => {
       const state = await dependencies.readState(stateFile, accountId)
+      const baseline = await baselineInventory(state, commandOptions)
       const preparation = await dependencies.prepareAlignment(
         api,
         state.intent,
         selector,
         {
+          baselineInventory: baseline,
           onProgress: commandOptions.onProgress,
           signal: commandOptions.signal,
           validatedAt: commandOptions.validatedAt,
         },
       )
-      if (preparation.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
-        return {
-          ...preparationResult(accountId, preparation),
-          applied: false,
-        }
-      }
-      if (preparation.planSet.digest !== expectedDigest) {
-        throw new AlignmentPlanChangedError(
-          expectedDigest,
-          preparation.planSet.digest,
-        )
-      }
-
-      const outcome = await dependencies.executePlanSet({
-        activityStore: activityStore(
-          stateFile,
-          accountId,
-          expectedDigest,
-          preparation.planSet.intentRevision,
-          dependencies,
-        ),
-        api,
-        async beforeExecute() {
-          const current = await dependencies.readState(stateFile, accountId)
-          if (current.intent.revision !== preparation.planSet.intentRevision) {
-            throw new FleetIntentChangedError(expectedDigest)
-          }
-        },
+      return executeAlignment(
+        state,
+        preparation,
         expectedDigest,
-        onProgress(progress) {
-          commandOptions.onProgress?.({
-            ...progress,
-            message: progress.operation
-              ? `Applying ${progress.completed + 1}/${progress.total}: ${progress.operation.label}`
-              : `Applied ${progress.completed}/${progress.total} operations`,
-            stage: "writes",
-          })
+        commandOptions,
+      )
+    })
+  }
+
+  async function applyAlignments(selectors, expectedDigest, commandOptions = {}) {
+    requiredString(expectedDigest, "Expected alignment plan digest")
+    return dependencies.withWriteLock(async () => {
+      const state = await dependencies.readState(stateFile, accountId)
+      const baseline = await baselineInventory(state, commandOptions)
+      const preparation = await dependencies.prepareAlignments(
+        api,
+        state.intent,
+        selectors,
+        {
+          baselineInventory: baseline,
+          onProgress: commandOptions.onProgress,
+          signal: commandOptions.signal,
+          validatedAt: commandOptions.validatedAt,
         },
-        planSet: preparation.planSet,
-        signal: commandOptions.signal,
-        title: `Align ${preparation.facet.label} to fleet intent`,
-        verify(targets, verificationOptions = {}) {
-          commandOptions.onProgress?.({
-            completed: 0,
-            message: `Verifying ${targets.length} affected resources`,
-            stage: "verification",
-            total: targets.length,
-          })
-          return verifyTargets(api, targets, {
-            bestEffort: verificationOptions.bestEffort === true,
-            signal: commandOptions.signal,
-          }, dependencies)
-        },
-      })
-      return {
-        accountId,
-        activity: outcome.activity,
-        applied: outcome.executionResults.length > 0,
-        error: outcome.error instanceof Error
-          ? outcome.error.message
-          : outcome.error || null,
-        execution: outcome.activity?.execution || {
-          completed: outcome.executionResults.length,
-          total: operationTotal(preparation.planSet),
-        },
-        historyError: outcome.historyError instanceof Error
-          ? outcome.historyError.message
-          : outcome.historyError || null,
-        inverse: outcome.inverse,
-        planDigest: preparation.planSet.digest,
-        schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
-        selector: preparation.selector,
-        status: outcome.status,
-        verification: verificationSummary(outcome.verificationEntries),
-      }
+      )
+      return executeAlignment(
+        state,
+        preparation,
+        expectedDigest,
+        commandOptions,
+      )
     })
   }
 
@@ -288,9 +407,11 @@ export function createFleetService(options) {
   return Object.freeze({
     accountId,
     applyAlignment,
+    applyAlignments,
     listActivity,
     listAlignments,
     planAlignment,
+    planAlignments,
     stateFile,
   })
 }

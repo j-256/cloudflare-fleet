@@ -100,7 +100,9 @@ npm run mcp
 node /absolute/path/to/cloudflare-fleet/src/mcp.mjs
 ```
 
-It registers `audit_fleet`, `list_alignment_candidates`, `plan_alignment`, `apply_alignment`, and `list_activity`. `apply_alignment` accepts a selector plus an exact planning digest, rebuilds and displays every operation through MCP input elicitation, requires one explicit approval of the displayed plan, then performs another fresh digest check before any write. Confirmation state is authenticated, method-bound, and short-lived. Protocol messages use stdout and diagnostics use stderr.
+It registers `audit_fleet`, `list_alignment_candidates`, `plan_alignment`, `apply_alignment`, `apply_alignments`, and `list_activity`. `apply_alignment` retains the single-selector digest workflow. `apply_alignments` accepts several distinct selectors, merges their scoped live reads, displays one exact combined operation plan through MCP input elicitation, requires one explicit approval, then repeats the composed plan inside the write lock and writes only if its digest still matches. A short-lived, intent-revision-bound baseline avoids repeating the complete candidate inventory, but fresh membership and selected surfaces are still reread. Confirmation state is authenticated, method-bound, and short-lived. Protocol messages use stdout and diagnostics use stderr.
+
+Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried.
 
 The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Pass `--state-file PATH` and `--policy-file PATH` to `npm run mcp --` when using explicit local profiles; the state path is also available to the fleet CLI. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
 
