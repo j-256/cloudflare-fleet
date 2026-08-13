@@ -15,6 +15,7 @@ import {
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_OUTPUT_DIRECTORY = path.join(PROJECT_ROOT, "docs", "screenshots")
 const FIXED_TIME = "2026-08-12T12:00:00.000Z"
+const SCREENSHOT_DEVICE_SCALE_FACTOR = 2
 const DESKTOP_VIEWPORT = Object.freeze({ height: 1000, width: 1440 })
 const MOBILE_VIEWPORT = Object.freeze({ height: 844, width: 390 })
 
@@ -86,7 +87,7 @@ export async function capturePublicationScreenshots(options = {}) {
     browser = await chromium.launch({ headless: true })
     const context = await browser.newContext({
       colorScheme: "light",
-      deviceScaleFactor: 1,
+      deviceScaleFactor: SCREENSHOT_DEVICE_SCALE_FACTOR,
       locale: "en-US",
       reducedMotion: "reduce",
       timezoneId: "UTC",
