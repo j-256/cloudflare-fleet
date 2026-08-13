@@ -255,7 +255,7 @@ test("MCP read tools return structured service and audit results", async (contex
   assert.deepEqual(calls.plan, [SELECTOR])
 })
 
-test("MCP apply elicits exact plan review before invoking the write service", async (context) => {
+test("MCP apply elicits one explicit plan approval before invoking the write service", async (context) => {
   let request
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async (incoming) => {
@@ -264,7 +264,6 @@ test("MCP apply elicits exact plan review before invoking the write service", as
         action: "accept",
         content: {
           approve: true,
-          confirmDigest: DIGEST,
         },
       }
     },
@@ -289,10 +288,11 @@ test("MCP apply elicits exact plan review before invoking the write service", as
   assert.match(request.params.message, new RegExp(DIGEST))
   assert.match(request.params.message, /PATCH zones\/zone-one\/settings\/always_use_https/)
   assert.match(request.params.message, /Body: \{"value":"on"\}/)
-  assert.deepEqual(request.params.requestedSchema.required, [
-    "approve",
-    "confirmDigest",
-  ])
+  assert.deepEqual(request.params.requestedSchema.required, ["approve"])
+  assert.equal(
+    Object.hasOwn(request.params.requestedSchema.properties, "confirmDigest"),
+    false,
+  )
 })
 
 test("MCP apply stops cleanly when confirmation is declined", async (context) => {
@@ -313,13 +313,12 @@ test("MCP apply stops cleanly when confirmation is declined", async (context) =>
   assert.equal(calls.apply.length, 0)
 })
 
-test("MCP apply refuses confirmation with a different digest", async (context) => {
+test("MCP apply refuses an unchecked confirmation", async (context) => {
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async () => ({
       action: "accept",
       content: {
-        approve: true,
-        confirmDigest: DIFFERENT_DIGEST,
+        approve: false,
       },
     }),
   })

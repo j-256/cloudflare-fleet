@@ -57,23 +57,17 @@ const applyInputSchema = z.strictObject({
   selector: selectorSchema,
 })
 const confirmationSchema = z.strictObject({
-  approve: z.boolean().describe("Set true only after reviewing every operation"),
-  confirmDigest: digestSchema.describe("Paste the exact plan digest to approve"),
+  approve: z.boolean().describe("Set true only after reviewing the exact plan shown above"),
 })
 const confirmationRequestSchema = Object.freeze({
   properties: {
     approve: {
-      description: "Set true only after reviewing every operation",
+      description: "Set true only after reviewing the exact plan shown above",
       title: "Approve alignment",
       type: "boolean",
     },
-    confirmDigest: {
-      description: "Paste the exact plan digest shown in the confirmation",
-      title: "Plan digest",
-      type: "string",
-    },
   },
-  required: ["approve", "confirmDigest"],
+  required: ["approve"],
   type: "object",
 })
 const requestStateSchema = z.strictObject({
@@ -221,7 +215,7 @@ function confirmationMessage(plan) {
     "",
     ...operations,
     "",
-    "Set approve to true and enter the exact plan digest only after reviewing every operation.",
+    "Set approve to true only after reviewing every operation.",
   ].join("\n")
 }
 
@@ -368,7 +362,7 @@ export function createFleetMcpServer(options = {}) {
     "apply_alignment",
     {
       annotations: APPLY_ANNOTATIONS,
-      description: "Apply only the exact reviewed alignment plan after interactive digest confirmation, fresh replanning, pending journaling, sequential writes, and scoped verification.",
+      description: "Apply only the exact reviewed alignment plan after interactive plan confirmation, fresh replanning, pending journaling, sequential writes, and scoped verification.",
       inputSchema: applyInputSchema,
       outputSchema: toolOutputSchema,
       title: "Apply reviewed fleet alignment",
@@ -410,14 +404,12 @@ export function createFleetMcpServer(options = {}) {
           CONFIRMATION_KEY,
           confirmationSchema,
         )
-        if (!confirmation
-          || confirmation.approve !== true
-          || confirmation.confirmDigest !== planDigest) {
+        if (!confirmation || confirmation.approve !== true) {
           const result = confirmationOutcome(
             service.accountId,
             selector,
             "confirmation-invalid",
-            "Alignment confirmation must approve and repeat the exact plan digest",
+            "Alignment confirmation must explicitly approve the displayed plan",
           )
           return toolResult(result, result.reason, { isError: true })
         }

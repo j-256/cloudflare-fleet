@@ -100,7 +100,7 @@ npm run mcp
 node /absolute/path/to/cloudflare-fleet/src/mcp.mjs
 ```
 
-It registers `audit_fleet`, `list_alignment_candidates`, `plan_alignment`, `apply_alignment`, and `list_activity`. `apply_alignment` accepts a selector plus an exact planning digest, rebuilds and displays every operation through MCP input elicitation, requires explicit approval and the repeated digest, then performs another fresh digest check before any write. Confirmation state is authenticated, method-bound, and short-lived. Protocol messages use stdout and diagnostics use stderr.
+It registers `audit_fleet`, `list_alignment_candidates`, `plan_alignment`, `apply_alignment`, and `list_activity`. `apply_alignment` accepts a selector plus an exact planning digest, rebuilds and displays every operation through MCP input elicitation, requires one explicit approval of the displayed plan, then performs another fresh digest check before any write. Confirmation state is authenticated, method-bound, and short-lived. Protocol messages use stdout and diagnostics use stderr.
 
 The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Pass `--state-file PATH` and `--policy-file PATH` to `npm run mcp --` when using explicit local profiles; the state path is also available to the fleet CLI. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
 

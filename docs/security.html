@@ -109,7 +109,7 @@
       <h2 id="agent-security-heading">Agent boundary</h2>
       <p>The CLI and MCP server are direct local processes, not browser clients. They inherit the API token and account identifier, so the process, its parent agent, and the host environment can exercise every Cloudflare permission granted to that token. Run them only for trusted local clients and keep secrets out of tracked or shared MCP configuration.</p>
       <p>The MCP transport is stdio-only and opens no network listener. Tool inputs and outputs never include the API token, protocol frames stay on stdout, and diagnostics stay on stderr. Its named tools expose audit, intent alignment, and activity operations without accepting arbitrary Cloudflare methods or paths.</p>
-      <p>The CLI apply command is intentionally noninteractive: the calling workflow must present the full plan and obtain operator approval before supplying its digest. MCP apply adds protocol-level input elicitation. Its authenticated, method-bound, short-lived request state binds the account, selector, and digest; approval must repeat the exact digest; and a fresh plan must still match before execution.</p>
+      <p>The CLI apply command is intentionally noninteractive: the calling workflow must present the full plan and obtain operator approval before supplying its digest. MCP apply adds protocol-level input elicitation. Its authenticated, method-bound, short-lived request state binds the account, selector, and digest; the displayed plan requires one explicit approval; and a fresh plan must still match before execution.</p>
     </section>
 
     <section class="section prose" aria-labelledby="writes-heading">
