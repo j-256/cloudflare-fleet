@@ -47,7 +47,7 @@ const EMAIL_ROUTE_CATEGORY = "Email routes"
 const EMAIL_SETTING_KEY_PREFIX = "settings:"
 const ZONE_SETTING_CATEGORY = "Zone settings"
 const EMAIL_ROUTING_WRITABLE_SETTINGS = new Set(
-  Object.values(EMAIL_ROUTING_SETTING),
+  [EMAIL_ROUTING_SETTING.SUPPORT_SUBADDRESS],
 )
 const RULE_CATEGORIES = new Set([
   MATRIX_CATEGORY.REDIRECTS,
@@ -242,6 +242,8 @@ function emailRoutingSettingTarget(row, cell, exact) {
         ? "Email Routing enabled state requires the coupled Email alignment workflow"
         : settingId === "status"
           ? "Cloudflare reports Email Routing status as read-only"
+          : settingId === EMAIL_ROUTING_SETTING.SKIP_WIZARD
+            ? "Cloudflare reports skip_wizard as configuration-wizard metadata; it is inspection-only"
           : `Email Routing setting ${settingId} has no direct alignment adapter`,
     )
   }

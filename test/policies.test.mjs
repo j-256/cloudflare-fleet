@@ -299,7 +299,6 @@ test("email alignment plans every missing policy component in safe order", () =>
   assert.deepEqual(emailIssues(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY), [
     "Email Routing is disabled",
     "DNS records are locked",
-    "Setup wizard is not skipped",
     "Subaddressing is disabled",
     "Catch-all is disabled",
     "Catch-all does not forward",
@@ -314,6 +313,29 @@ test("email alignment plans every missing policy component in safe order", () =>
       ["PUT", "zones/zone-new.example/email/routing/rules/catch_all"],
       ["PATCH", "zones/zone-new.example/email/routing/dns"],
     ],
+  )
+  assert.deepEqual(plan.operations[1], {
+    body: { support_subaddress: true },
+    currentValue: { support_subaddress: false },
+    label: "Match Email Routing settings",
+    method: "PATCH",
+    path: "zones/zone-new.example/email/routing",
+  })
+})
+
+test("email policy treats setup wizard state as inspection-only metadata", () => {
+  const zone = makeZone("alpha.example", {
+    email: { skip_wizard: false },
+  })
+
+  assert.deepEqual(
+    emailIssues(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY),
+    [],
+  )
+  assert.deepEqual(
+    buildEmailAlignmentPlan(zone, "fleet@example.com", FLEET_EMAIL_DNS_POLICY)
+      .operations,
+    [],
   )
 })
 
@@ -1028,8 +1050,8 @@ test("Email Routing setting plans patch only the governed boolean", () => {
     /not directly writable/,
   )
   assert.throws(
-    () => buildEmailRoutingSettingPlan(zone, "skip_wizard", "true"),
-    /must be a boolean/,
+    () => buildEmailRoutingSettingPlan(zone, "skip_wizard", true),
+    /not directly writable/,
   )
 })
 

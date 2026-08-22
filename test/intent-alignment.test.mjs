@@ -331,6 +331,31 @@ test("read-only Email Routing status intent names its blocker", () => {
   )
 })
 
+test("Email Routing setup wizard intent remains inspection-only", () => {
+  const alpha = makeZone("alpha.example")
+  const bravo = makeZone("bravo.example", {
+    email: { skip_wizard: false },
+  })
+  const inventory = makeInventory([alpha, bravo])
+  const row = buildMatrix(inventory).rows.find((entry) => (
+    entry.category === "Email" && entry.key === "settings:skip_wizard"
+  ))
+  const governed = evaluatedRow(
+    inventory,
+    row,
+    policyFor(row, observedExpected(row, alpha)),
+  )
+
+  const assessment = assessIntentAlignment(governed)
+
+  assert.equal(assessment.available, false)
+  assert.equal(assessment.blockers.length, 1)
+  assert.equal(
+    assessment.blockers[0].reason,
+    "Cloudflare reports skip_wizard as configuration-wizard metadata; it is inspection-only",
+  )
+})
+
 test("exact DNSSEC intent plans only the requested status", () => {
   const alpha = makeZone("alpha.example", {
     surfaces: {

@@ -41,7 +41,7 @@ const EMAIL_ROUTING_CATCH_ALL_FIELDS = Object.freeze(
   EMAIL_ROUTING_RULE_FIELDS.filter((field) => field !== "priority"),
 )
 const EMAIL_ROUTING_WRITABLE_SETTINGS = new Set(
-  Object.values(EMAIL_ROUTING_SETTING),
+  [EMAIL_ROUTING_SETTING.SUPPORT_SUBADDRESS],
 )
 const RULE_COPY_DEPENDENCY_KEYS = new Set([
   "id",
@@ -617,7 +617,6 @@ export function emailIssues(zone, destination, dnsPolicy, options = {}) {
 
   if (!email?.enabled) issues.push("Email Routing is disabled")
   if (email?.status !== "unlocked") issues.push(`DNS records are ${email?.status || "unknown"}`)
-  if (!email?.skip_wizard) issues.push("Setup wizard is not skipped")
   if (!email?.support_subaddress) issues.push("Subaddressing is disabled")
   if (!catchAll?.enabled) issues.push("Catch-all is disabled")
   if (!forward) issues.push("Catch-all does not forward")
@@ -666,17 +665,15 @@ export function buildEmailAlignmentPlan(zone, destination, dnsPolicy, options = 
     })
   }
 
-  if (!email?.skip_wizard || !email?.support_subaddress) {
+  if (!email?.support_subaddress) {
     operations.push({
       currentValue: {
-        skip_wizard: Boolean(email?.skip_wizard),
         support_subaddress: Boolean(email?.support_subaddress),
       },
       label: "Match Email Routing settings",
       method: HTTP_METHOD.PATCH,
       path: `zones/${zoneId}/email/routing`,
       body: {
-        skip_wizard: true,
         support_subaddress: true,
       },
     })
