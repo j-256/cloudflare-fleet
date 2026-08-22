@@ -649,12 +649,30 @@ export function runFleetMcpServer(options = {}) {
   })
 }
 
+export async function runFleetMcpMain(options = {}) {
+  const argv = options.argv || process.argv.slice(2)
+  const environment = options.environment || process.env
+  const stderr = options.stderr || process.stderr
+  const stdout = options.stdout || process.stdout
+  const { fleetUsage, parseFleetArguments } = await import("./cli.mjs")
+  const parsed = parseFleetArguments(["mcp", ...argv])
+  if (parsed.command === "help") {
+    stdout.write(`${fleetUsage()}\n`)
+    return null
+  }
+  const runServer = options.runServer || runFleetMcpServer
+  return runServer({
+    environment,
+    policyFile: parsed.policyFile,
+    stateFile: parsed.stateFile,
+    stderr,
+  })
+}
+
 if (isMainModule(import.meta.url)) {
-  try {
-    runFleetMcpServer()
-  } catch (error) {
+  runFleetMcpMain().catch((error) => {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`[mcp] ${redact(message, [process.env.CLOUDFLARE_API_TOKEN])}\n`)
     process.exitCode = 1
-  }
+  })
 }

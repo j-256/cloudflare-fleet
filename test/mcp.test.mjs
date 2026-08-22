@@ -8,7 +8,10 @@ import {
 } from "@modelcontextprotocol/client"
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio"
 
-import { createFleetMcpServer } from "../src/mcp.mjs"
+import {
+  createFleetMcpServer,
+  runFleetMcpMain,
+} from "../src/mcp.mjs"
 
 const DIGEST = `sha256:${"a".repeat(64)}`
 const DIFFERENT_DIGEST = `sha256:${"b".repeat(64)}`
@@ -554,6 +557,44 @@ test("MCP tool errors redact the Cloudflare API token", async (context) => {
   assert.equal(result.structuredContent.status, "error")
   assert.match(result.content[0].text, /\[redacted\]/)
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
+})
+
+test("MCP direct entrypoint applies explicit state and policy profiles", async () => {
+  const environment = {
+    CLOUDFLARE_ACCOUNT_ID: "account-one",
+    CLOUDFLARE_API_TOKEN: SECRET,
+  }
+  const stderr = { write() {} }
+  let serverOptions
+
+  const result = await runFleetMcpMain({
+    argv: [
+      "--state-file",
+      "profiles/state.json",
+      "--policy-file=profiles/policy.json",
+    ],
+    environment,
+    runServer(options) {
+      serverOptions = options
+      return "started"
+    },
+    stderr,
+  })
+
+  assert.equal(result, "started")
+  assert.deepEqual(serverOptions, {
+    environment,
+    policyFile: "profiles/policy.json",
+    stateFile: "profiles/state.json",
+    stderr,
+  })
+})
+
+test("MCP direct entrypoint rejects unknown options", async () => {
+  await assert.rejects(
+    runFleetMcpMain({ argv: ["--definitely-invalid"] }),
+    /Unknown option: --definitely-invalid/,
+  )
 })
 
 test("MCP stdio entrypoint negotiates the modern protocol without stdout noise", async (context) => {
