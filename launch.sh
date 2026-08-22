@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SCRIPT_NAME="cloudflare-fleet"
+SCRIPT_COMMAND=""
 SCRIPT_DIR=""
 RUNTIME_BASE=""
 RUNTIME_DIR=""
@@ -62,18 +63,45 @@ MAX_DEBUG_PORT=65535
 READY_ATTEMPTS=100
 READY_INTERVAL_SECONDS="0.1"
 
+_cloudflare_fleet_self_dir() {
+    local source
+    local directory
+
+    source="${BASH_SOURCE[0]}"
+    while [ -h "$source" ]; do
+        directory="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        case "$source" in
+            /*)
+                ;;
+            *)
+                source="$directory/$source"
+                ;;
+        esac
+    done
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(_cloudflare_fleet_self_dir)"
+SCRIPT_COMMAND="$(basename "${BASH_SOURCE[0]}")"
+case "$SCRIPT_COMMAND" in
+    bash|sh|zsh|dash|"")
+        SCRIPT_COMMAND="$SCRIPT_NAME"
+        ;;
+esac
+
 show_help() {
     echo "NAME"
     echo "  $SCRIPT_NAME - launch the local Cloudflare fleet control plane"
     echo "SYNOPSIS"
-    echo "  ./launch.sh [--read-only | --write] [--fresh | --clear-cache] [--debug-port PORT]"
+    echo "  $SCRIPT_COMMAND [-r | -w] [-f | -c] [-d PORT]"
     echo "OPTIONS"
-    echo "  --read-only        Disable every write control"
-    echo "  --write            Enable previewed and confirmed write controls (default)"
-    echo "  --fresh            Bypass the cached snapshot for this launch"
-    echo "  --clear-cache      Clear cached snapshots before loading live"
-    echo "  --debug-port PORT  Open an isolated direct-client session with Chrome DevTools"
-    echo "  -h, --help         Show this help text"
+    echo "  -r, --read-only        Disable every write control"
+    echo "  -w, --write            Enable previewed and confirmed write controls (default)"
+    echo "  -f, --fresh            Bypass the cached snapshot for this launch"
+    echo "  -c, --clear-cache      Clear cached snapshots before loading live"
+    echo "  -d, --debug-port PORT  Open an isolated direct-client session with Chrome DevTools"
+    echo "  -h, --help             Show this help text"
     echo "ENVIRONMENT"
     echo "  CLOUDFLARE_API_TOKEN   Required account-level Cloudflare API token"
     echo "  CLOUDFLARE_ACCOUNT_ID  Required Cloudflare account identifier"
@@ -257,7 +285,7 @@ start_session_watcher() {
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --read-only)
+        -r|--read-only)
             if [ "$MODE_OPTION" = "write" ]; then
                 error "--read-only and --write cannot be combined"
                 exit 2
@@ -268,7 +296,7 @@ while [ "$#" -gt 0 ]; do
             SESSION_TITLE="Cloudflare Fleet | Read-only"
             shift
             ;;
-        --write)
+        -w|--write)
             if [ "$MODE_OPTION" = "read-only" ]; then
                 error "--read-only and --write cannot be combined"
                 exit 2
@@ -279,16 +307,16 @@ while [ "$#" -gt 0 ]; do
             SESSION_TITLE="Cloudflare Fleet | Read/write"
             shift
             ;;
-        --fresh)
+        -f|--fresh)
             USE_CACHE=false
             shift
             ;;
-        --clear-cache)
+        -c|--clear-cache)
             CLEAR_CACHE=true
             USE_CACHE=false
             shift
             ;;
-        --debug-port)
+        -d|--debug-port)
             if [ "$#" -lt 2 ]; then
                 error "--debug-port requires a value"
                 exit 2
@@ -383,7 +411,6 @@ if [ -n "$DEBUG_PORT" ] && curl -sS --max-time 1 "http://127.0.0.1:$DEBUG_PORT/j
     exit 2
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_BASE="${TMPDIR:-/tmp}"
 RUNTIME_BASE="${RUNTIME_BASE%/}"
 
