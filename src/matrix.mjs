@@ -50,8 +50,10 @@ const EDITABLE_RULESET_KINDS = new Set([
 ])
 const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
 const EMAIL_ROUTING_MX_DRIFT_DESCRIPTION = "Cloudflare-assigned MX priorities are ignored for drift; live priorities remain inspectable and editable"
+const EXECUTE_RULE_ACTION = "execute"
 const MATRIX_MISSING_CANONICAL = "__missing__"
 const MX_RECORD_TYPE = "MX"
+const UNCONDITIONAL_RULE_EXPRESSION = "true"
 const TXT_RECORD_TYPE = "TXT"
 const NON_CONSENSUS_VARIANT_COLOR_COUNT = 5
 const RULE_MATRIX_CATEGORY_SET = new Set([
@@ -704,6 +706,29 @@ function addDnsRows(rows, inventory) {
   }
 }
 
+function executeTargetRuleset(zone, rule) {
+  if (rule.action !== EXECUTE_RULE_ACTION) return null
+  const targetId = rule.action_parameters?.id
+  if (!targetId) return null
+  return (surfaceResult(zone, "rulesets") || []).find(
+    (ruleset) => ruleset.id === targetId,
+  ) || null
+}
+
+function referencedRulesetKindLabel(ruleset) {
+  if (ruleset.kind === RULESET_KIND.MANAGED) return "Managed ruleset"
+  if (ruleset.kind === RULESET_KIND.CUSTOM) return "Custom ruleset"
+  return "Referenced ruleset"
+}
+
+function executeRuleDescription(ruleset, rule, zoneName) {
+  const expression = normalizeText(rule.expression || "", zoneName).trim()
+  const condition = !expression || expression === UNCONDITIONAL_RULE_EXPRESSION
+    ? "Every request"
+    : `When ${expression}`
+  return `${referencedRulesetKindLabel(ruleset)} | ${condition}`
+}
+
 function addRuleRows(rows, inventory) {
   for (const zone of inventory.zones) {
     for (const detail of zone.ruleDetails.filter((entry) => entry.ok)) {
@@ -734,8 +759,13 @@ function addRuleRows(rows, inventory) {
         )
         const capability = ruleCopyCapability(ruleset, rule)
         const stableRef = rule.ref && rule.ref !== rule.id ? rule.ref : ""
+        const executeTarget = executeTargetRuleset(zone, rule)
+        const executeTargetName = String(executeTarget?.name || "").trim()
         const label = normalizeText(
-          rule.description || stableRef || `${rule.action || "rule"} rule ${index + 1} | ${(rule.expression || "").slice(0, 80)}`,
+          rule.description
+            || stableRef
+            || executeTargetName
+            || `${rule.action || "rule"} rule ${index + 1} | ${(rule.expression || "").slice(0, 80)}`,
           zone.meta.name,
         )
         const redirect = presentRedirect(observedRule, {
@@ -755,12 +785,16 @@ function addRuleRows(rows, inventory) {
           : MATRIX_CATEGORY.RULESET_RULES
         const description = redirect
           ? `When ${redirect.match || "every request"}`
-          : `Action: ${rule.action || "unknown"}`
+          : executeTarget
+            ? executeRuleDescription(executeTarget, rule, zone.meta.name)
+            : `Action: ${rule.action || "unknown"}`
         const labelSource = rule.description
           ? "Rule description"
           : stableRef
             ? "Rule reference"
-            : "Generated fallback"
+            : executeTargetName
+              ? `${referencedRulesetKindLabel(executeTarget)} name`
+              : "Generated fallback"
         addCell(
           rows,
           category,
@@ -832,6 +866,8 @@ function addRuleRows(rows, inventory) {
               : null,
             search: [
               rulesetLabel,
+              executeTarget?.description,
+              executeTargetName,
               rulePhaseLabel(phase),
               phase,
               `${rulePhaseLabel(phase)} entrypoint`,

@@ -593,7 +593,49 @@ test("matrix exposes dependency-backed rules for editing but not copying", () =>
   assert.match(row.search, /request sanitization entrypoint/)
 })
 
-test("matrix replaces an auto-generated rule reference with a readable fallback", () => {
+test("matrix identifies an unnamed execute rule by its managed ruleset", () => {
+  const ruleset = {
+    id: "sanitize-entrypoint",
+    kind: "zone",
+    name: "default",
+    phase: "http_request_sanitize",
+    rules: [
+      makeRule("", {
+        action: "execute",
+        action_parameters: {
+          id: "managed-ruleset-id",
+        },
+        expression: "true",
+        id: "auto-rule-id",
+        ref: "auto-rule-id",
+      }),
+    ],
+  }
+  const matrix = buildMatrix(makeInventory([
+    makeZone("alpha.example", {
+      ruleDetails: [ok(ruleset)],
+      rulesets: [
+        {
+          description: "Provides normalization on the URL path",
+          id: "managed-ruleset-id",
+          kind: "managed",
+          name: "Cloudflare Normalization Ruleset",
+          phase: "http_request_sanitize",
+        },
+      ],
+    }),
+  ]))
+  const row = matrix.rows.find(
+    (entry) => entry.category === "Ruleset rules",
+  )
+
+  assert.equal(row.label, "Cloudflare Normalization Ruleset")
+  assert.equal(row.labelSource, "Managed ruleset name")
+  assert.equal(row.description, "Managed ruleset | Every request")
+  assert.match(row.search, /provides normalization on the url path/)
+})
+
+test("matrix keeps a readable fallback when an execute target is unavailable", () => {
   const ruleset = {
     id: "sanitize-entrypoint",
     kind: "zone",
