@@ -234,3 +234,39 @@ test("unified CLI parses MCP state and policy profiles", () => {
     },
   )
 })
+
+test("unified CLI keeps command-scoped short options equivalent", () => {
+  const cases = [
+    [
+      ["alignment", "list", "-f", "json", "-s", "profiles/state.json"],
+      ["alignment", "list", "--format", "json", "--state-file", "profiles/state.json"],
+    ],
+    [
+      ["alignment", "plan", "-p", "policy-one"],
+      ["alignment", "plan", "--policy", "policy-one"],
+    ],
+    [
+      ["alignment", "plan", "-c", "settings", "-k", "always_use_https", "-z", "zone-one"],
+      ["alignment", "plan", "--category", "settings", "--key", "always_use_https", "--zone-id", "zone-one"],
+    ],
+    [
+      ["alignment", "apply", "-p", "policy-one", "-e", "sha256:approved"],
+      ["alignment", "apply", "--policy", "policy-one", "--expect-plan", "sha256:approved"],
+    ],
+    [
+      ["mcp", "-p", "profiles/policy.json", "-s", "profiles/state.json"],
+      ["mcp", "--policy-file", "profiles/policy.json", "--state-file", "profiles/state.json"],
+    ],
+  ]
+
+  for (const [shortArguments, longArguments] of cases) {
+    assert.deepEqual(
+      parseFleetArguments(shortArguments),
+      parseFleetArguments(longArguments),
+    )
+  }
+  assert.throws(
+    () => parseFleetArguments(["alignment", "plan", "-P", "policy-one"]),
+    /Unknown option: -P/,
+  )
+})

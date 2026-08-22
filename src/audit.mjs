@@ -45,12 +45,12 @@ export function fleetAuditUsage() {
     "  node src/audit.mjs [--deep] [--format markdown|json|html] [--fail-on LEVEL] [--policy-file PATH] [--state-file PATH]",
     "",
     "OPTIONS",
-    "  --deep             Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
-    "  --fail-on LEVEL    Exit 2 for findings at or above critical, warning, review, or info",
-    "  --format FORMAT    Render markdown, JSON, or self-contained HTML (default: markdown)",
-    "  --policy-file PATH Read fleet policy exceptions from PATH",
-    "  --state-file PATH  Read fleet intent and coverage expectations from PATH",
-    "  -h, --help         Show this help text",
+    "  -d, --deep              Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
+    "  --fail-on LEVEL         Exit 2 for findings at or above critical, warning, review, or info",
+    "  -f, --format FORMAT     Render markdown, JSON, or self-contained HTML (default: markdown)",
+    "  -p, --policy-file PATH  Read fleet policy exceptions from PATH",
+    "  -s, --state-file PATH   Read fleet intent and coverage expectations from PATH",
+    "  -h, --help              Show this help text",
     "",
     "ENVIRONMENT",
     "  CLOUDFLARE_API_TOKEN        Required account-level Cloudflare API token",
@@ -75,19 +75,27 @@ export function parseFleetAuditArguments(argv) {
       options.help = true
       continue
     }
-    if (argument === "--deep") {
+    if (argument === "-d" || argument === "--deep") {
       options.deep = true
       continue
     }
-    if (["--fail-on", "--format", "--policy-file", "--state-file"].includes(argument)) {
+    if ([
+      "--fail-on",
+      "-f",
+      "--format",
+      "-p",
+      "--policy-file",
+      "-s",
+      "--state-file",
+    ].includes(argument)) {
       const value = argv[index + 1]
-      if (!value || value.startsWith("--")) {
+      if (!value || value.startsWith("-")) {
         throw new Error(`${argument} requires a value`)
       }
       index += 1
       if (argument === "--fail-on") options.failOn = value
-      else if (argument === "--format") options.format = value
-      else if (argument === "--policy-file") options.policyFile = value
+      else if (argument === "-f" || argument === "--format") options.format = value
+      else if (argument === "-p" || argument === "--policy-file") options.policyFile = value
       else options.stateFile = value
       continue
     }

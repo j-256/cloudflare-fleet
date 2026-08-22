@@ -19,24 +19,39 @@ const SCREENSHOT_DEVICE_SCALE_FACTOR = 2
 const DESKTOP_VIEWPORT = Object.freeze({ height: 1000, width: 1440 })
 const MOBILE_VIEWPORT = Object.freeze({ height: 844, width: 390 })
 
-function parseArguments(argv) {
+export function captureScreenshotsUsage() {
+  return [
+    "Usage: capture-screenshots.mjs [options]",
+    "",
+    "Options:",
+    "  -o, --output DIRECTORY   Write screenshots to DIRECTORY",
+    "  -h, --help               Show this help",
+  ].join("\n")
+}
+
+export function parseCaptureScreenshotsArguments(argv) {
   let outputDirectory = DEFAULT_OUTPUT_DIRECTORY
+  let help = false
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
-    if (argument === "--output" || argument.startsWith("--output=")) {
+    if (argument === "-h" || argument === "--help") {
+      help = true
+      continue
+    }
+    if (argument === "-o" || argument === "--output" || argument.startsWith("--output=")) {
       const value = argument.startsWith("--output=")
         ? argument.slice("--output=".length)
         : argv[index + 1]
-      if (!value || value.startsWith("--")) {
+      if (!value || value.startsWith("-")) {
         throw new Error("--output requires a directory")
       }
       outputDirectory = path.resolve(value)
-      if (argument === "--output") index += 1
+      if (!argument.startsWith("--output=")) index += 1
       continue
     }
     throw new Error(`Unknown option: ${argument}`)
   }
-  return { outputDirectory }
+  return { help, outputDirectory }
 }
 
 async function openDashboardPage(context, session, viewport, browserErrors) {
@@ -209,13 +224,15 @@ export async function capturePublicationScreenshots(options = {}) {
 if (isMainModule(import.meta.url)) {
   let options
   try {
-    options = parseArguments(process.argv.slice(2))
+    options = parseCaptureScreenshotsArguments(process.argv.slice(2))
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     process.exitCode = 2
   }
   if (options) {
-    capturePublicationScreenshots(options).then((screenshots) => {
+    if (options.help) {
+      process.stdout.write(`${captureScreenshotsUsage()}\n`)
+    } else capturePublicationScreenshots(options).then((screenshots) => {
       process.stdout.write(`${JSON.stringify({ screenshots })}\n`)
     }).catch((error) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)

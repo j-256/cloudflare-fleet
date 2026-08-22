@@ -101,6 +101,23 @@ test("fleet audit usage labels the command as read-only", () => {
   assert.match(fleetAuditUsage(), /markdown\|json\|html/)
 })
 
+test("fleet audit arguments keep supported short options equivalent", () => {
+  const cases = [
+    [["-d"], ["--deep"]],
+    [["-f", "json"], ["--format", "json"]],
+    [["-p", "policy.json"], ["--policy-file", "policy.json"]],
+    [["-s", "state.json"], ["--state-file", "state.json"]],
+    [["-h"], ["--help"]],
+  ]
+  for (const [shortArguments, longArguments] of cases) {
+    assert.deepEqual(
+      parseFleetAuditArguments(shortArguments),
+      parseFleetAuditArguments(longArguments),
+    )
+  }
+  assert.throws(() => parseFleetAuditArguments(["-F"]), /Unknown option: -F/)
+})
+
 test("resolveStateFile accepts an explicit relative --state-file even if it equals the env var", () => {
   // Only the env var must be absolute; an explicit flag value may be relative
   assert.equal(

@@ -12,33 +12,49 @@ const DEFAULT_STATE_FILE = path.join(PROJECT_ROOT, "state.json")
 const DEFAULT_WRANGLER_CONFIG = path.join(PROJECT_ROOT, "wrangler.jsonc")
 const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4/"
 
+export function importHostedStateUsage() {
+  return [
+    "Usage: import-hosted-state.mjs [options] [STATE_FILE]",
+    "",
+    "Options:",
+    "  -f, --force         Replace existing hosted state",
+    "  -c, --config FILE   Read Wrangler configuration from FILE",
+    "  -h, --help          Show this help",
+  ].join("\n")
+}
+
 export function parseImportHostedStateArguments(values) {
   let configFile = DEFAULT_WRANGLER_CONFIG
   let force = false
+  let help = false
   let stateFile = DEFAULT_STATE_FILE
   let stateFileSet = false
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]
-    if (value === "--force") {
+    if (value === "-h" || value === "--help") {
+      help = true
+      continue
+    }
+    if (value === "-f" || value === "--force") {
       force = true
       continue
     }
-    if (value === "--config" || value.startsWith("--config=")) {
+    if (value === "-c" || value === "--config" || value.startsWith("--config=")) {
       const configured = value.startsWith("--config=")
         ? value.slice("--config=".length)
         : values[index + 1]
-      if (!configured || configured.startsWith("--")) {
+      if (!configured || configured.startsWith("-")) {
         throw new Error("--config requires a value")
       }
       configFile = path.resolve(configured)
-      if (value === "--config") index += 1
+      if (!value.startsWith("--config=")) index += 1
       continue
     }
-    if (value.startsWith("--")) {
+    if (value.startsWith("-")) {
       throw new Error(`Unknown option: ${value}`)
     }
     if (stateFileSet) {
-      throw new Error("Usage: import-hosted-state.mjs [--force] [--config FILE] [STATE_FILE]")
+      throw new Error(importHostedStateUsage())
     }
     stateFile = path.resolve(value)
     stateFileSet = true
@@ -46,6 +62,7 @@ export function parseImportHostedStateArguments(values) {
   return {
     configFile,
     force,
+    help,
     stateFile,
   }
 }
@@ -247,7 +264,9 @@ if (isMainModule(import.meta.url)) {
     process.exitCode = 1
   }
   if (parsed) {
-    importHostedState(parsed).then((result) => {
+    if (parsed.help) {
+      process.stdout.write(`${importHostedStateUsage()}\n`)
+    } else importHostedState(parsed).then((result) => {
       process.stdout.write(`${JSON.stringify(result)}\n`)
     }).catch((error) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)

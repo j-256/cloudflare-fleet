@@ -15,16 +15,29 @@ const MIME_TYPES = Object.freeze({
   ".svg": "image/svg+xml; charset=utf-8",
 })
 
-function parsePort(argv) {
-  if (argv.length === 0) return DEFAULT_PORT
-  if (argv.length !== 2 || argv[0] !== "--port") {
-    throw new Error("Usage: serve-docs.mjs [--port PORT]")
+export function documentationServerUsage() {
+  return [
+    "Usage: serve-docs.mjs [options]",
+    "",
+    "Options:",
+    "  -p, --port PORT   Listen on PORT (default: 4173)",
+    "  -h, --help        Show this help",
+  ].join("\n")
+}
+
+export function parseDocumentationServerArguments(argv) {
+  if (argv.length === 0) return { help: false, port: DEFAULT_PORT }
+  if (argv.length === 1 && ["-h", "--help"].includes(argv[0])) {
+    return { help: true, port: DEFAULT_PORT }
+  }
+  if (argv.length !== 2 || !["-p", "--port"].includes(argv[0])) {
+    throw new Error(documentationServerUsage())
   }
   const port = Number(argv[1])
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
     throw new Error("Documentation server port is invalid")
   }
-  return port
+  return { help: false, port }
 }
 
 function documentationPath(requestUrl) {
@@ -60,14 +73,17 @@ export function createDocumentationServer() {
 }
 
 if (isMainModule(import.meta.url)) {
-  let port
+  let options
   try {
-    port = parsePort(process.argv.slice(2))
+    options = parseDocumentationServerArguments(process.argv.slice(2))
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     process.exitCode = 2
   }
-  if (port) {
+  if (options?.help) {
+    process.stdout.write(`${documentationServerUsage()}\n`)
+  } else if (options) {
+    const { port } = options
     const server = createDocumentationServer()
     server.listen(port, "127.0.0.1", () => {
       process.stdout.write(`Cloudflare Fleet docs: http://127.0.0.1:${port}/\n`)

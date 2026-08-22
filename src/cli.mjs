@@ -40,6 +40,15 @@ const OPTION_WITH_VALUE = new Set([
   "state-file",
   "zone-id",
 ])
+const SHORT_OPTION_NAMES = Object.freeze({
+  "-c": ["category"],
+  "-e": ["expect-plan"],
+  "-f": ["format"],
+  "-k": ["key"],
+  "-p": ["policy", "policy-file"],
+  "-s": ["state-file"],
+  "-z": ["zone-id"],
+})
 
 export function fleetUsage() {
   return [
@@ -55,8 +64,15 @@ export function fleetUsage() {
     "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
     "",
     "SELECTOR",
-    "  --policy ID",
-    "  --category CATEGORY --key KEY [--phase PHASE] [--zone-id ID ...]",
+    "  -p, --policy ID",
+    "  -c, --category CATEGORY -k, --key KEY [--phase PHASE] [-z, --zone-id ID ...]",
+    "",
+    "OPTIONS",
+    "  -e, --expect-plan DIGEST  Require the approved plan digest when applying",
+    "  -f, --format text|json    Select operator text or structured JSON output",
+    "  -p, --policy-file PATH    Select an MCP policy profile (mcp command only)",
+    "  -s, --state-file PATH     Select a fleet state profile",
+    "  -h, --help                Show this help",
     "",
     "ENVIRONMENT",
     "  CLOUDFLARE_API_TOKEN        Required account-level Cloudflare API token",
@@ -65,9 +81,14 @@ export function fleetUsage() {
   ].join("\n")
 }
 
-function splitOption(argument) {
+function splitOption(argument, allowed) {
   if (!argument.startsWith("--")) {
-    throw new Error(`Unexpected argument: ${argument}`)
+    const candidates = SHORT_OPTION_NAMES[argument]
+      ?.filter((name) => allowed.has(name)) || []
+    if (candidates.length === 1) {
+      return { name: candidates[0], value: null }
+    }
+    throw new Error(`Unknown option: ${argument}`)
   }
   const equals = argument.indexOf("=")
   if (equals === -1) return { name: argument.slice(2), value: null }
@@ -105,7 +126,7 @@ function parseOptions(argv, allowed) {
       options.help = true
       continue
     }
-    const parsed = splitOption(argument)
+    const parsed = splitOption(argument, allowed)
     if (!allowed.has(parsed.name)) {
       throw new Error(`Unknown option: --${parsed.name}`)
     }
@@ -115,7 +136,7 @@ function parseOptions(argv, allowed) {
     let value = parsed.value
     if (value === null) {
       value = argv[index + 1]
-      if (!value || value.startsWith("--")) {
+      if (!value || value.startsWith("-")) {
         throw new Error(`--${parsed.name} requires a value`)
       }
       index += 1
@@ -409,6 +430,7 @@ function requestedJson(argv) {
   return argv.some((argument, index) => (
     argument === "--format=json"
       || (argument === "--format" && argv[index + 1] === "json")
+      || (argument === "-f" && argv[index + 1] === "json")
   ))
 }
 

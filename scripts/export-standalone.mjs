@@ -29,27 +29,42 @@ function gitOutput(args) {
   return result.stdout
 }
 
-function parseArguments(argv) {
+export function standaloneExportUsage() {
+  return [
+    "Usage: export-standalone.mjs --output DIRECTORY",
+    "",
+    "Options:",
+    "  -o, --output DIRECTORY   Export into an empty DIRECTORY",
+    "  -h, --help               Show this help",
+  ].join("\n")
+}
+
+export function parseStandaloneExportArguments(argv) {
   let outputDirectory = ""
+  let help = false
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
-    if (argument === "--output" || argument.startsWith("--output=")) {
+    if (argument === "-h" || argument === "--help") {
+      help = true
+      continue
+    }
+    if (argument === "-o" || argument === "--output" || argument.startsWith("--output=")) {
       const value = argument.startsWith("--output=")
         ? argument.slice("--output=".length)
         : argv[index + 1]
-      if (!value || value.startsWith("--")) {
+      if (!value || value.startsWith("-")) {
         throw new Error("--output requires a directory")
       }
       outputDirectory = path.resolve(value)
-      if (argument === "--output") index += 1
+      if (!argument.startsWith("--output=")) index += 1
       continue
     }
     throw new Error(`Unknown option: ${argument}`)
   }
-  if (!outputDirectory) {
-    throw new Error("Usage: export-standalone.mjs --output DIRECTORY")
+  if (!outputDirectory && !help) {
+    throw new Error(standaloneExportUsage())
   }
-  return { outputDirectory }
+  return { help, outputDirectory }
 }
 
 function trackedProjectFiles() {
@@ -96,13 +111,15 @@ export async function exportStandalone(options) {
 if (isMainModule(import.meta.url)) {
   let options
   try {
-    options = parseArguments(process.argv.slice(2))
+    options = parseStandaloneExportArguments(process.argv.slice(2))
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     process.exitCode = 2
   }
   if (options) {
-    exportStandalone(options).then((result) => {
+    if (options.help) {
+      process.stdout.write(`${standaloneExportUsage()}\n`)
+    } else exportStandalone(options).then((result) => {
       process.stdout.write(`${JSON.stringify(result)}\n`)
     }).catch((error) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)

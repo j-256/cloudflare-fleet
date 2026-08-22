@@ -23,13 +23,32 @@ function optionValue(argv, index, argument) {
     }
   }
   const value = argv[index + 1]
-  if (!value || value.startsWith("--")) {
+  if (!value || value.startsWith("-")) {
     throw new Error(`${argument} requires a value`)
   }
   return {
     nextIndex: index + 1,
     value,
   }
+}
+
+export function hostedConfigurationUsage() {
+  return [
+    "Usage: configure-hosted.mjs [options]",
+    "",
+    "Options:",
+    "  --access-aud VALUE          Set the Cloudflare Access audience",
+    "  --access-team-domain URL    Set the Cloudflare Access team domain",
+    "  -a, --account-id ID         Set the Cloudflare account ID",
+    "  -d, --database-id ID        Set the D1 database ID",
+    "  --hostname HOST             Set the hosted dashboard hostname",
+    "  -o, --output FILE           Write Wrangler configuration to FILE",
+    "  -p, --policy-file FILE      Read fleet policy from FILE",
+    "  --worker-name NAME          Set the Worker name",
+    "  -r, --read-only             Configure a read-only deployment",
+    "  -w, --write                 Configure a read/write deployment",
+    "  -h, --help                  Show this help",
+  ].join("\n")
 }
 
 export function parseHostedConfigurationArguments(argv, environment = process.env) {
@@ -39,12 +58,17 @@ export function parseHostedConfigurationArguments(argv, environment = process.en
     accountId: environment.CLOUDFLARE_ACCOUNT_ID || "",
     databaseId: environment.CLOUDFLARE_FLEET_D1_DATABASE_ID || "",
     hostname: environment.CLOUDFLARE_FLEET_HOSTNAME || "",
+    help: false,
     outputFile: DEFAULT_OUTPUT_FILE,
     policyFile: environment.CLOUDFLARE_FLEET_POLICY_FILE || DEFAULT_POLICY_FILE,
     readOnly: true,
     workerName: "cloudflare-fleet",
   }
   const mappings = {
+    "-a": "accountId",
+    "-d": "databaseId",
+    "-o": "outputFile",
+    "-p": "policyFile",
     "--access-aud": "accessAudience",
     "--access-team-domain": "accessTeamDomain",
     "--account-id": "accountId",
@@ -56,11 +80,15 @@ export function parseHostedConfigurationArguments(argv, environment = process.en
   }
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
-    if (argument === "--read-only") {
+    if (argument === "-h" || argument === "--help") {
+      options.help = true
+      continue
+    }
+    if (argument === "-r" || argument === "--read-only") {
       options.readOnly = true
       continue
     }
-    if (argument === "--write") {
+    if (argument === "-w" || argument === "--write") {
       options.readOnly = false
       continue
     }
@@ -196,7 +224,9 @@ if (isMainModule(import.meta.url)) {
     process.exitCode = 2
   }
   if (options) {
-    writeHostedWranglerConfiguration(options).then((configuration) => {
+    if (options.help) {
+      process.stdout.write(`${hostedConfigurationUsage()}\n`)
+    } else writeHostedWranglerConfiguration(options).then((configuration) => {
       process.stdout.write(`${JSON.stringify({
         hostname: configuration.routes[0].pattern,
         outputFile: options.outputFile,
