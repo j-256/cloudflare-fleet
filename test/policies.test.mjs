@@ -756,6 +756,68 @@ test("WAF policy builds a new entrypoint from live consensus", () => {
   )
 })
 
+test("WAF policy keeps the request logger last", () => {
+  const consensus = fleetRuleset()
+  const targetLogRule = makeRule(LOG_RULE, {
+    action: "skip",
+    action_parameters: { products: ["zoneLockdown"] },
+    expression: "(true)",
+    logging: { enabled: true },
+  })
+  const targetRuleset = fleetRuleset({
+    rules: [
+      makeRule(BLOCK_RULE),
+      targetLogRule,
+      makeRule("Zone-specific rule"),
+    ],
+  })
+  const inventory = makeInventory([
+    makeZone("alpha.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("beta.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("target.example", { ruleDetails: [ok(targetRuleset)] }),
+  ])
+  const policies = deriveFleetWafPolicies(inventory)
+
+  assert.deepEqual(wafIssues(inventory.zones[2], policies), [
+    `${LOG_RULE}: is not last`,
+  ])
+  const plan = buildWafAlignmentPlan(inventory.zones[2], policies)
+  assert.deepEqual(plan.operations, [
+    {
+      body: { position: { after: "" } },
+      currentValue: { position: 2 },
+      label: `Move ${LOG_RULE} to the end`,
+      method: "PATCH",
+      path: `zones/zone-target.example/rulesets/ruleset-id/rules/${targetLogRule.id}`,
+    },
+  ])
+})
+
+test("WAF policy inserts a missing fleet rule before the request logger", () => {
+  const consensus = fleetRuleset()
+  const logRule = makeRule(LOG_RULE, {
+    action: "skip",
+    action_parameters: { products: ["zoneLockdown"] },
+    expression: "(true)",
+    logging: { enabled: true },
+  })
+  const inventory = makeInventory([
+    makeZone("alpha.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("beta.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("target.example", {
+      ruleDetails: [ok(fleetRuleset({ rules: [logRule] }))],
+    }),
+  ])
+  const policies = deriveFleetWafPolicies(inventory)
+
+  const plan = buildWafAlignmentPlan(inventory.zones[2], policies)
+  assert.equal(plan.operations.length, 1)
+  assert.equal(plan.operations[0].method, "POST")
+  assert.equal(plan.operations[0].path, "zones/zone-target.example/rulesets/ruleset-id/rules")
+  assert.equal(plan.operations[0].body.description, BLOCK_RULE)
+  assert.deepEqual(plan.operations[0].body.position, { before: logRule.id })
+})
+
 test("rule copy creates a missing entrypoint with a portable payload", () => {
   const sourceRuleset = {
     id: "source-entrypoint",

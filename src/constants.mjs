@@ -95,9 +95,14 @@ export const SESSION_TITLE = Object.freeze({
   READ_WRITE: "Cloudflare Fleet | Read/write",
 })
 
+export const FLEET_WAF_RULE_DESCRIPTION = Object.freeze({
+  ANTI_SCANNER: "[fleet] cf-waf-deploy: anti-scanner block",
+  LOG_ALL_OTHERS: "[fleet] Log All Others (Skip No-op)",
+})
+
 export const FLEET_WAF_RULE_DESCRIPTIONS = Object.freeze([
-  "[fleet] cf-waf-deploy: anti-scanner block",
-  "[fleet] Log All Others (Skip No-op)",
+  FLEET_WAF_RULE_DESCRIPTION.ANTI_SCANNER,
+  FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS,
 ])
 
 export const SURFACES = Object.freeze([

@@ -4,6 +4,7 @@ import {
   EMAIL_ROUTING_ACTION_KIND,
   EMAIL_ROUTING_RULE_IDENTIFIER,
   EMAIL_ROUTING_SETTING,
+  FLEET_WAF_RULE_DESCRIPTION,
   FLEET_WAF_RULE_DESCRIPTIONS,
   HTTP_METHOD,
   POLICY_EXCEPTION_STATUS,
@@ -1934,6 +1935,7 @@ export function deriveFleetWafPolicies(inventory) {
 export function wafIssues(zone, policies) {
   const issues = []
   const ruleset = customFirewallRuleset(zone)
+  const rules = ruleset?.rules || []
 
   for (const description of FLEET_WAF_RULE_DESCRIPTIONS) {
     const policy = policies.get(description)
@@ -1948,6 +1950,11 @@ export function wafIssues(zone, policies) {
     }
     const current = stableString(normalizeValue(writeRule(rule), zone.meta.name, { preserveOrder: true }))
     if (current !== policy.canonical) issues.push(`${description}: differs from consensus`)
+  }
+
+  const logRule = rules.find((rule) => rule.description === FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS)
+  if (logRule && rules[rules.length - 1]?.id !== logRule.id) {
+    issues.push(`${FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS}: is not last`)
   }
 
   return issues
@@ -1977,18 +1984,34 @@ export function buildWafAlignmentPlan(zone, policies) {
       },
     })
   } else {
+    const rules = ruleset.rules || []
+    const logRule = rules.find((rule) => rule.description === FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS)
+    const logRuleIndex = logRule ? rules.findIndex((rule) => rule.id === logRule.id) : -1
+    if (logRule && logRuleIndex !== rules.length - 1) {
+      operations.push({
+        body: { position: { after: "" } },
+        currentValue: { position: logRuleIndex + 1 },
+        label: `Move ${FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS} to the end`,
+        method: HTTP_METHOD.PATCH,
+        path: `zones/${zoneId}/rulesets/${ruleset.id}/rules/${logRule.id}`,
+      })
+    }
+
     for (const [index, description] of FLEET_WAF_RULE_DESCRIPTIONS.entries()) {
       const policy = policies.get(description)
-      const existing = ruleset.rules?.find((rule) => rule.description === description)
+      const existing = rules.find((rule) => rule.description === description)
       if (!existing) {
+        const body = logRule && description !== FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS
+          ? { ...policyPayloads[index], position: { before: logRule.id } }
+          : policyPayloads[index]
         operations.push({
           currentValue: {
-            ruleIds: ruleset.rules?.map((rule) => rule.id).filter(Boolean) || [],
+            ruleIds: rules.map((rule) => rule.id).filter(Boolean),
           },
           label: `Add ${description}`,
           method: HTTP_METHOD.POST,
           path: `zones/${zoneId}/rulesets/${ruleset.id}/rules`,
-          body: policyPayloads[index],
+          body,
         })
         continue
       }
