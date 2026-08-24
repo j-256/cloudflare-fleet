@@ -100,9 +100,21 @@ export const FLEET_WAF_RULE_DESCRIPTION = Object.freeze({
   LOG_ALL_OTHERS: "[fleet] Log All Others (Skip No-op)",
 })
 
-export const FLEET_WAF_RULE_DESCRIPTIONS = Object.freeze([
-  FLEET_WAF_RULE_DESCRIPTION.ANTI_SCANNER,
-  FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS,
+export const WAF_RULE_ORDER = Object.freeze({
+  ANY: "any",
+  FIRST: "first",
+  LAST: "last",
+})
+
+export const FLEET_WAF_RULES = Object.freeze([
+  Object.freeze({
+    description: FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS,
+    order: WAF_RULE_ORDER.FIRST,
+  }),
+  Object.freeze({
+    description: FLEET_WAF_RULE_DESCRIPTION.ANTI_SCANNER,
+    order: WAF_RULE_ORDER.FIRST,
+  }),
 ])
 
 export const SURFACES = Object.freeze([

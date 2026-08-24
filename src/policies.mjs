@@ -4,11 +4,11 @@ import {
   EMAIL_ROUTING_ACTION_KIND,
   EMAIL_ROUTING_RULE_IDENTIFIER,
   EMAIL_ROUTING_SETTING,
-  FLEET_WAF_RULE_DESCRIPTION,
-  FLEET_WAF_RULE_DESCRIPTIONS,
+  FLEET_WAF_RULES,
   HTTP_METHOD,
   POLICY_EXCEPTION_STATUS,
   RULESET_KIND,
+  WAF_RULE_ORDER,
   WAF_PHASE,
 } from "./constants.mjs"
 import { dnssecRequestedStatus } from "./dnssec.mjs"
@@ -1898,10 +1898,79 @@ function customFirewallRuleset(zone) {
     .find((ruleset) => ruleset.phase === WAF_PHASE) || null
 }
 
-export function deriveFleetWafPolicies(inventory) {
+const WAF_RULE_ORDERS = new Set(Object.values(WAF_RULE_ORDER))
+
+function assertFleetWafRuleDefinitions(definitions) {
+  if (!Array.isArray(definitions)) throw new TypeError("Fleet WAF rules must be an array")
+  const descriptions = new Set()
+  for (const definition of definitions) {
+    if (!definition || typeof definition.description !== "string" || !definition.description.trim()) {
+      throw new TypeError("Each fleet WAF rule must have a description")
+    }
+    if (descriptions.has(definition.description)) {
+      throw new Error(`Fleet WAF rule ${definition.description} has conflicting order requirements`)
+    }
+    if (!WAF_RULE_ORDERS.has(definition.order)) {
+      throw new Error(`Fleet WAF rule ${definition.description} has unsupported order ${definition.order}`)
+    }
+    descriptions.add(definition.description)
+  }
+  return definitions
+}
+
+function fleetWafPolicyEntries(policies) {
+  if (!(policies instanceof Map)) throw new TypeError("Fleet WAF policies must be a Map")
+  const entries = [...policies.entries()].map(([description, policy]) => ({
+    description,
+    order: policy?.order,
+    policy,
+  }))
+  assertFleetWafRuleDefinitions(entries)
+  return entries
+}
+
+function wafRuleOrderEntries(entries, order) {
+  return entries.filter((entry) => entry.order === order)
+}
+
+function wafRuleOrderRank(order) {
+  if (order === WAF_RULE_ORDER.FIRST) return 0
+  if (order === WAF_RULE_ORDER.ANY) return 1
+  return 2
+}
+
+function orderedWafPolicyEntries(entries) {
+  return [...entries].sort((left, right) => wafRuleOrderRank(left.order) - wafRuleOrderRank(right.order))
+}
+
+function simulatedRule(description) {
+  return { description }
+}
+
+function moveSimulatedRule(rules, currentIndex, targetIndex) {
+  const [rule] = rules.splice(currentIndex, 1)
+  rules.splice(targetIndex, 0, rule)
+}
+
+function addWafRuleOperation(operations, rules, ruleset, zoneId, entry, position) {
+  operations.push({
+    currentValue: {
+      ruleIds: rules.filter((rule) => rule.id).map((rule) => rule.id),
+    },
+    label: `Add ${entry.description}`,
+    method: HTTP_METHOD.POST,
+    path: `zones/${zoneId}/rulesets/${ruleset.id}/rules`,
+    body: position
+      ? { ...entry.policy.payload, position }
+      : entry.policy.payload,
+  })
+}
+
+export function deriveFleetWafPolicies(inventory, definitions = FLEET_WAF_RULES) {
+  assertFleetWafRuleDefinitions(definitions)
   const policies = new Map()
 
-  for (const description of FLEET_WAF_RULE_DESCRIPTIONS) {
+  for (const { description, order } of definitions) {
     const variants = new Map()
     for (const zone of inventory.zones) {
       const rule = customFirewallRuleset(zone)?.rules?.find((entry) => entry.description === description)
@@ -1916,6 +1985,7 @@ export function deriveFleetWafPolicies(inventory) {
     if (ranked.length === 0 || (ranked[1] && ranked[1][1].count === ranked[0][1].count)) {
       policies.set(description, {
         available: false,
+        order,
         reason: ranked.length === 0 ? "Rule is absent from the fleet" : "Rule has no unique fleet consensus",
       })
       continue
@@ -1925,6 +1995,7 @@ export function deriveFleetWafPolicies(inventory) {
       available: true,
       canonical: ranked[0][0],
       count: ranked[0][1].count,
+      order,
       payload: ranked[0][1].payload,
     })
   }
@@ -1936,9 +2007,9 @@ export function wafIssues(zone, policies) {
   const issues = []
   const ruleset = customFirewallRuleset(zone)
   const rules = ruleset?.rules || []
+  const policyEntries = fleetWafPolicyEntries(policies)
 
-  for (const description of FLEET_WAF_RULE_DESCRIPTIONS) {
-    const policy = policies.get(description)
+  for (const { description, policy } of policyEntries) {
     if (!policy?.available) {
       issues.push(`${description}: ${policy?.reason || "policy unavailable"}`)
       continue
@@ -1952,9 +2023,21 @@ export function wafIssues(zone, policies) {
     if (current !== policy.canonical) issues.push(`${description}: differs from consensus`)
   }
 
-  const logRule = rules.find((rule) => rule.description === FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS)
-  if (logRule && rules[rules.length - 1]?.id !== logRule.id) {
-    issues.push(`${FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS}: is not last`)
+  const firstEntries = wafRuleOrderEntries(policyEntries, WAF_RULE_ORDER.FIRST)
+  for (const [index, { description }] of firstEntries.entries()) {
+    const rule = rules.find((entry) => entry.description === description)
+    if (rule && rules[index]?.id !== rule.id) {
+      issues.push(`${description}: is not in leading position ${index + 1}`)
+    }
+  }
+
+  const lastEntries = wafRuleOrderEntries(policyEntries, WAF_RULE_ORDER.LAST)
+  const lastStart = rules.length - lastEntries.length
+  for (const [index, { description }] of lastEntries.entries()) {
+    const rule = rules.find((entry) => entry.description === description)
+    if (rule && rules[lastStart + index]?.id !== rule.id) {
+      issues.push(`${description}: is not in trailing position ${index + 1}`)
+    }
   }
 
   return issues
@@ -1964,11 +2047,10 @@ export function buildWafAlignmentPlan(zone, policies) {
   const zoneId = zone.meta.id
   const zoneName = zone.meta.name
   const ruleset = customFirewallRuleset(zone)
-  const policyPayloads = FLEET_WAF_RULE_DESCRIPTIONS.map((description) => {
-    const policy = policies.get(description)
+  const policyEntries = fleetWafPolicyEntries(policies)
+  for (const { description, policy } of policyEntries) {
     if (!policy?.available) throw new Error(`${description}: ${policy?.reason || "policy unavailable"}`)
-    return policy.payload
-  })
+  }
   const operations = []
 
   if (!ruleset) {
@@ -1980,42 +2062,67 @@ export function buildWafAlignmentPlan(zone, policies) {
         name: "default",
         kind: "zone",
         phase: WAF_PHASE,
-        rules: policyPayloads,
+        rules: orderedWafPolicyEntries(policyEntries).map(({ policy }) => policy.payload),
       },
     })
   } else {
     const rules = ruleset.rules || []
-    const logRule = rules.find((rule) => rule.description === FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS)
-    const logRuleIndex = logRule ? rules.findIndex((rule) => rule.id === logRule.id) : -1
-    if (logRule && logRuleIndex !== rules.length - 1) {
-      operations.push({
-        body: { position: { after: "" } },
-        currentValue: { position: logRuleIndex + 1 },
-        label: `Move ${FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS} to the end`,
-        method: HTTP_METHOD.PATCH,
-        path: `zones/${zoneId}/rulesets/${ruleset.id}/rules/${logRule.id}`,
-      })
+    const simulatedRules = [...rules]
+    const firstEntries = wafRuleOrderEntries(policyEntries, WAF_RULE_ORDER.FIRST)
+    for (const [index, entry] of firstEntries.entries()) {
+      const currentIndex = simulatedRules.findIndex((rule) => rule.description === entry.description)
+      const position = { index: index + 1 }
+      if (currentIndex === -1) {
+        addWafRuleOperation(operations, rules, ruleset, zoneId, entry, position)
+        simulatedRules.splice(index, 0, simulatedRule(entry.description))
+      } else if (currentIndex !== index) {
+        const rule = simulatedRules[currentIndex]
+        operations.push({
+          body: { position },
+          currentValue: { position: currentIndex + 1 },
+          label: `Move ${entry.description} to leading position ${index + 1}`,
+          method: HTTP_METHOD.PATCH,
+          path: `zones/${zoneId}/rulesets/${ruleset.id}/rules/${rule.id}`,
+        })
+        moveSimulatedRule(simulatedRules, currentIndex, index)
+      }
     }
 
-    for (const [index, description] of FLEET_WAF_RULE_DESCRIPTIONS.entries()) {
-      const policy = policies.get(description)
-      const existing = rules.find((rule) => rule.description === description)
-      if (!existing) {
-        const body = logRule && description !== FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS
-          ? { ...policyPayloads[index], position: { before: logRule.id } }
-          : policyPayloads[index]
-        operations.push({
-          currentValue: {
-            ruleIds: rules.map((rule) => rule.id).filter(Boolean),
-          },
-          label: `Add ${description}`,
-          method: HTTP_METHOD.POST,
-          path: `zones/${zoneId}/rulesets/${ruleset.id}/rules`,
-          body,
-        })
-        continue
-      }
+    const anyEntries = wafRuleOrderEntries(policyEntries, WAF_RULE_ORDER.ANY)
+    for (const entry of anyEntries) {
+      if (simulatedRules.some((rule) => rule.description === entry.description)) continue
+      addWafRuleOperation(operations, rules, ruleset, zoneId, entry)
+      simulatedRules.push(simulatedRule(entry.description))
+    }
 
+    const lastEntries = wafRuleOrderEntries(policyEntries, WAF_RULE_ORDER.LAST)
+    const trailingAligned = lastEntries.every(({ description }, index) => (
+      simulatedRules[simulatedRules.length - lastEntries.length + index]?.description === description
+    ))
+    if (!trailingAligned) {
+      for (const entry of lastEntries) {
+        const currentIndex = simulatedRules.findIndex((rule) => rule.description === entry.description)
+        const position = { after: "" }
+        if (currentIndex === -1) {
+          addWafRuleOperation(operations, rules, ruleset, zoneId, entry, position)
+          simulatedRules.push(simulatedRule(entry.description))
+        } else if (currentIndex !== simulatedRules.length - 1) {
+          const rule = simulatedRules[currentIndex]
+          operations.push({
+            body: { position },
+            currentValue: { position: currentIndex + 1 },
+            label: `Move ${entry.description} to the trailing rule group`,
+            method: HTTP_METHOD.PATCH,
+            path: `zones/${zoneId}/rulesets/${ruleset.id}/rules/${rule.id}`,
+          })
+          moveSimulatedRule(simulatedRules, currentIndex, simulatedRules.length - 1)
+        }
+      }
+    }
+
+    for (const { description, policy } of policyEntries) {
+      const existing = rules.find((rule) => rule.description === description)
+      if (!existing) continue
       const current = stableString(normalizeValue(writeRule(existing), zoneName, { preserveOrder: true }))
       if (current !== policy.canonical) {
         operations.push({
@@ -2023,7 +2130,7 @@ export function buildWafAlignmentPlan(zone, policies) {
           label: `Update ${description}`,
           method: HTTP_METHOD.PATCH,
           path: `zones/${zoneId}/rulesets/${ruleset.id}/rules/${existing.id}`,
-          body: policyPayloads[index],
+          body: policy.payload,
         })
       }
     }

@@ -37,8 +37,10 @@ import {
   wafIssues,
 } from "../src/policies.mjs"
 import {
-  FLEET_WAF_RULE_DESCRIPTIONS,
+  FLEET_WAF_RULE_DESCRIPTION,
+  FLEET_WAF_RULES,
   POLICY_EXCEPTION_STATUS,
+  WAF_RULE_ORDER,
 } from "../src/constants.mjs"
 import {
   configureFleetPolicy,
@@ -52,7 +54,11 @@ import {
   ok,
 } from "./fixtures.mjs"
 
-const [BLOCK_RULE, LOG_RULE] = FLEET_WAF_RULE_DESCRIPTIONS
+const BLOCK_RULE = FLEET_WAF_RULE_DESCRIPTION.ANTI_SCANNER
+const LOG_RULE = FLEET_WAF_RULE_DESCRIPTION.LOG_ALL_OTHERS
+const ANY_RULE = "[fleet] Unconstrained rule"
+const LAST_RULE = "[fleet] Trailing rule"
+const LAST_RULE_TWO = "[fleet] Final trailing rule"
 const FLEET_EMAIL_DNS_POLICY = {
   available: true,
   dmarc: {
@@ -115,13 +121,13 @@ function fleetRuleset(overrides = {}) {
     name: "default",
     phase: "http_request_firewall_custom",
     rules: [
-      makeRule(BLOCK_RULE),
       makeRule(LOG_RULE, {
         action: "skip",
         action_parameters: { products: ["zoneLockdown"] },
         expression: "(true)",
         logging: { enabled: true },
       }),
+      makeRule(BLOCK_RULE),
     ],
     ...overrides,
   }
@@ -742,6 +748,10 @@ test("WAF policy builds a new entrypoint from live consensus", () => {
   ])
   const policies = deriveFleetWafPolicies(inventory)
 
+  assert.deepEqual(FLEET_WAF_RULES, [
+    { description: LOG_RULE, order: WAF_RULE_ORDER.FIRST },
+    { description: BLOCK_RULE, order: WAF_RULE_ORDER.FIRST },
+  ])
   assert.equal(policies.get(BLOCK_RULE).available, true)
   assert.equal(policies.get(LOG_RULE).available, true)
   assert.equal(wafIssues(inventory.zones[2], policies).length, 2)
@@ -752,11 +762,11 @@ test("WAF policy builds a new entrypoint from live consensus", () => {
   assert.equal(plan.operations[0].path, "zones/zone-new.example/rulesets")
   assert.deepEqual(
     plan.operations[0].body.rules.map((rule) => rule.description),
-    [BLOCK_RULE, LOG_RULE],
+    [LOG_RULE, BLOCK_RULE],
   )
 })
 
-test("WAF policy keeps the request logger last", () => {
+test("WAF policy keeps leading rules in canonical order", () => {
   const consensus = fleetRuleset()
   const targetLogRule = makeRule(LOG_RULE, {
     action: "skip",
@@ -779,21 +789,22 @@ test("WAF policy keeps the request logger last", () => {
   const policies = deriveFleetWafPolicies(inventory)
 
   assert.deepEqual(wafIssues(inventory.zones[2], policies), [
-    `${LOG_RULE}: is not last`,
+    `${LOG_RULE}: is not in leading position 1`,
+    `${BLOCK_RULE}: is not in leading position 2`,
   ])
   const plan = buildWafAlignmentPlan(inventory.zones[2], policies)
   assert.deepEqual(plan.operations, [
     {
-      body: { position: { after: "" } },
+      body: { position: { index: 1 } },
       currentValue: { position: 2 },
-      label: `Move ${LOG_RULE} to the end`,
+      label: `Move ${LOG_RULE} to leading position 1`,
       method: "PATCH",
       path: `zones/zone-target.example/rulesets/ruleset-id/rules/${targetLogRule.id}`,
     },
   ])
 })
 
-test("WAF policy inserts a missing fleet rule before the request logger", () => {
+test("WAF policy inserts a missing rule into its leading position", () => {
   const consensus = fleetRuleset()
   const logRule = makeRule(LOG_RULE, {
     action: "skip",
@@ -815,7 +826,169 @@ test("WAF policy inserts a missing fleet rule before the request logger", () => 
   assert.equal(plan.operations[0].method, "POST")
   assert.equal(plan.operations[0].path, "zones/zone-target.example/rulesets/ruleset-id/rules")
   assert.equal(plan.operations[0].body.description, BLOCK_RULE)
-  assert.deepEqual(plan.operations[0].body.position, { before: logRule.id })
+  assert.deepEqual(plan.operations[0].body.position, { index: 2 })
+})
+
+test("WAF policy supports leading, unconstrained, and trailing rule cohorts", () => {
+  const definitions = [
+    { description: LOG_RULE, order: WAF_RULE_ORDER.FIRST },
+    { description: BLOCK_RULE, order: WAF_RULE_ORDER.FIRST },
+    { description: ANY_RULE, order: WAF_RULE_ORDER.ANY },
+    { description: LAST_RULE, order: WAF_RULE_ORDER.LAST },
+    { description: LAST_RULE_TWO, order: WAF_RULE_ORDER.LAST },
+  ]
+  const consensus = fleetRuleset({
+    rules: [
+      makeRule(LOG_RULE, {
+        action: "skip",
+        action_parameters: { products: ["zoneLockdown"] },
+        expression: "(true)",
+        logging: { enabled: true },
+      }),
+      makeRule(BLOCK_RULE),
+      makeRule(ANY_RULE),
+      makeRule(LAST_RULE),
+      makeRule(LAST_RULE_TWO),
+    ],
+  })
+  const targetRuleset = fleetRuleset({
+    rules: [
+      makeRule(LAST_RULE_TWO),
+      makeRule(ANY_RULE),
+      makeRule(BLOCK_RULE),
+      makeRule(LOG_RULE, {
+        action: "skip",
+        action_parameters: { products: ["zoneLockdown"] },
+        expression: "(true)",
+        logging: { enabled: true },
+      }),
+      makeRule("Zone-specific rule"),
+      makeRule(LAST_RULE),
+    ],
+  })
+  const inventory = makeInventory([
+    makeZone("alpha.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("beta.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("target.example", { ruleDetails: [ok(targetRuleset)] }),
+  ])
+  const policies = deriveFleetWafPolicies(inventory, definitions)
+
+  assert.deepEqual(wafIssues(inventory.zones[2], policies), [
+    `${LOG_RULE}: is not in leading position 1`,
+    `${BLOCK_RULE}: is not in leading position 2`,
+    `${LAST_RULE}: is not in trailing position 1`,
+    `${LAST_RULE_TWO}: is not in trailing position 2`,
+  ])
+  assert.deepEqual(
+    buildWafAlignmentPlan(inventory.zones[2], policies).operations.map((operation) => ({
+      body: operation.body,
+      label: operation.label,
+    })),
+    [
+      {
+        body: { position: { index: 1 } },
+        label: `Move ${LOG_RULE} to leading position 1`,
+      },
+      {
+        body: { position: { index: 2 } },
+        label: `Move ${BLOCK_RULE} to leading position 2`,
+      },
+      {
+        body: { position: { after: "" } },
+        label: `Move ${LAST_RULE_TWO} to the trailing rule group`,
+      },
+    ],
+  )
+})
+
+test("WAF policy orders every cohort when creating an entrypoint", () => {
+  const definitions = [
+    { description: LAST_RULE, order: WAF_RULE_ORDER.LAST },
+    { description: ANY_RULE, order: WAF_RULE_ORDER.ANY },
+    { description: LOG_RULE, order: WAF_RULE_ORDER.FIRST },
+    { description: LAST_RULE_TWO, order: WAF_RULE_ORDER.LAST },
+    { description: BLOCK_RULE, order: WAF_RULE_ORDER.FIRST },
+  ]
+  const consensus = fleetRuleset({
+    rules: definitions.map(({ description }) => makeRule(description)),
+  })
+  const inventory = makeInventory([
+    makeZone("alpha.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("beta.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("new.example"),
+  ])
+  const policies = deriveFleetWafPolicies(inventory, definitions)
+
+  assert.deepEqual(
+    buildWafAlignmentPlan(inventory.zones[2], policies).operations[0].body.rules
+      .map(({ description }) => description),
+    [LOG_RULE, BLOCK_RULE, ANY_RULE, LAST_RULE, LAST_RULE_TWO],
+  )
+})
+
+test("WAF policy creates missing middle and trailing rules in safe order", () => {
+  const definitions = [
+    { description: LOG_RULE, order: WAF_RULE_ORDER.FIRST },
+    { description: ANY_RULE, order: WAF_RULE_ORDER.ANY },
+    { description: LAST_RULE, order: WAF_RULE_ORDER.LAST },
+    { description: LAST_RULE_TWO, order: WAF_RULE_ORDER.LAST },
+  ]
+  const consensus = fleetRuleset({
+    rules: definitions.map(({ description }) => makeRule(description)),
+  })
+  const targetRuleset = fleetRuleset({
+    rules: [makeRule(LOG_RULE), makeRule(LAST_RULE_TWO)],
+  })
+  const inventory = makeInventory([
+    makeZone("alpha.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("beta.example", { ruleDetails: [ok(consensus)] }),
+    makeZone("target.example", { ruleDetails: [ok(targetRuleset)] }),
+  ])
+  const policies = deriveFleetWafPolicies(inventory, definitions)
+  const operations = buildWafAlignmentPlan(inventory.zones[2], policies).operations
+
+  assert.deepEqual(
+    operations.map(({ body, label }) => ({
+      description: body.description,
+      label,
+      position: body.position,
+    })),
+    [
+      {
+        description: ANY_RULE,
+        label: `Add ${ANY_RULE}`,
+        position: undefined,
+      },
+      {
+        description: LAST_RULE,
+        label: `Add ${LAST_RULE}`,
+        position: { after: "" },
+      },
+      {
+        description: undefined,
+        label: `Move ${LAST_RULE_TWO} to the trailing rule group`,
+        position: { after: "" },
+      },
+    ],
+  )
+})
+
+test("WAF policy rejects conflicting or unsupported order requirements", () => {
+  const inventory = makeInventory([])
+
+  assert.throws(
+    () => deriveFleetWafPolicies(inventory, [
+      { description: LOG_RULE, order: WAF_RULE_ORDER.FIRST },
+      { description: LOG_RULE, order: WAF_RULE_ORDER.LAST },
+    ]),
+    /conflicting order requirements/,
+  )
+  assert.throws(
+    () => deriveFleetWafPolicies(inventory, [
+      { description: LOG_RULE, order: "middle" },
+    ]),
+    /unsupported order middle/,
+  )
 })
 
 test("rule copy creates a missing entrypoint with a portable payload", () => {
