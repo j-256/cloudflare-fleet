@@ -27,10 +27,14 @@
       "migrations_dir": "migrations"
     }
   ],
+  "triggers": {
+    "crons": []
+  },
   "vars": {
     "FLEET_ACCOUNT_ID": "00000000000000000000000000000000",
+    "FLEET_MONITOR_ENABLED": "false",
     "FLEET_READ_ONLY": "true",
-    "FLEET_POLICY_JSON": "{\"emailDnsRecordExceptions\":[],\"schemaVersion\":1}",
+    "FLEET_POLICY_JSON": "{\"emailDnsRecordExceptions\":[],\"endpointMonitoring\":{\"excludeHostnames\":[],\"includeHostnames\":[]},\"schemaVersion\":1}",
     "ACCESS_AUD": "0000000000000000000000000000000000000000000000000000000000000000",
     "ACCESS_TEAM_DOMAIN": "https://example.cloudflareaccess.com"
   },

@@ -7,6 +7,10 @@ export const FLEET_POLICY_CONFIG_GLOBAL = "__CLOUDFLARE_FLEET_POLICY_CONFIG__"
 export const FLEET_POLICY_CONFIG_SCHEMA_VERSION = 1
 
 const EMPTY_EXCEPTIONS = Object.freeze({})
+const EMPTY_ENDPOINT_MONITORING = Object.freeze({
+  excludeHostnames: Object.freeze([]),
+  includeHostnames: Object.freeze([]),
+})
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -34,9 +38,65 @@ function emailDnsRecordException(zoneName, component, expected, reason) {
   })
 }
 
+function endpointHostname(value) {
+  if (typeof value !== "string" || value !== value.trim() || value.includes("*")) {
+    throw new TypeError("Endpoint monitoring hostnames must be exact DNS names")
+  }
+  const hostname = value.toLowerCase().replace(/\.$/, "")
+  let url
+  try {
+    url = new URL(`https://${hostname}/`)
+  } catch {
+    throw new TypeError("Endpoint monitoring hostnames must be exact DNS names")
+  }
+  if (!hostname || url.hostname !== hostname || url.port || url.pathname !== "/") {
+    throw new TypeError("Endpoint monitoring hostnames must be exact DNS names")
+  }
+  return hostname
+}
+
+function endpointHostnameList(value, label) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) {
+    throw new TypeError(`Endpoint monitoring ${label} must be an array`)
+  }
+  const hostnames = value.map(endpointHostname)
+  if (new Set(hostnames).size !== hostnames.length) {
+    throw new TypeError(`Endpoint monitoring ${label} contains duplicates`)
+  }
+  return hostnames.sort()
+}
+
+function endpointMonitoringPolicy(value) {
+  if (value === undefined) return EMPTY_ENDPOINT_MONITORING
+  if (!isObject(value)) {
+    throw new TypeError("Endpoint monitoring policy is invalid")
+  }
+  const excludeHostnames = endpointHostnameList(
+    value.excludeHostnames,
+    "exclusions",
+  )
+  const includeHostnames = endpointHostnameList(
+    value.includeHostnames,
+    "inclusions",
+  )
+  const excluded = new Set(excludeHostnames)
+  if (includeHostnames.some((hostname) => excluded.has(hostname))) {
+    throw new TypeError("Endpoint monitoring inclusions and exclusions overlap")
+  }
+  return Object.freeze({
+    excludeHostnames: Object.freeze(excludeHostnames),
+    includeHostnames: Object.freeze(includeHostnames),
+  })
+}
+
 export function createEmptyFleetPolicyConfiguration() {
   return {
     emailDnsRecordExceptions: [],
+    endpointMonitoring: {
+      excludeHostnames: [],
+      includeHostnames: [],
+    },
     schemaVersion: FLEET_POLICY_CONFIG_SCHEMA_VERSION,
   }
 }
@@ -60,8 +120,10 @@ export function normalizeFleetPolicyConfiguration(value) {
     )
   })
   indexEmailPolicyExceptions(emailDnsRecordExceptions)
+  const endpointMonitoring = endpointMonitoringPolicy(candidate.endpointMonitoring)
   return Object.freeze({
     emailDnsRecordExceptions: Object.freeze(emailDnsRecordExceptions),
+    endpointMonitoring,
     schemaVersion: FLEET_POLICY_CONFIG_SCHEMA_VERSION,
   })
 }

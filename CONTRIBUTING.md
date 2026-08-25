@@ -30,6 +30,7 @@ Do not add a real domain, account identifier, D1 identifier, Access audience, te
 - Keep browser, local broker, and hosted Worker behavior aligned through the shared transport and persistence contracts.
 - Give a new write path an explicit capability, scoped preflight reads, endpoint-specific planner, reviewed operation shape, durable activity behavior, and authoritative verification mapping.
 - Leave unsupported or schema-unknown resources comparison-only instead of widening a generic adapter.
+- Keep scheduled detection bounded, traffic-aware, retry-safe, and free of remediation paths.
 - Add focused unit coverage near the domain module and an end-to-end journey when behavior crosses the browser and backend boundary.
 - Keep documentation prose soft-wrapped and use straight ASCII quotes.
 

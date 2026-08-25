@@ -42,6 +42,8 @@ export function hostedConfigurationUsage() {
     "  -a, --account-id ID         Set the Cloudflare account ID",
     "  -d, --database-id ID        Set the D1 database ID",
     "  --hostname HOST             Set the hosted dashboard hostname",
+    "  --monitor                   Enable scheduled endpoint monitoring",
+    "  --no-monitor                Disable scheduled endpoint monitoring",
     "  -o, --output FILE           Write Wrangler configuration to FILE",
     "  -p, --policy-file FILE      Read fleet policy from FILE",
     "  --worker-name NAME          Set the Worker name",
@@ -59,6 +61,7 @@ export function parseHostedConfigurationArguments(argv, environment = process.en
     databaseId: environment.CLOUDFLARE_FLEET_D1_DATABASE_ID || "",
     hostname: environment.CLOUDFLARE_FLEET_HOSTNAME || "",
     help: false,
+    monitorEnabled: environment.CLOUDFLARE_FLEET_MONITOR_ENABLED === "true",
     outputFile: DEFAULT_OUTPUT_FILE,
     policyFile: environment.CLOUDFLARE_FLEET_POLICY_FILE || DEFAULT_POLICY_FILE,
     readOnly: true,
@@ -90,6 +93,14 @@ export function parseHostedConfigurationArguments(argv, environment = process.en
     }
     if (argument === "-w" || argument === "--write") {
       options.readOnly = false
+      continue
+    }
+    if (argument === "--monitor") {
+      options.monitorEnabled = true
+      continue
+    }
+    if (argument === "--no-monitor") {
+      options.monitorEnabled = false
       continue
     }
     const name = argument.split("=", 1)[0]
@@ -186,8 +197,12 @@ export async function hostedWranglerConfiguration(options) {
       database_id: databaseId,
       migrations_dir: "migrations",
     }],
+    triggers: {
+      crons: options.monitorEnabled ? ["*/5 * * * *"] : [],
+    },
     vars: {
       FLEET_ACCOUNT_ID: accountId,
+      FLEET_MONITOR_ENABLED: String(Boolean(options.monitorEnabled)),
       FLEET_READ_ONLY: String(options.readOnly),
       FLEET_POLICY_JSON: JSON.stringify(policy),
       ACCESS_AUD: accessAudience,
@@ -200,7 +215,15 @@ export async function hostedWranglerConfiguration(options) {
       },
     },
     secrets: {
-      required: ["CLOUDFLARE_API_TOKEN"],
+      required: [
+        "CLOUDFLARE_API_TOKEN",
+        ...(options.monitorEnabled
+          ? [
+              "FLEET_MONITOR_HOOKRELAY_HMAC",
+              "FLEET_MONITOR_HOOKRELAY_URL",
+            ]
+          : []),
+      ],
     },
   }
 }
@@ -229,6 +252,7 @@ if (isMainModule(import.meta.url)) {
     } else writeHostedWranglerConfiguration(options).then((configuration) => {
       process.stdout.write(`${JSON.stringify({
         hostname: configuration.routes[0].pattern,
+        monitorEnabled: configuration.vars.FLEET_MONITOR_ENABLED === "true",
         outputFile: options.outputFile,
         readOnly: configuration.vars.FLEET_READ_ONLY === "true",
         workerName: configuration.name,

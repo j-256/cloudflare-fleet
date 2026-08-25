@@ -1,14 +1,10 @@
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath } from "node:url"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const MIGRATION_PATH = path.join(
-  PROJECT_ROOT,
-  "migrations",
-  "0001_hosted_state.sql",
-)
+const MIGRATIONS_PATH = path.join(PROJECT_ROOT, "migrations")
 
 class PreparedStatement {
   constructor(database, sql, params = []) {
@@ -61,7 +57,11 @@ class D1DatabaseFixture {
   constructor() {
     this.sqlite = new DatabaseSync(":memory:")
     this.sqlite.exec("PRAGMA foreign_keys = ON")
-    this.sqlite.exec(readFileSync(MIGRATION_PATH, "utf8"))
+    for (const filename of readdirSync(MIGRATIONS_PATH)
+      .filter((entry) => entry.endsWith(".sql"))
+      .sort()) {
+      this.sqlite.exec(readFileSync(path.join(MIGRATIONS_PATH, filename), "utf8"))
+    }
   }
 
   prepare(sql) {

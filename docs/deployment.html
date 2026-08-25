@@ -30,7 +30,7 @@
     <header class="page-intro">
       <p class="eyebrow">Deployment</p>
       <h1>Stand up a protected Worker without losing local mode</h1>
-      <p class="lede">Hosted Fleet uses a custom-domain Worker, Cloudflare Access, D1, and one encrypted API-token secret. Generated deployment and operator files stay ignored; the committed defaults are safe and read-only.</p>
+      <p class="lede">Hosted Fleet uses a custom-domain Worker, Cloudflare Access, D1, and encrypted Worker secrets. Generated deployment and operator files stay ignored; the committed defaults are safe, read-only, and unscheduled.</p>
     </header>
 
     <section class="prose" aria-labelledby="prerequisites-heading">
@@ -141,12 +141,33 @@ npm run deploy</code></pre>
       </div>
     </section>
 
+    <section class="section prose" aria-labelledby="monitor-heading">
+      <h2 id="monitor-heading">Enable scheduled endpoint monitoring</h2>
+      <p>Monitoring is a separate opt-in from reviewed writes. Regenerate the ignored Wrangler configuration with the ordinary identity arguments and <code>--monitor</code>. This sets <code>FLEET_MONITOR_ENABLED=true</code> and manages one <code>*/5 * * * *</code> Cron Trigger. It does not change <code>FLEET_READ_ONLY</code>.</p>
+      <pre><code>npm run configure:hosted -- \
+  --account-id "$CLOUDFLARE_ACCOUNT_ID" \
+  --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
+  --hostname fleet.example.com \
+  --access-aud "$CLOUDFLARE_ACCESS_AUD" \
+  --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN" \
+  --monitor
+
+npm run db:migrate:remote
+npx wrangler secret put FLEET_MONITOR_HOOKRELAY_URL
+npx wrangler secret put FLEET_MONITOR_HOOKRELAY_HMAC
+npm run deploy</code></pre>
+      <p>The URL must identify a Hookrelay <code>cloudevents</code> subscription and is secret because it contains the route slug. The HMAC must match that subscription's sender secret. Both values remain encrypted Worker secrets; the configuration file carries only their required binding names.</p>
+      <p>The detector reads account-wide edge analytics, refreshes exact proxied DNS names, and probes the selected operational subset. It does not depend on Cloudflare Health Checks or Passive Origin Monitoring. Its hard budget stays below the Workers Free limit of 50 external subrequests per invocation, and its connection pool stays at Cloudflare's six-connection limit. The account API token therefore needs the same zone and DNS reads as Fleet plus access to the HTTP analytics dataset.</p>
+      <p>After the first scheduled run, open the authenticated <code>/api/monitor</code> endpoint. A healthy response shows a completed catalog, an analytics watermark, selected endpoint counts, no unexpected open incidents, and no pending deliveries. The first catalog spans multiple invocations when the account has more zones than one bounded catalog batch.</p>
+      <p>To stop monitoring, regenerate with <code>--no-monitor</code> and deploy. The generated empty Cron list removes the managed trigger. Existing incident history remains in D1, and disabling the trigger performs no deletion or remediation.</p>
+    </section>
+
     <section class="section prose" aria-labelledby="policy-heading">
       <h2 id="policy-heading">Operator policy exceptions</h2>
-      <p>Fleet ships with no policy exceptions. If one zone intentionally uses an exact Email DNS record that differs from the derived fleet baseline, copy <code>fleet-policy.example.json</code> to ignored <code>fleet-policy.json</code> and edit the exact component, content, TTL, zone, and reason. Local launches load it directly; <code>configure:hosted</code> validates and embeds the same document into the ignored Wrangler variables.</p>
+      <p>Fleet ships with no policy exceptions or endpoint overrides. If one zone intentionally uses an exact Email DNS record that differs from the derived fleet baseline, or monitoring should include or exclude an exact proxied hostname, copy <code>fleet-policy.example.json</code> to ignored <code>fleet-policy.json</code> and edit the relevant fields. Local launches load it directly; <code>configure:hosted</code> validates and embeds the same document into the ignored Wrangler variables.</p>
       <pre><code>cp fleet-policy.example.json fleet-policy.json
 npm run configure:hosted -- ...</code></pre>
-      <p>An exception does not hide the matrix difference. It removes only the exact allowed variant from actionable policy drift. Missing, duplicated, unreadable, or changed records remain actionable.</p>
+      <p>An Email DNS exception does not hide the matrix difference. It removes only the exact allowed variant from actionable policy drift. Endpoint exclusions prevent scheduled observations and probes for exact cataloged names; inclusions add exact proxied names even when their traffic is below the automatic threshold. Exclusions and inclusions cannot overlap.</p>
     </section>
 
     <section class="section prose" aria-labelledby="state-import-heading">

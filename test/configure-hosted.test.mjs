@@ -23,6 +23,7 @@ function options(root) {
     accountId: "a".repeat(32),
     databaseId: "11111111-2222-4333-8444-555555555555",
     hostname: "fleet.example.com",
+    monitorEnabled: false,
     outputFile: path.join(root, "wrangler.jsonc"),
     policyFile: path.join(root, "fleet-policy.json"),
     readOnly: true,
@@ -41,7 +42,9 @@ test("hosted configuration arguments default to read-only deployment", () => {
 
   assert.equal(parsed.readOnly, true)
   assert.equal(parsed.hostname, "fleet.example.com")
+  assert.equal(parsed.monitorEnabled, false)
   assert.equal(parseHostedConfigurationArguments(["--write"], {}).readOnly, false)
+  assert.equal(parseHostedConfigurationArguments(["--monitor"], {}).monitorEnabled, true)
 })
 
 test("hosted configuration writes portable Wrangler bindings", async (context) => {
@@ -56,12 +59,34 @@ test("hosted configuration writes portable Wrangler bindings", async (context) =
   assert.deepEqual(persisted, configuration)
   assert.equal(configuration.routes[0].pattern, "fleet.example.com")
   assert.equal(configuration.vars.FLEET_READ_ONLY, "true")
+  assert.equal(configuration.vars.FLEET_MONITOR_ENABLED, "false")
+  assert.deepEqual(configuration.triggers.crons, [])
   assert.deepEqual(JSON.parse(configuration.vars.FLEET_POLICY_JSON), {
     emailDnsRecordExceptions: [],
+    endpointMonitoring: {
+      excludeHostnames: [],
+      includeHostnames: [],
+    },
     schemaVersion: 1,
   })
   assert.deepEqual(configuration.secrets.required, ["CLOUDFLARE_API_TOKEN"])
   assert.equal(mode, 0o600)
+})
+
+test("hosted configuration opts into scheduled monitoring", async () => {
+  const configured = {
+    ...options(os.tmpdir()),
+    monitorEnabled: true,
+  }
+  const configuration = await hostedWranglerConfiguration(configured)
+
+  assert.equal(configuration.vars.FLEET_MONITOR_ENABLED, "true")
+  assert.deepEqual(configuration.triggers.crons, ["*/5 * * * *"])
+  assert.deepEqual(configuration.secrets.required, [
+    "CLOUDFLARE_API_TOKEN",
+    "FLEET_MONITOR_HOOKRELAY_HMAC",
+    "FLEET_MONITOR_HOOKRELAY_URL",
+  ])
 })
 
 test("hosted configuration rejects incomplete deployment identity", async () => {

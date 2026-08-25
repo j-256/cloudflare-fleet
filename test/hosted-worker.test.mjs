@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   fetchHostedFleet,
+  scheduledHostedFleet,
 } from "../src/hosted/worker.mjs"
 import {
   hostedD1Fixture,
@@ -23,6 +24,7 @@ function environment(context, options = {}) {
     CLOUDFLARE_API_TOKEN: API_TOKEN,
     FLEET_ACCOUNT_ID: ACCOUNT_ID,
     FLEET_DB: hostedD1Fixture(context),
+    FLEET_MONITOR_ENABLED: options.monitorEnabled ? "true" : "false",
     FLEET_POLICY_JSON: options.policyJson || "",
     FLEET_READ_ONLY: options.readOnly ? "true" : "false",
   }
@@ -169,4 +171,26 @@ test("hosted Worker fails closed when Access does not authorize production", asy
 
   assert.equal(response.status, 403)
   assert.match((await response.json()).errors[0].message, /assertion is missing/)
+})
+
+test("hosted Worker exposes secret-free monitor status", async (context) => {
+  const response = await fetchHostedFleet(
+    new Request("http://localhost:8787/api/monitor"),
+    environment(context, { monitorEnabled: true }),
+  )
+  const body = (await response.json()).result
+
+  assert.equal(response.status, 200)
+  assert.equal(body.enabled, true)
+  assert.deepEqual(body.endpoints, { cataloged: 0, open: 0, selected: 0 })
+  assert.equal(JSON.stringify(body).includes(API_TOKEN), false)
+})
+
+test("hosted Worker scheduled handler is inert when monitoring is disabled", async (context) => {
+  const result = await scheduledHostedFleet(
+    { scheduledTime: Date.parse("2026-08-25T01:00:00.000Z") },
+    environment(context),
+  )
+
+  assert.deepEqual(result, { enabled: false, skipped: true })
 })

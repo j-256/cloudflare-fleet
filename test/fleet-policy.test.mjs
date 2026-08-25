@@ -30,6 +30,10 @@ test("fleet policy defaults to no operator exceptions", () => {
 
   assert.equal(isFleetPolicyConfiguration(configuration), true)
   assert.deepEqual(configuration.emailDnsRecordExceptions, [])
+  assert.deepEqual(configuration.endpointMonitoring, {
+    excludeHostnames: [],
+    includeHostnames: [],
+  })
 })
 
 test("fleet policy configuration validates and indexes exact exceptions", () => {
@@ -43,6 +47,21 @@ test("fleet policy configuration validates and indexes exact exceptions", () => 
   assert.deepEqual(emailPolicyExceptionsForZone("ordinary.example"), {})
 })
 
+test("fleet policy normalizes endpoint monitoring scope", () => {
+  const configuration = normalizeFleetPolicyConfiguration({
+    ...POLICY,
+    endpointMonitoring: {
+      excludeHostnames: ["STALE.EXAMPLE."],
+      includeHostnames: ["status.example"],
+    },
+  })
+
+  assert.deepEqual(configuration.endpointMonitoring, {
+    excludeHostnames: ["stale.example"],
+    includeHostnames: ["status.example"],
+  })
+})
+
 test("fleet policy rejects malformed and duplicate exceptions", () => {
   assert.equal(isFleetPolicyConfiguration({ schemaVersion: 1 }), false)
   assert.throws(
@@ -54,5 +73,22 @@ test("fleet policy rejects malformed and duplicate exceptions", () => {
       schemaVersion: 1,
     }),
     /Duplicate spf policy exception/,
+  )
+  assert.throws(
+    () => normalizeFleetPolicyConfiguration({
+      ...POLICY,
+      endpointMonitoring: {
+        excludeHostnames: ["same.example"],
+        includeHostnames: ["same.example"],
+      },
+    }),
+    /overlap/,
+  )
+  assert.throws(
+    () => normalizeFleetPolicyConfiguration({
+      ...POLICY,
+      endpointMonitoring: { includeHostnames: ["*.example"] },
+    }),
+    /exact DNS names/,
   )
 })

@@ -16,7 +16,9 @@ The maintainer will acknowledge a usable private report, investigate it, coordin
 
 ## Security boundaries
 
-Hosted deployments rely on Cloudflare Access plus independent Worker JWT validation, an encrypted Worker secret, a fixed account boundary, backend-enforced read-only mode, explicit proxy allowlists, zone ownership checks, bounded request bodies and upstream duration, same-origin mutation checks, schema validation, and D1 transactions.
+Hosted deployments rely on Cloudflare Access plus independent Worker JWT validation, encrypted Worker secrets, a fixed account boundary, backend-enforced read-only mode, explicit proxy allowlists, zone ownership checks, bounded request bodies and upstream duration, same-origin mutation checks, schema validation, and D1 transactions.
+
+Optional endpoint monitoring restricts synthetic targets to exact proxied DNS names read from the configured account, keeps the Hookrelay route and HMAC only in encrypted secrets, caps external requests and concurrent connections, and commits each incident transition with one retry-safe outbox event. Monitor state and events can disclose private hostnames and incident evidence even though they contain no API token or sender secret. Monitoring performs no Cloudflare or origin mutation.
 
 Local deployments rely on loopback-only binding, a random session capability, origin checks, private runtime and state file modes, schema validation, serialized atomic persistence, and liveness-bound cleanup. Debug mode deliberately weakens the isolated browser profile and should not be used for unrelated browsing.
 

@@ -10,5 +10,13 @@
       "zoneName": "special.example"
     }
   ],
+  "endpointMonitoring": {
+    "excludeHostnames": [
+      "retired.example.com"
+    ],
+    "includeHostnames": [
+      "status.example.com"
+    ]
+  },
   "schemaVersion": 1
 }
