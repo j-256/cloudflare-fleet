@@ -323,6 +323,7 @@ export async function fetchHostedFleet(request, env) {
 
 export async function scheduledHostedFleet(controller, env) {
   return runHostedFleetMonitor(env, {
+    cron: controller.cron,
     now: new Date(controller.scheduledTime),
   })
 }

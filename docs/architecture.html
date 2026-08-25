@@ -101,7 +101,7 @@
         <article class="card">
           <p class="card-accent">MONITOR</p>
           <h3>Detect between audits</h3>
-          <p><code>src/hosted/monitor.mjs</code> combines account-wide edge-error analytics with selected endpoint probes. <code>src/hosted/monitor-store.mjs</code> makes incidents, recovery, analytics deduplication, and Hookrelay delivery retry-safe in D1.</p>
+          <p><code>src/hosted/monitor.mjs</code> separates account-wide edge-error analytics, deterministic endpoint probe shards, and catalog maintenance. <code>src/hosted/monitor-store.mjs</code> makes candidate state, incident transitions, the analytics cursor, and Hookrelay delivery retry-safe in D1.</p>
         </article>
         <article class="card">
           <p class="card-accent">AGENT INTERFACE</p>
@@ -116,9 +116,9 @@
         <p class="eyebrow">Continuous detection</p>
         <h2 id="monitor-heading">Traffic finds the incident; probes establish state</h2>
       </div>
-      <p>One scheduled account-level GraphQL query groups HTTP 520 through 526 and 530 responses by zone, hostname, status, and minute. This catches a failure seen by real requests without waiting for that hostname's synthetic turn. Minute-keyed D1 observations make overlapping analytics windows safe to repeat.</p>
-      <p>The probe catalog starts from exact proxied A, AAAA, and CNAME records. Fleet automatically selects proxied zone apexes and exact hostnames with at least 100 requests during the analytics window, then applies explicit hostname inclusions and exclusions from operator policy. Wildcards, arbitrary Host headers, inactive test records, and unproxied origins do not become automatic probe targets.</p>
-      <p>An origin-path edge code opens an incident immediately. Ambiguous HTTP 5xx and transport failures need consecutive probes. Unless explicitly excluded, open incidents stay selected and move to the front of the bounded round-robin; two HTTP responses below 500 establish recovery. The incident transition and its CloudEvent enter one D1 transaction; a separate outbox signs and retries Hookrelay delivery through a same-account service binding with a stable event ID.</p>
+      <p>One five-minute account-level GraphQL query groups HTTP 520 through 526 and 530 responses by zone, hostname, status, and minute. This catches a failure seen by real requests without waiting for that hostname's synthetic turn. Each non-overlapping analytics interval commits incident changes and its cursor in one D1 transaction, so a failed transaction retries without storing every observation.</p>
+      <p>The probe catalog starts from exact proxied A, AAAA, and CNAME records. Fleet automatically selects proxied zone apexes and exact hostnames with at least 100 HTTP 2xx or 3xx responses during the prior 24 hours, then applies explicit hostname inclusions and exclusions from operator policy. Wildcards, arbitrary Host headers, 4xx-only traffic, inactive test records, and unproxied origins do not become automatic probe targets.</p>
+      <p>A one-minute scheduled dispatcher assigns exactly one lane to each invocation. Every five-minute cycle gives one minute to analytics, one to maintenance, and three to stable probe shards, so the lanes receive independent CPU budgets without being scheduled together. Healthy probes do not write D1. An origin-path edge code opens an incident immediately, while ambiguous HTTP 5xx and transport failures need consecutive probes. Unless explicitly excluded, open incidents stay selected; two HTTP responses below 500 establish recovery. Explicit exclusion suppresses an incident without a recovery event. Incident transitions and CloudEvents enter D1 transactions, and the outbox signs and retries Hookrelay delivery through a same-account service binding with a stable event ID.</p>
       <div class="callout">
         <strong>Detection cannot remediate</strong>
         <p>The scheduled path performs Cloudflare reads, HTTPS <code>HEAD</code> probes, D1 writes, and signed Hookrelay delivery. It has no planner, write adapter, confirmation bypass, or Cloudflare mutation path, and it runs unchanged when the hosted dashboard is read-only.</p>
@@ -198,7 +198,7 @@
             <tr><td>Operation activity</td><td>Reviewed plans, pending and terminal results, verification evidence, and eligible inverse plans</td><td>Transactional append and finalize operations</td><td>Independent state section under the same file lock</td></tr>
             <tr><td>Inventory snapshot</td><td>Last complete fleet reading plus newer scoped verification patches</td><td>D1 cache record</td><td>User cache directory</td></tr>
             <tr><td>Fleet policy</td><td>Typed operator exceptions that stay visible but do not become actionable drift</td><td>Validated Worker variable generated from an ignored file</td><td>Ignored JSON loaded into the session runtime</td></tr>
-            <tr><td>Endpoint monitor</td><td>Catalog progress, selected endpoints, observations, incidents, run health, and Hookrelay outbox</td><td>Transactional D1 tables</td><td>Not available</td></tr>
+            <tr><td>Endpoint monitor</td><td>Catalog and selection changes, state candidates, incidents, analytics cursor, and Hookrelay outbox</td><td>Transactional D1 tables; run telemetry in Workers Logs</td><td>Not available</td></tr>
           </tbody>
         </table>
       </div>

@@ -2,10 +2,11 @@ import {
   createEmptyMonitorEndpointState,
   createMonitorCloudEvent,
   createMonitorIncident,
+  MONITOR_RESOLUTION_REASON,
   MONITOR_TRANSITION,
   reduceMonitorEndpoint,
   resolveMonitorIncident,
-  updateMonitorIncident,
+  suppressMonitorIncident,
 } from "../monitor.mjs"
 
 export const MONITOR_RUN_STATUS = Object.freeze({
@@ -84,23 +85,28 @@ const UPSERT_MONITOR_ENDPOINT_SQL = `
     record_types_json = excluded.record_types_json,
     catalog_generation = excluded.catalog_generation,
     catalog_active = 1,
-    discovered_at = excluded.discovered_at,
     updated_at = excluded.updated_at
+  WHERE monitor_endpoint.zone_name <> excluded.zone_name
+    OR monitor_endpoint.record_types_json <> excluded.record_types_json
+    OR monitor_endpoint.catalog_active <> 1
 `
-const DEACTIVATE_STALE_ENDPOINTS_SQL = `
+const COMPLETE_CATALOG_REFRESH_SQL = `
+  UPDATE monitor_meta
+  SET catalog_refresh_completed_at = ?
+  WHERE account_id = ? AND catalog_generation = ?
+`
+const DEACTIVATE_ENDPOINT_SQL = `
   UPDATE monitor_endpoint
   SET
     catalog_active = 0,
     selected = 0,
     selection_reason = 'inactive',
     request_count = 0,
+    active_incident_id = NULL,
+    consecutive_failures = 0,
+    consecutive_successes = 0,
     updated_at = ?
-  WHERE account_id = ? AND catalog_generation <> ?
-`
-const COMPLETE_CATALOG_REFRESH_SQL = `
-  UPDATE monitor_meta
-  SET catalog_refresh_completed_at = ?
-  WHERE account_id = ? AND catalog_generation = ?
+  WHERE account_id = ? AND zone_id = ? AND hostname = ? AND catalog_active = 1
 `
 const READ_CATALOG_ENDPOINTS_SQL = `
   SELECT *
@@ -108,15 +114,51 @@ const READ_CATALOG_ENDPOINTS_SQL = `
   WHERE account_id = ? AND catalog_active = 1
   ORDER BY zone_name, hostname
 `
+const RUNTIME_ENDPOINT_COLUMNS_SQL = `
+  zone_id,
+  hostname,
+  zone_name,
+  selected,
+  selection_reason,
+  active_incident_id,
+  consecutive_failures,
+  consecutive_successes,
+  last_failure_at,
+  last_failure_kind,
+  last_failure_status,
+  last_observation_at,
+  last_probe_at,
+  last_probe_error_code,
+  last_probe_status
+`
+const READ_RUNTIME_ENDPOINTS_SQL = `
+  SELECT ${RUNTIME_ENDPOINT_COLUMNS_SQL}
+  FROM monitor_endpoint
+  WHERE account_id = ? AND catalog_active = 1
+  ORDER BY zone_name, hostname
+`
+const READ_CATALOG_ZONE_ENDPOINTS_SQL = `
+  SELECT ${RUNTIME_ENDPOINT_COLUMNS_SQL}
+  FROM monitor_endpoint
+  WHERE account_id = ? AND zone_id = ? AND catalog_active = 1
+  ORDER BY hostname
+`
 const UPDATE_ENDPOINT_SELECTION_SQL = `
   UPDATE monitor_endpoint
   SET
-    request_count = ?,
     selected = ?,
     selection_reason = ?,
+    consecutive_failures = CASE
+      WHEN active_incident_id IS NULL THEN 0
+      ELSE consecutive_failures
+    END,
+    consecutive_successes = CASE
+      WHEN active_incident_id IS NULL THEN 0
+      ELSE consecutive_successes
+    END,
     updated_at = ?
   WHERE account_id = ? AND zone_id = ? AND hostname = ? AND catalog_active = 1
-    AND (request_count <> ? OR selected <> ? OR selection_reason <> ?)
+    AND (selected <> ? OR selection_reason <> ?)
 `
 const UPDATE_ANALYTICS_CURSOR_SQL = `
   UPDATE monitor_meta
@@ -175,6 +217,12 @@ const READ_DUE_ENDPOINTS_SQL = `
     hostname
   LIMIT ?
 `
+const READ_SELECTED_ENDPOINTS_SQL = `
+  SELECT ${RUNTIME_ENDPOINT_COLUMNS_SQL}
+  FROM monitor_endpoint
+  WHERE account_id = ? AND catalog_active = 1 AND selected = 1
+  ORDER BY zone_name, hostname
+`
 const READ_ENDPOINT_SQL = `
   SELECT *
   FROM monitor_endpoint
@@ -213,8 +261,9 @@ const INSERT_INCIDENT_SQL = `
     first_observed_at,
     last_failure_at,
     opened_at,
-    resolved_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    resolved_at,
+    resolution_reason
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 const READ_INCIDENT_SQL = `
   SELECT *
@@ -231,7 +280,13 @@ const UPDATE_INCIDENT_SQL = `
     latest_signal = ?,
     request_count = ?,
     last_failure_at = ?,
-    resolved_at = ?
+    resolved_at = ?,
+    resolution_reason = ?
+  WHERE account_id = ? AND id = ? AND status = 'open'
+`
+const SUPPRESS_INCIDENT_SQL = `
+  UPDATE monitor_incident
+  SET status = 'resolved', resolved_at = ?, resolution_reason = ?
   WHERE account_id = ? AND id = ? AND status = 'open'
 `
 const INSERT_OUTBOX_SQL = `
@@ -315,6 +370,21 @@ function changedRows(result) {
   return result?.meta?.changes ?? result?.meta?.rows_written ?? 0
 }
 
+function deactivateEndpointStatement(
+  db,
+  accountId,
+  zoneId,
+  hostname,
+  updatedAt,
+) {
+  return db.prepare(DEACTIVATE_ENDPOINT_SQL).bind(
+    updatedAt,
+    accountId,
+    zoneId,
+    hostname,
+  )
+}
+
 function parsedJson(value, label) {
   try {
     return JSON.parse(value)
@@ -376,6 +446,32 @@ function endpointFromRow(row) {
   }
 }
 
+function runtimeEndpointFromRow(row) {
+  return {
+    hostname: row.hostname,
+    selected: Boolean(row.selected),
+    selectionReason: row.selection_reason,
+    state: {
+      activeIncidentId: row.active_incident_id,
+      consecutiveFailures: Number(row.consecutive_failures),
+      consecutiveSuccesses: Number(row.consecutive_successes),
+      lastFailureAt: row.last_failure_at,
+      lastFailureKind: row.last_failure_kind,
+      lastFailureStatus: row.last_failure_status === null
+        ? null
+        : Number(row.last_failure_status),
+      lastObservationAt: row.last_observation_at,
+      lastProbeAt: row.last_probe_at,
+      lastProbeErrorCode: row.last_probe_error_code,
+      lastProbeStatus: row.last_probe_status === null
+        ? null
+        : Number(row.last_probe_status),
+    },
+    zoneId: row.zone_id,
+    zoneName: row.zone_name,
+  }
+}
+
 function incidentFromRow(row) {
   if (!row) return null
   return {
@@ -390,6 +486,7 @@ function incidentFromRow(row) {
     latestStatus: row.latest_status === null ? null : Number(row.latest_status),
     openedAt: row.opened_at,
     requestCount: row.request_count === null ? null : Number(row.request_count),
+    resolutionReason: row.resolution_reason,
     resolvedAt: row.resolved_at,
     status: row.status,
     zoneId: row.zone_id,
@@ -416,6 +513,19 @@ function endpointObservationStatement(db, accountId, endpoint, state, updatedAt)
   )
 }
 
+function monitorStatesMatch(left, right) {
+  return left.activeIncidentId === right.activeIncidentId
+    && left.consecutiveFailures === right.consecutiveFailures
+    && left.consecutiveSuccesses === right.consecutiveSuccesses
+    && left.lastFailureAt === right.lastFailureAt
+    && left.lastFailureKind === right.lastFailureKind
+    && left.lastFailureStatus === right.lastFailureStatus
+    && left.lastObservationAt === right.lastObservationAt
+    && left.lastProbeAt === right.lastProbeAt
+    && left.lastProbeErrorCode === right.lastProbeErrorCode
+    && left.lastProbeStatus === right.lastProbeStatus
+}
+
 function incidentInsertStatement(db, accountId, incident) {
   return db.prepare(INSERT_INCIDENT_SQL).bind(
     incident.id,
@@ -434,6 +544,7 @@ function incidentInsertStatement(db, accountId, incident) {
     incident.lastFailureAt,
     incident.openedAt,
     incident.resolvedAt,
+    incident.resolutionReason,
   )
 }
 
@@ -447,6 +558,7 @@ function incidentUpdateStatement(db, accountId, incident) {
     incident.requestCount,
     incident.lastFailureAt,
     incident.resolvedAt,
+    incident.resolutionReason,
     accountId,
     incident.id,
   )
@@ -492,10 +604,12 @@ export async function releaseHostedMonitorLease(db, accountId, token) {
 }
 
 export async function readHostedMonitorMeta(db, accountId) {
-  await ensureHostedMonitorAccount(db, accountId)
-  return monitorMeta(
-    await db.prepare(READ_MONITOR_META_SQL).bind(accountId).first(),
-  )
+  let row = await db.prepare(READ_MONITOR_META_SQL).bind(accountId).first()
+  if (!row) {
+    await ensureHostedMonitorAccount(db, accountId)
+    row = await db.prepare(READ_MONITOR_META_SQL).bind(accountId).first()
+  }
+  return monitorMeta(row)
 }
 
 export async function startHostedMonitorRun(db, accountId, startedAt) {
@@ -546,7 +660,15 @@ export async function persistHostedMonitorCatalogZone(
   endpoints,
   nextCursor,
   updatedAt,
+  zoneId = endpoints[0]?.zoneId,
+  removedHostnames = [],
 ) {
+  if (typeof zoneId !== "string" || !zoneId) {
+    throw new TypeError("Monitor catalog zone ID is invalid")
+  }
+  if (!Array.isArray(removedHostnames)) {
+    throw new TypeError("Removed monitor catalog hostnames are invalid")
+  }
   const statements = endpoints.map((endpoint) => (
     db.prepare(UPSERT_MONITOR_ENDPOINT_SQL).bind(
       accountId,
@@ -560,6 +682,15 @@ export async function persistHostedMonitorCatalogZone(
       updatedAt,
     )
   ))
+  statements.push(...removedHostnames.map((hostname) => (
+    deactivateEndpointStatement(
+      db,
+      accountId,
+      zoneId,
+      hostname,
+      updatedAt,
+    )
+  )))
   statements.push(
     db.prepare(ADVANCE_CATALOG_CURSOR_SQL).bind(
       nextCursor,
@@ -567,7 +698,13 @@ export async function persistHostedMonitorCatalogZone(
       generation,
     ),
   )
-  await db.batch(statements)
+  const results = await db.batch(statements)
+  return {
+    changed: results.slice(0, -1).reduce(
+      (sum, result) => sum + changedRows(result),
+      0,
+    ),
+  }
 }
 
 export async function completeHostedMonitorCatalogRefresh(
@@ -575,19 +712,34 @@ export async function completeHostedMonitorCatalogRefresh(
   accountId,
   generation,
   completedAt,
+  removedEndpoints = [],
 ) {
-  await db.batch([
-    db.prepare(DEACTIVATE_STALE_ENDPOINTS_SQL).bind(
-      completedAt,
+  if (!Array.isArray(removedEndpoints)) {
+    throw new TypeError("Removed monitor catalog endpoints are invalid")
+  }
+  const statements = removedEndpoints.map((endpoint) => (
+    deactivateEndpointStatement(
+      db,
       accountId,
-      generation,
-    ),
+      endpoint.zoneId,
+      endpoint.hostname,
+      completedAt,
+    )
+  ))
+  statements.push(
     db.prepare(COMPLETE_CATALOG_REFRESH_SQL).bind(
       completedAt,
       accountId,
       generation,
     ),
-  ])
+  )
+  const results = await db.batch(statements)
+  return {
+    changed: results.slice(0, -1).reduce(
+      (sum, result) => sum + changedRows(result),
+      0,
+    ),
+  }
 }
 
 export async function readHostedMonitorCatalogEndpoints(db, accountId) {
@@ -597,6 +749,24 @@ export async function readHostedMonitorCatalogEndpoints(db, accountId) {
   return resultRows(result).map(endpointFromRow)
 }
 
+export async function readHostedMonitorRuntimeEndpoints(db, accountId) {
+  const result = await db.prepare(READ_RUNTIME_ENDPOINTS_SQL)
+    .bind(accountId)
+    .all()
+  return resultRows(result).map(runtimeEndpointFromRow)
+}
+
+export async function readHostedMonitorCatalogZoneEndpoints(
+  db,
+  accountId,
+  zoneId,
+) {
+  const result = await db.prepare(READ_CATALOG_ZONE_ENDPOINTS_SQL)
+    .bind(accountId, zoneId)
+    .all()
+  return resultRows(result).map(runtimeEndpointFromRow)
+}
+
 export async function persistHostedMonitorSelections(
   db,
   accountId,
@@ -604,23 +774,23 @@ export async function persistHostedMonitorSelections(
   updatedAt,
 ) {
   if (endpoints.length === 0) return
-  await db.batch(endpoints.map((endpoint) => (
+  const results = await db.batch(endpoints.map((endpoint) => (
     db.prepare(UPDATE_ENDPOINT_SELECTION_SQL).bind(
-      endpoint.requestCount,
       endpoint.selected ? 1 : 0,
       endpoint.selectionReason,
       updatedAt,
       accountId,
       endpoint.zoneId,
       endpoint.hostname,
-      endpoint.requestCount,
       endpoint.selected ? 1 : 0,
       endpoint.selectionReason,
     )
   )))
+  return results.reduce((sum, result) => sum + changedRows(result), 0)
 }
 
 export async function updateHostedMonitorAnalyticsCursor(db, accountId, cursorAt) {
+  await ensureHostedMonitorAccount(db, accountId)
   await db.prepare(UPDATE_ANALYTICS_CURSOR_SQL).bind(cursorAt, accountId).run()
 }
 
@@ -668,6 +838,13 @@ export async function readDueHostedMonitorEndpoints(db, accountId, limit) {
   return resultRows(result).map(endpointFromRow)
 }
 
+export async function readHostedMonitorSelectedEndpoints(db, accountId) {
+  const result = await db.prepare(READ_SELECTED_ENDPOINTS_SQL)
+    .bind(accountId)
+    .all()
+  return resultRows(result).map(runtimeEndpointFromRow)
+}
+
 export async function recordHostedMonitorObservation(
   db,
   accountId,
@@ -675,28 +852,33 @@ export async function recordHostedMonitorObservation(
   observation,
   options,
 ) {
-  const row = await db.prepare(READ_ENDPOINT_SQL).bind(
-    accountId,
-    endpointKey.zoneId,
-    endpointKey.hostname,
-  ).first()
-  if (!row) throw new Error("Monitor endpoint is unavailable")
-  const endpoint = endpointFromRow(row)
+  let endpoint = options.endpoint
+  if (!endpoint) {
+    const row = await db.prepare(READ_ENDPOINT_SQL).bind(
+      accountId,
+      endpointKey.zoneId,
+      endpointKey.hostname,
+    ).first()
+    if (!row) throw new Error("Monitor endpoint is unavailable")
+    endpoint = endpointFromRow(row)
+  }
+  if (endpoint.zoneId !== endpointKey.zoneId
+    || endpoint.hostname !== endpointKey.hostname) {
+    throw new Error("Monitor endpoint does not match its observation key")
+  }
   const incidentId = options.incidentId || null
   const reduced = reduceMonitorEndpoint(endpoint.state, observation, incidentId)
-  const statements = [endpointObservationStatement(
-    db,
-    accountId,
-    endpoint,
-    reduced.state,
-    options.recordedAt,
-  )]
-  let incident = endpoint.state.activeIncidentId
-    ? incidentFromRow(await db.prepare(READ_INCIDENT_SQL).bind(
-        accountId,
-        endpoint.state.activeIncidentId,
-      ).first())
-    : null
+  const statements = []
+  if (!monitorStatesMatch(endpoint.state, reduced.state)) {
+    statements.push(endpointObservationStatement(
+      db,
+      accountId,
+      endpoint,
+      reduced.state,
+      options.recordedAt,
+    ))
+  }
+  let incident = null
   if (reduced.transition?.kind === MONITOR_TRANSITION.OPENED) {
     incident = createMonitorIncident(
       endpoint,
@@ -715,6 +897,10 @@ export async function recordHostedMonitorObservation(
       ),
     )
   } else if (reduced.transition?.kind === MONITOR_TRANSITION.RESOLVED) {
+    incident = incidentFromRow(await db.prepare(READ_INCIDENT_SQL).bind(
+      accountId,
+      reduced.transition.incidentId,
+    ).first())
     if (!incident || incident.id !== reduced.transition.incidentId) {
       throw new Error("Open monitor incident is unavailable for recovery")
     }
@@ -729,9 +915,6 @@ export async function recordHostedMonitorObservation(
         options.recordedAt,
       ),
     )
-  } else if (incident && observation.failureKind) {
-    incident = updateMonitorIncident(incident, observation)
-    statements.push(incidentUpdateStatement(db, accountId, incident))
   }
   if (options.analyticsKey) {
     statements.push(db.prepare(MARK_ANALYTICS_PROCESSED_SQL).bind(
@@ -743,12 +926,120 @@ export async function recordHostedMonitorObservation(
       options.analyticsKey.observedMinute,
     ))
   }
-  await db.batch(statements)
+  if (statements.length > 0) await db.batch(statements)
   return {
+    changed: statements.length > 0,
     incident,
     state: reduced.state,
     transition: reduced.transition,
   }
+}
+
+export async function commitHostedMonitorAnalytics(
+  db,
+  accountId,
+  entries,
+  cursorAt,
+  recordedAt,
+  randomId,
+) {
+  const statements = []
+  const transitions = []
+  for (const { endpoint, observation } of entries) {
+    const reduced = reduceMonitorEndpoint(
+      endpoint.state,
+      observation,
+      randomId,
+    )
+    if (!monitorStatesMatch(endpoint.state, reduced.state)) {
+      statements.push(endpointObservationStatement(
+        db,
+        accountId,
+        endpoint,
+        reduced.state,
+        recordedAt,
+      ))
+    }
+    if (reduced.transition?.kind !== MONITOR_TRANSITION.OPENED) continue
+    const incident = createMonitorIncident(
+      endpoint,
+      observation,
+      reduced.transition.incidentId,
+      recordedAt,
+    )
+    statements.push(
+      incidentInsertStatement(db, accountId, incident),
+      outboxInsertStatement(
+        db,
+        accountId,
+        incident,
+        MONITOR_TRANSITION.OPENED,
+        recordedAt,
+      ),
+    )
+    transitions.push({ endpoint, incident, kind: MONITOR_TRANSITION.OPENED })
+  }
+  statements.push(
+    db.prepare(UPDATE_ANALYTICS_CURSOR_SQL).bind(cursorAt, accountId),
+  )
+  await db.batch(statements)
+  return { transitions, writes: statements.length }
+}
+
+export async function suppressHostedMonitorIncidents(
+  db,
+  accountId,
+  endpoints,
+  resolvedAt,
+  reason,
+) {
+  if (![
+    MONITOR_RESOLUTION_REASON.CATALOG_REMOVED,
+    MONITOR_RESOLUTION_REASON.POLICY_EXCLUDED,
+  ].includes(reason)) {
+    throw new TypeError("Monitor suppression reason is invalid")
+  }
+  const candidates = endpoints.filter((endpoint) => (
+    endpoint.state?.activeIncidentId
+  ))
+  if (candidates.length === 0) return []
+  const incidents = await Promise.all(candidates.map(async (endpoint) => {
+    const row = await db.prepare(READ_INCIDENT_SQL).bind(
+      accountId,
+      endpoint.state.activeIncidentId,
+    ).first()
+    const incident = suppressMonitorIncident(
+      incidentFromRow(row),
+      resolvedAt,
+      reason,
+    )
+    return { endpoint, incident }
+  }))
+  const statements = []
+  for (const { endpoint, incident } of incidents) {
+    statements.push(
+      endpointObservationStatement(
+        db,
+        accountId,
+        endpoint,
+        {
+          ...endpoint.state,
+          activeIncidentId: null,
+          consecutiveFailures: 0,
+          consecutiveSuccesses: 0,
+        },
+        resolvedAt,
+      ),
+      db.prepare(SUPPRESS_INCIDENT_SQL).bind(
+        resolvedAt,
+        reason,
+        accountId,
+        incident.id,
+      ),
+    )
+  }
+  await db.batch(statements)
+  return incidents.map(({ endpoint, incident }) => ({ endpoint, incident }))
 }
 
 export async function readDueHostedMonitorOutbox(db, accountId, now, limit) {
@@ -806,6 +1097,13 @@ export async function pruneHostedMonitorState(
   ])
 }
 
+export async function pruneHostedMonitorOutbox(db, accountId, outboxCutoff) {
+  const result = await db.prepare(PRUNE_OUTBOX_SQL)
+    .bind(accountId, outboxCutoff)
+    .run()
+  return changedRows(result)
+}
+
 function publicIncident(row) {
   const incident = incidentFromRow(row)
   return {
@@ -820,6 +1118,7 @@ function publicIncident(row) {
     latestStatus: incident.latestStatus,
     openedAt: incident.openedAt,
     requestCount: incident.requestCount,
+    resolutionReason: incident.resolutionReason,
     resolvedAt: incident.resolvedAt,
     status: incident.status,
     zoneName: incident.zoneName,
@@ -841,7 +1140,10 @@ export async function readHostedMonitorStatus(db, accountId) {
     catalog: {
       completedAt: meta.catalogRefreshCompletedAt,
       generation: meta.catalogGeneration,
-      inProgress: meta.catalogZones.length > meta.catalogZoneCursor,
+      inProgress: Number.isFinite(Date.parse(meta.catalogRefreshStartedAt))
+        && (!Number.isFinite(Date.parse(meta.catalogRefreshCompletedAt))
+          || Date.parse(meta.catalogRefreshStartedAt)
+            > Date.parse(meta.catalogRefreshCompletedAt)),
       startedAt: meta.catalogRefreshStartedAt,
       zoneCursor: meta.catalogZoneCursor,
       zones: meta.catalogZones.length,
@@ -851,12 +1153,7 @@ export async function readHostedMonitorStatus(db, accountId) {
       open: Number(counts.open || 0),
       selected: Number(counts.selected || 0),
     },
-    lastRun: {
-      completedAt: meta.lastRunCompletedAt,
-      errorCode: meta.lastErrorCode,
-      startedAt: meta.lastRunStartedAt,
-      status: meta.lastRunStatus,
-    },
+    runHealthSource: "workers-observability",
     openIncidents: resultRows(openResult).map(publicIncident),
     pendingDeliveries: Number(outbox.pending || 0),
     recentIncidents: resultRows(recentResult).map(publicIncident),

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { readFleetPolicyConfiguration } from "../src/fleet-policy-store.mjs"
 import { atomicWriteFile } from "../src/atomic-file.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
+import { HOSTED_MONITOR_CRONS } from "../src/hosted/monitor-schedule.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_OUTPUT_FILE = path.join(PROJECT_ROOT, "wrangler.jsonc")
@@ -217,7 +218,7 @@ export async function hostedWranglerConfiguration(options) {
         }]
       : [],
     triggers: {
-      crons: options.monitorEnabled ? ["*/5 * * * *"] : [],
+      crons: options.monitorEnabled ? [...HOSTED_MONITOR_CRONS] : [],
     },
     vars: {
       FLEET_ACCOUNT_ID: accountId,

@@ -28,6 +28,11 @@ export const MONITOR_OBSERVATION_SOURCE = Object.freeze({
   ANALYTICS: "analytics",
   PROBE: "probe",
 })
+export const MONITOR_RESOLUTION_REASON = Object.freeze({
+  CATALOG_REMOVED: "catalog-removed",
+  POLICY_EXCLUDED: "policy-excluded",
+  RECOVERED: "recovered",
+})
 export const MONITOR_SELECTION_REASON = Object.freeze({
   ACTIVE_TRAFFIC: "active-traffic",
   EXCLUDED: "excluded",
@@ -92,11 +97,63 @@ function trafficCounts(rows) {
     const hostname = normalizedHostname(row?.dimensions?.clientRequestHTTPHost)
     const zoneId = String(row?.dimensions?.zoneTag || "")
     const count = Number(row?.count)
+    const status = Number(row?.dimensions?.edgeResponseStatus)
     if (!hostname || !zoneId || !Number.isFinite(count) || count < 0) continue
+    if (Number.isFinite(status) && (status < 200 || status >= 400)) continue
     const key = JSON.stringify([zoneId, hostname])
     counts.set(key, (counts.get(key) || 0) + count)
   }
   return counts
+}
+
+function endpointHash(endpoint) {
+  const value = `${endpoint.zoneId}\u0000${normalizedHostname(endpoint.hostname)}`
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return hash >>> 0
+}
+
+export function monitorProbeShard(
+  endpoints,
+  scheduledAt,
+  { baseShardCount = 5, maximumPerShard = 10, sequence } = {},
+) {
+  if (!Array.isArray(endpoints)
+    || !Number.isInteger(baseShardCount)
+    || baseShardCount < 1
+    || !Number.isInteger(maximumPerShard)
+    || maximumPerShard < 1
+    || (sequence !== undefined && !Number.isInteger(sequence))) {
+    throw new TypeError("Monitor probe shard input is invalid")
+  }
+  const scheduledMs = Date.parse(scheduledAt)
+  if (!Number.isFinite(scheduledMs)) {
+    throw new TypeError("Monitor probe shard time is invalid")
+  }
+  const ordered = [...endpoints].sort((left, right) => (
+    endpointHash(left) - endpointHash(right)
+      || String(left.zoneId).localeCompare(String(right.zoneId))
+      || normalizedHostname(left.hostname).localeCompare(
+        normalizedHostname(right.hostname),
+      )
+  ))
+  const shardCount = Math.max(
+    baseShardCount,
+    Math.ceil(ordered.length / maximumPerShard),
+  )
+  const minute = Math.floor(scheduledMs / 60000)
+  const shardSequence = sequence ?? minute
+  const shardIndex = ((shardSequence % shardCount) + shardCount) % shardCount
+  return Object.freeze({
+    endpoints: ordered.filter((_endpoint, index) => (
+      index % shardCount === shardIndex
+    )),
+    shardCount,
+    shardIndex,
+  })
 }
 
 export function selectMonitorEndpoints(endpoints, trafficRows, policy) {
@@ -223,6 +280,31 @@ export function probeNetworkObservation(errorCode, observedAt) {
 export function reduceMonitorEndpoint(state, observation, incidentId = null) {
   const current = { ...createEmptyMonitorEndpointState(), ...state }
   if (observation.outcome === MONITOR_OBSERVATION_OUTCOME.FAILURE) {
+    if (current.activeIncidentId && current.consecutiveSuccesses === 0) {
+      return { state: current, transition: null }
+    }
+    if (current.activeIncidentId) {
+      return {
+        state: {
+          ...current,
+          consecutiveSuccesses: 0,
+          lastFailureAt: observation.observedAt,
+          lastFailureKind: observation.failureKind,
+          lastFailureStatus: observation.httpStatus,
+          lastObservationAt: observation.observedAt,
+          lastProbeAt: observation.source === MONITOR_OBSERVATION_SOURCE.PROBE
+            ? observation.observedAt
+            : current.lastProbeAt,
+          lastProbeErrorCode: observation.source === MONITOR_OBSERVATION_SOURCE.PROBE
+            ? observation.errorCode
+            : current.lastProbeErrorCode,
+          lastProbeStatus: observation.source === MONITOR_OBSERVATION_SOURCE.PROBE
+            ? observation.httpStatus
+            : current.lastProbeStatus,
+        },
+        transition: null,
+      }
+    }
     const consecutiveFailures = Math.min(
       MONITOR_CONSECUTIVE_FAILURES,
       current.consecutiveFailures + 1,
@@ -230,12 +312,20 @@ export function reduceMonitorEndpoint(state, observation, incidentId = null) {
     const shouldOpen = !current.activeIncidentId
       && (observation.immediate
         || consecutiveFailures >= MONITOR_CONSECUTIVE_FAILURES)
-    if (shouldOpen && !incidentId) {
-      throw new TypeError("Opening a monitor incident requires an ID")
+    let openingIncidentId = null
+    if (shouldOpen) {
+      openingIncidentId = typeof incidentId === "function"
+        ? incidentId()
+        : incidentId
+      if (!openingIncidentId) {
+        throw new TypeError("Opening a monitor incident requires an ID")
+      }
     }
     const next = {
       ...current,
-      activeIncidentId: shouldOpen ? incidentId : current.activeIncidentId,
+      activeIncidentId: shouldOpen
+        ? openingIncidentId
+        : current.activeIncidentId,
       consecutiveFailures,
       consecutiveSuccesses: 0,
       lastFailureAt: observation.observedAt,
@@ -251,13 +341,25 @@ export function reduceMonitorEndpoint(state, observation, incidentId = null) {
     return {
       state: next,
       transition: shouldOpen
-        ? { incidentId, kind: MONITOR_TRANSITION.OPENED }
+        ? { incidentId: openingIncidentId, kind: MONITOR_TRANSITION.OPENED }
         : null,
     }
   }
   if (observation.outcome !== MONITOR_OBSERVATION_OUTCOME.SUCCESS
     || observation.source !== MONITOR_OBSERVATION_SOURCE.PROBE) {
     throw new TypeError("Monitor observation is invalid")
+  }
+  if (!current.activeIncidentId) {
+    if (current.consecutiveFailures === 0) {
+      return { state: current, transition: null }
+    }
+    return {
+      state: {
+        ...current,
+        consecutiveFailures: 0,
+      },
+      transition: null,
+    }
   }
   const consecutiveSuccesses = Math.min(
     MONITOR_CONSECUTIVE_SUCCESSES,
@@ -271,7 +373,7 @@ export function reduceMonitorEndpoint(state, observation, incidentId = null) {
       ...current,
       activeIncidentId: shouldResolve ? null : current.activeIncidentId,
       consecutiveFailures: 0,
-      consecutiveSuccesses,
+      consecutiveSuccesses: shouldResolve ? 0 : consecutiveSuccesses,
       lastObservationAt: observation.observedAt,
       lastProbeAt: observation.observedAt,
       lastProbeErrorCode: null,
@@ -299,6 +401,7 @@ export function createMonitorIncident(endpoint, observation, incidentId, openedA
     latestStatus: observation.httpStatus,
     openedAt: requiredTimestamp(openedAt, "Incident opening time"),
     requestCount: observation.requestCount,
+    resolutionReason: null,
     resolvedAt: null,
     status: "open",
     zoneId: endpoint.zoneId,
@@ -328,7 +431,24 @@ export function resolveMonitorIncident(incident, resolvedAt) {
   }
   return Object.freeze({
     ...incident,
+    resolutionReason: MONITOR_RESOLUTION_REASON.RECOVERED,
     resolvedAt: requiredTimestamp(resolvedAt, "Incident resolution time"),
+    status: "resolved",
+  })
+}
+
+export function suppressMonitorIncident(incident, resolvedAt, reason) {
+  if (incident?.status !== "open"
+    || ![
+      MONITOR_RESOLUTION_REASON.CATALOG_REMOVED,
+      MONITOR_RESOLUTION_REASON.POLICY_EXCLUDED,
+    ].includes(reason)) {
+    throw new TypeError("Open monitor incident and suppression reason are required")
+  }
+  return Object.freeze({
+    ...incident,
+    resolutionReason: reason,
+    resolvedAt: requiredTimestamp(resolvedAt, "Incident suppression time"),
     status: "resolved",
   })
 }

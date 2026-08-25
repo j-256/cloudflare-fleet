@@ -11,6 +11,7 @@ import {
   parseHostedConfigurationArguments,
   writeHostedWranglerConfiguration,
 } from "../scripts/configure-hosted.mjs"
+import { HOSTED_MONITOR_CRONS } from "../src/hosted/monitor-schedule.mjs"
 
 const CONFIGURE_SCRIPT = fileURLToPath(
   new URL("../scripts/configure-hosted.mjs", import.meta.url),
@@ -92,7 +93,7 @@ test("hosted configuration opts into scheduled monitoring", async () => {
   const configuration = await hostedWranglerConfiguration(configured)
 
   assert.equal(configuration.vars.FLEET_MONITOR_ENABLED, "true")
-  assert.deepEqual(configuration.triggers.crons, ["*/5 * * * *"])
+  assert.deepEqual(configuration.triggers.crons, HOSTED_MONITOR_CRONS)
   assert.deepEqual(configuration.services, [{
     binding: "FLEET_MONITOR_HOOKRELAY",
     service: "hookrelay-production",

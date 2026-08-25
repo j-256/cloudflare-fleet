@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   catalogEndpointsForZone,
+  MONITOR_RESOLUTION_REASON,
   probeHttpObservation,
   selectMonitorEndpoints,
 } from "../src/monitor.mjs"
@@ -10,11 +11,9 @@ import {
   acquireHostedMonitorLease,
   beginHostedMonitorCatalogRefresh,
   completeHostedMonitorCatalogRefresh,
-  finishHostedMonitorRun,
   ingestHostedMonitorAnalytics,
   markHostedMonitorOutboxDelivered,
   markHostedMonitorOutboxFailed,
-  MONITOR_RUN_STATUS,
   persistHostedMonitorCatalogZone,
   persistHostedMonitorSelections,
   readDueHostedMonitorEndpoints,
@@ -25,7 +24,7 @@ import {
   readPendingHostedMonitorAnalytics,
   recordHostedMonitorObservation,
   releaseHostedMonitorLease,
-  startHostedMonitorRun,
+  suppressHostedMonitorIncidents,
   updateHostedMonitorAnalyticsCursor,
 } from "../src/hosted/monitor-store.mjs"
 import {
@@ -37,6 +36,10 @@ import {
 
 const ACCOUNT_ID = "account-one"
 const STARTED_AT = "2026-08-25T01:00:00.000Z"
+
+function totalChanges(db) {
+  return Number(db.sqlite.prepare("SELECT total_changes() AS count").get().count)
+}
 
 async function seedEndpoint(db) {
   const generation = "catalog-one"
@@ -122,6 +125,16 @@ test("hosted monitor catalog preserves endpoint state across generations", async
     [{ id: "zone-one", name: "example.com" }],
     "2026-08-25T02:00:00.000Z",
   )
+  await persistHostedMonitorCatalogZone(
+    db,
+    ACCOUNT_ID,
+    "catalog-two",
+    [],
+    1,
+    "2026-08-25T02:00:30.000Z",
+    "zone-one",
+    ["example.com"],
+  )
   await completeHostedMonitorCatalogRefresh(
     db,
     ACCOUNT_ID,
@@ -130,6 +143,60 @@ test("hosted monitor catalog preserves endpoint state across generations", async
   )
 
   assert.equal((await readHostedMonitorCatalogEndpoints(db, ACCOUNT_ID)).length, 0)
+})
+
+test("hosted monitor catalog leaves unchanged endpoints untouched", async (context) => {
+  const db = hostedD1Fixture(context)
+  await seedEndpoint(db)
+  await beginHostedMonitorCatalogRefresh(
+    db,
+    ACCOUNT_ID,
+    "catalog-two",
+    [{ id: "zone-one", name: "example.com" }],
+    "2026-08-25T02:00:00.000Z",
+  )
+  const unchanged = catalogEndpointsForZone(
+    { id: "zone-one", name: "example.com" },
+    [{ name: "example.com", proxied: true, type: "A" }],
+    "catalog-two",
+    "2026-08-25T02:01:00.000Z",
+  )
+
+  const persisted = await persistHostedMonitorCatalogZone(
+    db,
+    ACCOUNT_ID,
+    "catalog-two",
+    unchanged,
+    1,
+    "2026-08-25T02:01:00.000Z",
+    "zone-one",
+  )
+  const endpoint = (await readHostedMonitorCatalogEndpoints(db, ACCOUNT_ID))[0]
+
+  assert.equal(persisted.changed, 0)
+  assert.equal(endpoint.catalogGeneration, "catalog-one")
+  assert.equal(endpoint.updatedAt, STARTED_AT)
+})
+
+test("hosted monitor performs no write for an ordinary healthy probe", async (context) => {
+  const db = hostedD1Fixture(context)
+  const endpoint = await seedEndpoint(db)
+  const before = totalChanges(db)
+
+  const recorded = await recordHostedMonitorObservation(
+    db,
+    ACCOUNT_ID,
+    endpoint,
+    probeHttpObservation(200, "2026-08-25T01:05:00.000Z"),
+    {
+      endpoint,
+      incidentId: "unused",
+      recordedAt: "2026-08-25T01:05:00.000Z",
+    },
+  )
+
+  assert.equal(recorded.changed, false)
+  assert.equal(totalChanges(db), before)
 })
 
 test("hosted monitor leaves unchanged selections untouched", async (context) => {
@@ -265,25 +332,64 @@ test("hosted monitor commits problem and recovery events with incident state", a
   )).length, 1)
 })
 
-test("hosted monitor records run health and analytics cursor", async (context) => {
+test("hosted monitor suppresses an excluded incident without recovery delivery", async (context) => {
+  const db = hostedD1Fixture(context)
+  const endpoint = await seedEndpoint(db)
+  const opened = await recordHostedMonitorObservation(
+    db,
+    ACCOUNT_ID,
+    endpoint,
+    analyticsFailureObservation({
+      count: 4,
+      dimensions: {
+        datetimeMinute: "2026-08-25T01:02:00.000Z",
+        edgeResponseStatus: 526,
+      },
+    }),
+    {
+      endpoint,
+      incidentId: "incident-suppressed",
+      recordedAt: "2026-08-25T01:03:00.000Z",
+    },
+  )
+  const active = {
+    ...endpoint,
+    state: opened.state,
+  }
+
+  const suppressed = await suppressHostedMonitorIncidents(
+    db,
+    ACCOUNT_ID,
+    [active],
+    "2026-08-25T01:04:00.000Z",
+    MONITOR_RESOLUTION_REASON.POLICY_EXCLUDED,
+  )
+  const status = await readHostedMonitorStatus(db, ACCOUNT_ID)
+  const outbox = await readDueHostedMonitorOutbox(
+    db,
+    ACCOUNT_ID,
+    "2026-08-25T01:05:00.000Z",
+    10,
+  )
+
+  assert.equal(suppressed.length, 1)
+  assert.equal(status.openIncidents.length, 0)
+  assert.equal(status.recentIncidents[0].resolutionReason, "policy-excluded")
+  assert.deepEqual(outbox.map((entry) => entry.event.id), [
+    "incident-suppressed/opened",
+  ])
+})
+
+test("hosted monitor exposes its analytics cursor and observability health source", async (context) => {
   const db = hostedD1Fixture(context)
 
-  await startHostedMonitorRun(db, ACCOUNT_ID, STARTED_AT)
   await updateHostedMonitorAnalyticsCursor(
     db,
     ACCOUNT_ID,
     "2026-08-25T01:03:00.000Z",
   )
-  await finishHostedMonitorRun(
-    db,
-    ACCOUNT_ID,
-    "2026-08-25T01:04:00.000Z",
-    MONITOR_RUN_STATUS.DEGRADED,
-    "analytics-read",
-  )
   const status = await readHostedMonitorStatus(db, ACCOUNT_ID)
 
   assert.equal(status.analyticsCursorAt, "2026-08-25T01:03:00.000Z")
-  assert.equal(status.lastRun.status, "degraded")
-  assert.equal(status.lastRun.errorCode, "analytics-read")
+  assert.equal(status.runHealthSource, "workers-observability")
 })
