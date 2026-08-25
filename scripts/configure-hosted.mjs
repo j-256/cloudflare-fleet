@@ -12,6 +12,8 @@ const DEFAULT_POLICY_FILE = path.join(PROJECT_ROOT, "fleet-policy.json")
 const ACCOUNT_ID_PATTERN = /^[a-f0-9]{32}$/i
 const ACCESS_AUD_PATTERN = /^[a-f0-9]{64}$/i
 const DATABASE_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
+const DEFAULT_HOOKRELAY_SERVICE = "hookrelay"
+const HOOKRELAY_SERVICE_BINDING = "FLEET_MONITOR_HOOKRELAY"
 const WORKER_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/
 const PUBLIC_FETCH_COMPATIBILITY_FLAG = "global_fetch_strictly_public"
 
@@ -43,6 +45,7 @@ export function hostedConfigurationUsage() {
     "  -a, --account-id ID         Set the Cloudflare account ID",
     "  -d, --database-id ID        Set the D1 database ID",
     "  --hostname HOST             Set the hosted dashboard hostname",
+    "  --hookrelay-service NAME    Set the Hookrelay Worker service name",
     "  --monitor                   Enable scheduled endpoint monitoring",
     "  --no-monitor                Disable scheduled endpoint monitoring",
     "  -o, --output FILE           Write Wrangler configuration to FILE",
@@ -61,6 +64,8 @@ export function parseHostedConfigurationArguments(argv, environment = process.en
     accountId: environment.CLOUDFLARE_ACCOUNT_ID || "",
     databaseId: environment.CLOUDFLARE_FLEET_D1_DATABASE_ID || "",
     hostname: environment.CLOUDFLARE_FLEET_HOSTNAME || "",
+    hookrelayService: environment.CLOUDFLARE_FLEET_HOOKRELAY_SERVICE
+      || DEFAULT_HOOKRELAY_SERVICE,
     help: false,
     monitorEnabled: environment.CLOUDFLARE_FLEET_MONITOR_ENABLED === "true",
     outputFile: DEFAULT_OUTPUT_FILE,
@@ -78,6 +83,7 @@ export function parseHostedConfigurationArguments(argv, environment = process.en
     "--account-id": "accountId",
     "--database-id": "databaseId",
     "--hostname": "hostname",
+    "--hookrelay-service": "hookrelayService",
     "--output": "outputFile",
     "--policy-file": "policyFile",
     "--worker-name": "workerName",
@@ -172,6 +178,11 @@ export async function hostedWranglerConfiguration(options) {
     WORKER_NAME_PATTERN,
     "Worker name",
   )
+  const hookrelayService = requiredPattern(
+    options.hookrelayService,
+    WORKER_NAME_PATTERN,
+    "Hookrelay service name",
+  )
   const policy = await readFleetPolicyConfiguration(options.policyFile)
   return {
     $schema: "node_modules/wrangler/config-schema.json",
@@ -199,6 +210,12 @@ export async function hostedWranglerConfiguration(options) {
       database_id: databaseId,
       migrations_dir: "migrations",
     }],
+    services: options.monitorEnabled
+      ? [{
+          binding: HOOKRELAY_SERVICE_BINDING,
+          service: hookrelayService,
+        }]
+      : [],
     triggers: {
       crons: options.monitorEnabled ? ["*/5 * * * *"] : [],
     },
@@ -254,6 +271,7 @@ if (isMainModule(import.meta.url)) {
     } else writeHostedWranglerConfiguration(options).then((configuration) => {
       process.stdout.write(`${JSON.stringify({
         hostname: configuration.routes[0].pattern,
+        hookrelayService: configuration.services[0]?.service || null,
         monitorEnabled: configuration.vars.FLEET_MONITOR_ENABLED === "true",
         outputFile: options.outputFile,
         readOnly: configuration.vars.FLEET_READ_ONLY === "true",

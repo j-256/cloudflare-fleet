@@ -30,6 +30,7 @@
       "migrations_dir": "migrations"
     }
   ],
+  "services": [],
   "triggers": {
     "crons": []
   },

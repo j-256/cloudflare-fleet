@@ -61,6 +61,7 @@ npm run configure:hosted -- \
   --hostname fleet.example.com \
   --access-aud "$CLOUDFLARE_ACCESS_AUD" \
   --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN" \
+  --hookrelay-service hookrelay \
   --monitor
 
 npm run db:migrate:remote
@@ -69,7 +70,7 @@ npx wrangler secret put FLEET_MONITOR_HOOKRELAY_HMAC
 npm run deploy
 ```
 
-The monitor uses one account-wide edge analytics query to find HTTP 520 through 526 and 530 responses experienced by real traffic. It probes proxied zone apexes, traffic-active exact DNS names, and explicit policy inclusions within the Workers Free external-subrequest budget. The generated Wrangler configuration enables `global_fetch_strictly_public` so same-zone probes and Hookrelay delivery traverse Cloudflare's public front door. D1 retains endpoint state, incident history, analytics deduplication, and a retry-safe Hookrelay outbox. One error observation opens a Cloudflare origin-path incident; other 5xx or network failures require two probes, and two successful probes produce recovery. This detector does not use Cloudflare Health Checks or Passive Origin Monitoring, and no monitor path changes Cloudflare or origin configuration.
+The monitor uses one account-wide edge analytics query to find HTTP 520 through 526 and 530 responses experienced by real traffic. It probes proxied zone apexes, traffic-active exact DNS names, and explicit policy inclusions within the Workers Free external-subrequest budget. The generated Wrangler configuration enables `global_fetch_strictly_public` so same-zone probes traverse Cloudflare's public front door, while the `FLEET_MONITOR_HOOKRELAY` service binding delivers signed events directly to the configured Hookrelay Worker. D1 retains endpoint state, incident history, analytics deduplication, and a retry-safe Hookrelay outbox. One error observation opens a Cloudflare origin-path incident; other 5xx or network failures require two probes, and two successful probes produce recovery. This detector does not use Cloudflare Health Checks or Passive Origin Monitoring, and no monitor path changes Cloudflare or origin configuration.
 
 Open the Access-protected `/api/monitor` endpoint for catalog freshness, run health, selected endpoint counts, open and recent incidents, and pending Hookrelay delivery count. Add exact `endpointMonitoring.includeHostnames` and `endpointMonitoring.excludeHostnames` lists to the ignored fleet policy when traffic discovery needs an explicit override. Regenerating with `--no-monitor` and deploying removes the managed Cron Trigger.
 

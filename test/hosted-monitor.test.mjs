@@ -27,12 +27,13 @@ function jsonResponse(value, status = 200) {
   })
 }
 
-function environment(context) {
+function environment(context, hookrelayFetch = async () => jsonResponse({ ok: true })) {
   return {
     CLOUDFLARE_API_TOKEN: "api-token",
     FLEET_ACCOUNT_ID: ACCOUNT_ID,
     FLEET_DB: hostedD1Fixture(context),
     FLEET_MONITOR_ENABLED: "true",
+    FLEET_MONITOR_HOOKRELAY: { fetch: hookrelayFetch },
     FLEET_MONITOR_HOOKRELAY_HMAC: HOOKRELAY_HMAC,
     FLEET_MONITOR_HOOKRELAY_URL: HOOKRELAY_URL,
     FLEET_POLICY_JSON: JSON.stringify({
@@ -123,6 +124,7 @@ function monitorTransport() {
         })
       }
       if (url.toString() === HOOKRELAY_URL) {
+        assert.equal(request.redirect, "manual")
         const expected = createHmac("sha256", HOOKRELAY_HMAC)
           .update(request.body)
           .digest("hex")
@@ -145,8 +147,8 @@ function monitorTransport() {
 }
 
 test("hosted monitor detects, reports, and resolves a 526 incident", async (context) => {
-  const env = environment(context)
   const transport = monitorTransport()
+  const env = environment(context, transport.fetch)
   let nextId = 0
   const options = {
     fetchImpl: transport.fetch,
@@ -163,7 +165,7 @@ test("hosted monitor detects, reports, and resolves a 526 incident", async (cont
   assert.equal(first.errors.length, 0)
   assert.equal(first.analyticsObservations, 1)
   assert.equal(first.probes, 2)
-  assert.ok(first.subrequests <= 45)
+  assert.equal(first.subrequests, 5)
   assert.deepEqual(status.endpoints, { cataloged: 3, open: 1, selected: 2 })
   assert.equal(status.pendingDeliveries, 0)
   assert.equal(status.openIncidents[0].hostname, "example.com")
@@ -217,6 +219,16 @@ test("hosted monitor can be disabled without monitor bindings", async () => {
   assert.throws(
     () => hostedMonitorIsEnabled({ FLEET_MONITOR_ENABLED: "yes" }),
     /binding is invalid/,
+  )
+})
+
+test("hosted monitor requires its Hookrelay service binding", async (context) => {
+  const env = environment(context)
+  delete env.FLEET_MONITOR_HOOKRELAY
+
+  await assert.rejects(
+    runHostedFleetMonitor(env),
+    /Hookrelay service binding is unavailable/,
   )
 })
 

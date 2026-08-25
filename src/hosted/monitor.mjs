@@ -172,6 +172,10 @@ function assertHostedMonitorBindings(env) {
   if (typeof env.CLOUDFLARE_API_TOKEN !== "string" || !env.CLOUDFLARE_API_TOKEN) {
     throw new Error("Hosted Fleet monitor API token is unavailable")
   }
+  if (!env.FLEET_MONITOR_HOOKRELAY
+    || typeof env.FLEET_MONITOR_HOOKRELAY.fetch !== "function") {
+    throw new Error("Hosted Fleet monitor Hookrelay service binding is unavailable")
+  }
   if (typeof env.FLEET_MONITOR_HOOKRELAY_HMAC !== "string"
     || !env.FLEET_MONITOR_HOOKRELAY_HMAC) {
     throw new Error("Hosted Fleet monitor Hookrelay HMAC is unavailable")
@@ -399,7 +403,7 @@ async function probeEndpoints(
 ) {
   const limit = Math.min(
     MAX_PROBES_PER_RUN,
-    Math.max(0, budget.remaining - HOOKRELAY_OUTBOX_BATCH_SIZE),
+    budget.remaining,
   )
   if (limit === 0) return 0
   const endpoints = await readDueHostedMonitorEndpoints(db, accountId, limit)
@@ -424,32 +428,30 @@ function outboxRetryAt(attempts, attemptedAt) {
 async function deliverOutbox(
   db,
   accountId,
-  budget,
+  fetchImpl,
   hookrelayUrl,
   hookrelayHmac,
   attemptedAt,
 ) {
-  const limit = Math.min(HOOKRELAY_OUTBOX_BATCH_SIZE, budget.remaining)
-  if (limit === 0) return { attempted: 0, failed: 0 }
   const rows = await readDueHostedMonitorOutbox(
     db,
     accountId,
     attemptedAt,
-    limit,
+    HOOKRELAY_OUTBOX_BATCH_SIZE,
   )
   let failed = 0
   for (const row of rows) {
     let errorCode = null
     try {
       const signature = await signHookrelayPayload(row.body, hookrelayHmac)
-      const response = await budget.fetch(hookrelayUrl, {
+      const response = await fetchImpl(hookrelayUrl, {
         body: row.body,
         headers: {
           "Content-Type": HOOKRELAY_CONTENT_TYPE,
           [HOOKRELAY_SIGNATURE_HEADER]: `sha256=${signature}`,
         },
         method: "POST",
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       })
       try {
@@ -466,7 +468,6 @@ async function deliverOutbox(
       }
       errorCode = `http-${response.status}`
     } catch (error) {
-      if (error instanceof MonitorSubrequestBudgetError) break
       errorCode = error?.name === "TimeoutError" ? "timeout" : "network"
     }
     failed += 1
@@ -620,7 +621,7 @@ export async function runHostedFleetMonitor(env, options = {}) {
     const deliveries = await deliverOutbox(
       env.FLEET_DB,
       env.FLEET_ACCOUNT_ID,
-      budget,
+      (input, init) => env.FLEET_MONITOR_HOOKRELAY.fetch(input, init),
       hookrelayUrl,
       env.FLEET_MONITOR_HOOKRELAY_HMAC,
       startedAt,
