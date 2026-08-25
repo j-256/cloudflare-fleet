@@ -57,6 +57,7 @@ test("hosted configuration writes portable Wrangler bindings", async (context) =
   const mode = (await fs.stat(configured.outputFile)).mode & 0o777
 
   assert.deepEqual(persisted, configuration)
+  assert.deepEqual(configuration.compatibility_flags, ["global_fetch_strictly_public"])
   assert.equal(configuration.routes[0].pattern, "fleet.example.com")
   assert.equal(configuration.vars.FLEET_READ_ONLY, "true")
   assert.equal(configuration.vars.FLEET_MONITOR_ENABLED, "false")

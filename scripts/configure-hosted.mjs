@@ -13,6 +13,7 @@ const ACCOUNT_ID_PATTERN = /^[a-f0-9]{32}$/i
 const ACCESS_AUD_PATTERN = /^[a-f0-9]{64}$/i
 const DATABASE_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const WORKER_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/
+const PUBLIC_FETCH_COMPATIBILITY_FLAG = "global_fetch_strictly_public"
 
 function optionValue(argv, index, argument) {
   const equals = argument.indexOf("=")
@@ -177,6 +178,7 @@ export async function hostedWranglerConfiguration(options) {
     name: workerName,
     main: "src/hosted/worker.mjs",
     compatibility_date: "2026-08-11",
+    compatibility_flags: [PUBLIC_FETCH_COMPATIBILITY_FLAG],
     workers_dev: false,
     preview_urls: false,
     routes: [{
