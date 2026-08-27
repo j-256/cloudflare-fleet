@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title description">
   <title id="title">Cloudflare Fleet deployment architecture</title>
-  <desc id="description">The same browser application connects through either Cloudflare Access and a Worker or a local loopback broker. The Worker stores state and monitor incidents in D1, both backends call the constrained Cloudflare API, and operator configuration stays outside the published source tree.</desc>
+  <desc id="description">The same browser application connects through either Cloudflare Access and a Worker or a local loopback broker. The Worker stores state in D1, both backends call the constrained Cloudflare API, and operator configuration stays outside the published source tree.</desc>
   <defs>
     <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
       <stop offset="0" stop-color="#122735"/>
@@ -57,14 +57,14 @@
     <rect class="box box-hosted" width="230" height="126" rx="16"/>
     <text x="22" y="32" class="tag">WORKER</text>
     <text x="22" y="65" class="label">Protected backend</text>
-    <text x="22" y="93" class="copy">JWT, API, scheduled monitor</text>
+    <text x="22" y="93" class="copy">JWT, policy, constrained API</text>
   </g>
 
   <g transform="translate(968 90)">
     <rect class="box box-hosted" width="264" height="126" rx="16"/>
     <text x="22" y="32" class="tag">DURABLE STATE</text>
     <text x="22" y="65" class="label">Cloudflare D1</text>
-    <text x="22" y="93" class="copy">Intent, activity, incidents</text>
+    <text x="22" y="93" class="copy">Intent, activity, snapshots</text>
   </g>
 
   <g transform="translate(344 452)">
@@ -92,7 +92,7 @@
   <g transform="translate(644 624)">
     <rect width="588" height="62" rx="14" fill="#1c211c" stroke="#85662e" stroke-width="2"/>
     <text x="20" y="25" class="tag tag-config">IGNORED OPERATOR CONFIGURATION</text>
-    <text x="20" y="47" class="copy">Account, Access, D1, policy, API and Hookrelay secrets</text>
+    <text x="20" y="47" class="copy">Account, Access, D1, policy and API secret</text>
   </g>
 
   <path class="flow-hosted" d="M258 288C298 288 300 205 344 205"/>

@@ -34,13 +34,6 @@ import {
   readHostedOperationActivity,
 } from "./d1-store.mjs"
 import {
-  hostedMonitorIsEnabled,
-  runHostedFleetMonitor,
-} from "./monitor.mjs"
-import {
-  readHostedMonitorStatus,
-} from "./monitor-store.mjs"
-import {
   errorResponse,
   InvalidJsonBodyError,
   javascriptResponse,
@@ -243,25 +236,11 @@ async function handleCache(request, env) {
   return successResponse(null)
 }
 
-async function handleMonitor(request, env) {
-  if (request.method !== HTTP_METHOD.GET) {
-    return errorResponse(405, "Monitor status method is not allowed")
-  }
-  const enabled = hostedMonitorIsEnabled(env)
-  return successResponse(enabled
-    ? {
-        enabled,
-        ...await readHostedMonitorStatus(env.FLEET_DB, env.FLEET_ACCOUNT_ID),
-      }
-    : { enabled })
-}
-
 async function handleApi(request, env) {
   const pathname = new URL(request.url).pathname
   if (pathname === "/api/intent") return handleIntent(request, env)
   if (pathname === "/api/activity") return handleActivity(request, env)
   if (pathname === "/api/cache") return handleCache(request, env)
-  if (pathname === "/api/monitor") return handleMonitor(request, env)
   if (pathname.startsWith("/api/cloudflare/")) {
     return proxyCloudflareRequest(request, {
       accountId: env.FLEET_ACCOUNT_ID,
@@ -321,14 +300,6 @@ export async function fetchHostedFleet(request, env) {
   }
 }
 
-export async function scheduledHostedFleet(controller, env) {
-  return runHostedFleetMonitor(env, {
-    cron: controller.cron,
-    now: new Date(controller.scheduledTime),
-  })
-}
-
 export default {
   fetch: fetchHostedFleet,
-  scheduled: scheduledHostedFleet,
 }

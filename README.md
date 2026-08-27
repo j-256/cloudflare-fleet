@@ -17,7 +17,6 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Separates observed differences from saved fleet intent, acknowledged exceptions, and expected coverage gaps
 - Turns supported exact and forbidden intent into first-class cell, row, and policy alignment reviews
 - Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
-- Detects traffic-backed Cloudflare origin errors and confirms endpoint health through bounded scheduled probes
 - Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
 - Displays targets, before and after values, methods, endpoints, and request bodies before a write
 - Saves pending activity before mutation, verifies authoritative resources afterward, and offers guarded undo only when the inverse is lossless
@@ -50,32 +49,6 @@ The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it t
 
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
 
-### Optional endpoint monitoring
-
-Hosted Fleet can run a read-only detector that invokes one scheduled lane per minute and sends incident transitions to a Hookrelay CloudEvents subscription. Each five-minute cycle assigns one invocation to analytics, one to maintenance, and three to deterministic probe shards. Each selected endpoint normally remains on a five-minute probe cadence. Regenerate the ignored configuration with the ordinary hosted arguments plus `--monitor`, apply the D1 migrations, set the private Hookrelay URL and sender HMAC as encrypted Worker secrets, and deploy:
-
-```sh
-npm run configure:hosted -- \
-  --account-id "$CLOUDFLARE_ACCOUNT_ID" \
-  --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
-  --hostname fleet.example.com \
-  --access-aud "$CLOUDFLARE_ACCESS_AUD" \
-  --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN" \
-  --hookrelay-service hookrelay \
-  --monitor
-
-npm run db:migrate:remote
-npx wrangler secret put FLEET_MONITOR_HOOKRELAY_URL
-npx wrangler secret put FLEET_MONITOR_HOOKRELAY_HMAC
-npm run deploy
-```
-
-The monitor uses one account-wide edge analytics query every five minutes to find HTTP 520 through 526 and 530 responses experienced by real traffic. Automatic non-apex selection requires at least 100 successful or redirect responses during the prior 24 hours, so 4xx-only bot and WAF traffic does not activate an unused hostname. Explicit inclusions cover intentional low-traffic or authentication endpoints. The generated Wrangler configuration enables `global_fetch_strictly_public` so same-zone probes traverse Cloudflare's public front door, while the `FLEET_MONITOR_HOOKRELAY` service binding delivers signed events directly to the configured Hookrelay Worker.
-
-D1 retains catalog and selection changes, failure and recovery candidates, incident history, the analytics cursor, and a retry-safe Hookrelay outbox. Healthy probes against healthy endpoints and repeated failures for an open incident with no pending recovery candidate perform no D1 writes. Workers Logs retain structured lane summaries and failure observations, while platform invocation logs provide CPU and wall time. One origin-path edge observation opens an incident; other 5xx or network failures require two probes, and two successful probes produce recovery. An explicit exclusion suppresses an open incident with a durable reason and does not emit a misleading recovery event. This detector does not use Cloudflare Health Checks or Passive Origin Monitoring, and no monitor path changes Cloudflare or origin configuration.
-
-Open the Access-protected `/api/monitor` endpoint for catalog freshness, the analytics watermark, selected endpoint counts, open and recent incidents, and pending Hookrelay delivery count. Use Workers Observability for lane outcomes, CPU time, wall time, and structured failure records. Add exact `endpointMonitoring.includeHostnames` and `endpointMonitoring.excludeHostnames` lists to the ignored fleet policy when traffic discovery needs an explicit override. Regenerating with `--no-monitor` and deploying removes the managed one-minute Cron Trigger.
-
 ## Local launch
 
 The local launcher requires macOS, Node.js 22 or newer, `jq`, a Chromium-compatible browser, and account credentials in the shell.
@@ -103,7 +76,7 @@ npm run audit -- --deep --fail-on warning
 
 Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
 
-`--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit remains a point-in-time review of every proxied exact hostname; scheduled monitoring deliberately selects a quieter operational subset and keeps incident state across runs.
+`--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit is a point-in-time review of every proxied exact hostname; it does not schedule probes or retain endpoint state.
 
 ## Agent CLI and MCP
 
