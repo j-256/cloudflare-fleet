@@ -175,12 +175,11 @@ npm run mcp</code></pre>
       <p>Run <code>npm run docs:serve</code> to preview the same files at <code>http://127.0.0.1:4173/</code>. The publication check validates every local documentation link and rejects symbolic links so the branch-source Pages build remains compatible.</p>
     </section>
 
-    <section class="section prose" aria-labelledby="standalone-heading">
-      <h2 id="standalone-heading">Create a clean standalone source tree</h2>
-      <p>The private monorepo history can contain files that should never become part of a public repository. Export the project from its tracked publication state instead of carrying that history forward.</p>
-      <pre><code>npm run check:publication
-npm run export:standalone -- --output ../cloudflare-fleet-public</code></pre>
-      <p>The exporter copies regular tracked files, refuses a non-empty destination, and excludes operator state and deployment configuration. It does not initialize a repository, create a remote, or push anything.</p>
+    <section class="section prose" aria-labelledby="publication-heading">
+      <h2 id="publication-heading">Keep the repository safe to publish</h2>
+      <p>Operator state, deployment configuration, live screenshots, and browser traces stay outside version control. Validate the public source tree before proposing a change.</p>
+      <pre><code>npm run check:publication</code></pre>
+      <p>The publication check rejects private operator filenames, machine-local paths, unexpected symbolic links, malformed screenshots, and broken documentation links.</p>
     </section>
 
     <section class="cta" aria-labelledby="deployment-cta-heading">

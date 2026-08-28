@@ -23,6 +23,7 @@ const REQUIRED_FILES = Object.freeze([
   "docs/diagrams/write-flow.svg",
   "docs/index.html",
   "docs/screenshots/alignment-blocked.png",
+  "docs/screenshots/cover.png",
   "docs/screenshots/dashboard-overview.png",
   "docs/screenshots/fleet-intent.png",
   "docs/screenshots/intent-alignment.png",

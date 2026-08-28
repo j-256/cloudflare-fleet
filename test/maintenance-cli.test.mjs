@@ -10,10 +10,6 @@ import {
   parseHostedConfigurationArguments,
 } from "../scripts/configure-hosted.mjs"
 import {
-  parseStandaloneExportArguments,
-  standaloneExportUsage,
-} from "../scripts/export-standalone.mjs"
-import {
   importHostedStateUsage,
   parseImportHostedStateArguments,
 } from "../scripts/import-hosted-state.mjs"
@@ -48,10 +44,6 @@ test("single-purpose maintenance CLIs keep short options equivalent", () => {
     parseCaptureScreenshotsArguments(["--output", "screenshots"]),
   )
   assert.deepEqual(
-    parseStandaloneExportArguments(["-o", "standalone"]),
-    parseStandaloneExportArguments(["--output", "standalone"]),
-  )
-  assert.deepEqual(
     parseImportHostedStateArguments(["-f", "-c", "wrangler.jsonc", "state.json"]),
     parseImportHostedStateArguments(["--force", "--config", "wrangler.jsonc", "state.json"]),
   )
@@ -64,7 +56,6 @@ test("single-purpose maintenance CLIs keep short options equivalent", () => {
 test("maintenance help is explicit and side-effect free to parse", () => {
   const cases = [
     [parseCaptureScreenshotsArguments, captureScreenshotsUsage, /-o, --output/],
-    [parseStandaloneExportArguments, standaloneExportUsage, /-o, --output/],
     [parseImportHostedStateArguments, importHostedStateUsage, /-f, --force/],
     [parseDocumentationServerArguments, documentationServerUsage, /-p, --port/],
   ]
@@ -78,7 +69,6 @@ test("maintenance help is explicit and side-effect free to parse", () => {
 
 test("maintenance CLIs reject unsupported short options", () => {
   assert.throws(() => parseCaptureScreenshotsArguments(["-x"]), /Unknown option: -x/)
-  assert.throws(() => parseStandaloneExportArguments(["-x"]), /Unknown option: -x/)
   assert.throws(() => parseImportHostedStateArguments(["-x"]), /Unknown option: -x/)
   assert.throws(() => parseDocumentationServerArguments(["-x"]), /Usage:/)
 })

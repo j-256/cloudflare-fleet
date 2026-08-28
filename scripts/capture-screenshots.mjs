@@ -98,7 +98,10 @@ export async function capturePublicationScreenshots(options = {}) {
       ...statusDriftZone.surfaces.email.result,
       status: "misconfigured",
     }
-    session = await createDashboardSession({ inventory })
+    session = await createDashboardSession({
+      inventory,
+      now: Date.parse(FIXED_TIME),
+    })
     browser = await chromium.launch({ headless: true })
     const context = await browser.newContext({
       colorScheme: "light",
@@ -115,6 +118,11 @@ export async function capturePublicationScreenshots(options = {}) {
       DESKTOP_VIEWPORT,
       browserErrors,
     )
+    screenshots.push(await capture(
+      overview,
+      outputDirectory,
+      "cover.png",
+    ))
     screenshots.push(await capture(
       overview,
       outputDirectory,

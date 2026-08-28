@@ -558,6 +558,7 @@ export async function createDashboardSession(options = {}) {
     apiToken: options.apiToken || "e2e-api-token",
     cacheDir,
     cloudflareFetch: transport.fetch,
+    now: options.now,
     readOnly: Boolean(options.readOnly),
     runtimeDir,
     sessionId: `e2e-${process.pid}-${randomUUID()}`,

@@ -162,16 +162,15 @@ npm run check:publication
 
 An opt-in live read-only journey is available through `npm run test:e2e:live:read-only`. It requires account credentials, bypasses cached inventory, isolates state and cache, and enforces `GET` at both the broker and test transport. Keep its ignored artifacts private.
 
-## Standalone publication
+## Publication safety
 
-Run the publication gate before creating a public repository:
+Run the publication gate before proposing a public change:
 
 ```sh
 npm run check:publication
-npm run export:standalone -- --output ../cloudflare-fleet-public
 ```
 
-The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. The exporter copies regular tracked files and preserves the canonical relative `CLAUDE.md` link to `AGENTS.md` in an empty directory while excluding operator state and deployment configuration. It does not initialize a repository or create a remote, which allows a new public repository to begin from a clean source snapshot instead of private monorepo history.
+The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. It also requires the public documentation, security guidance, CI workflow, and synthetic product screenshots that make the repository independently useful.
 
 ## Security
 

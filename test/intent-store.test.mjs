@@ -51,6 +51,7 @@ test("intent store starts with an account-scoped empty document", async (context
 test("intent store atomically persists a restrictive revisioned document", async (context) => {
   const directory = await temporaryDirectory(context)
   const file = stateFile(directory)
+  const now = Date.parse("2026-08-12T12:00:00.000Z")
   const document = createEmptyFleetIntentDocument("account-one")
   document.groups.push({
     id: "primary-zones",
@@ -65,13 +66,14 @@ test("intent store atomically persists a restrictive revisioned document", async
     "account-one",
     document.revision,
     document,
+    { now },
   )
   const reread = await readFleetIntentDocument(file, "account-one")
   const entries = await fs.readdir(directory)
 
   assert.deepEqual(reread, saved)
   assert.match(saved.revision, /^[a-f0-9]{64}$/)
-  assert.equal(typeof saved.updatedAt, "string")
+  assert.equal(saved.updatedAt, "2026-08-12T12:00:00.000Z")
   assert.equal((await fs.stat(file)).mode & 0o777, 0o600)
   assert.match(await fs.readFile(file, "utf8"), /^\{\n  "/)
   assert.equal(entries.some((entry) => entry.endsWith(".tmp")), false)

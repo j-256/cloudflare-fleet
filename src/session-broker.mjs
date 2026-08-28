@@ -320,6 +320,7 @@ async function handleFleetIntent(request, response, options) {
       options.accountId,
       payload.expectedRevision,
       payload.document,
+      { now: options.now },
     )
     jsonResponse(response, 200, {
       result: document,

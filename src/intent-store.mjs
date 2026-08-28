@@ -24,8 +24,8 @@ export async function readFleetIntentDocument(stateFile, accountId) {
   return state.intent
 }
 
-function nextPersistedDocument(document) {
-  const updatedAt = new Date().toISOString()
+function nextPersistedDocument(document, now = Date.now()) {
+  const updatedAt = new Date(now).toISOString()
   const content = {
     ...structuredClone(document),
     revision: "",
@@ -45,6 +45,7 @@ export async function persistFleetIntentDocument(
   accountId,
   expectedRevision,
   document,
+  options = {},
 ) {
   if (!isFleetIntentDocument(document, accountId)) {
     throw new TypeError("Fleet intent document is invalid for this account")
@@ -59,7 +60,7 @@ export async function persistFleetIntentDocument(
       if (current.intent.revision !== expectedRevision) {
         throw new FleetIntentRevisionConflictError(current.intent)
       }
-      const intent = nextPersistedDocument(document)
+      const intent = nextPersistedDocument(document, options.now)
       if (!isFleetIntentDocument(intent, accountId)) {
         throw new TypeError("Fleet intent could not be serialized")
       }

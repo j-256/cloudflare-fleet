@@ -2,8 +2,22 @@
   "name": "cloudflare-fleet",
   "version": "0.1.0",
   "private": true,
-  "description": "A self-hosted control plane for auditing and aligning Cloudflare zones",
+  "description": "A self-hosted control plane for auditing and safely aligning Cloudflare zones",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/j-256/cloudflare-fleet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/j-256/cloudflare-fleet/issues"
+  },
+  "keywords": [
+    "cloudflare",
+    "cloudflare-workers",
+    "configuration-management",
+    "control-plane",
+    "mcp-server"
+  ],
   "type": "module",
   "bin": {
     "cloudflare-fleet": "src/cli.mjs"
@@ -21,7 +35,6 @@
     "deploy": "wrangler deploy",
     "docs:serve": "node scripts/serve-docs.mjs",
     "dev:hosted": "wrangler dev",
-    "export:standalone": "node scripts/export-standalone.mjs",
     "fleet": "node src/cli.mjs",
     "mcp": "node src/mcp.mjs",
     "screenshots": "node scripts/capture-screenshots.mjs",
