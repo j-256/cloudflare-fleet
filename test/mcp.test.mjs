@@ -12,6 +12,7 @@ import {
   createFleetMcpServer,
   runFleetMcpMain,
 } from "../src/mcp.mjs"
+import { createEmptyFleetIntentDocument } from "../src/fleet-intent.mjs"
 
 const DIGEST = `sha256:${"a".repeat(64)}`
 const DIFFERENT_DIGEST = `sha256:${"b".repeat(64)}`
@@ -35,6 +36,65 @@ const NORMALIZED_BATCH_SELECTORS = Object.freeze([
     zoneIds: ["zone-one"],
   }),
 ])
+const INTENT_DOCUMENT = Object.freeze(
+  createEmptyFleetIntentDocument("account-one"),
+)
+const CHANGE = Object.freeze({
+  desired: "on",
+  kind: "zone-setting-update",
+  settingId: "always_use_https",
+  zoneId: "zone-one",
+})
+const TOOL_NAMES = Object.freeze([
+  "audit_fleet",
+  "get_fleet_intent",
+  "plan_fleet_intent",
+  "apply_fleet_intent",
+  "list_alignment_candidates",
+  "plan_alignment",
+  "apply_alignment",
+  "apply_alignments",
+  "plan_fleet_change",
+  "apply_fleet_change",
+  "list_activity",
+  "plan_activity_undo",
+  "apply_activity_undo",
+])
+
+function reviewedPlan(request, overrides = {}) {
+  return {
+    accountId: "account-one",
+    planSet: {
+      digest: DIGEST,
+      plans: [{
+        operations: [{
+          body: { value: "on" },
+          currentValue: { value: "off" },
+          label: "Enable Always Use HTTPS",
+          method: "PATCH",
+          path: "zones/zone-one/settings/always_use_https",
+        }],
+        zoneId: "zone-one",
+        zoneName: "one.example",
+      }],
+      preview: [{
+        body: { value: "on" },
+        currentValue: { value: "off" },
+        label: "Enable Always Use HTTPS",
+        method: "PATCH",
+        path: "zones/zone-one/settings/always_use_https",
+        zoneId: "zone-one",
+        zoneName: "one.example",
+      }],
+      request,
+      validatedAt: "2026-08-28T00:00:00.000Z",
+    },
+    reason: "One bounded write prepared",
+    schemaVersion: 1,
+    status: "planned",
+    ...overrides,
+  }
+}
 
 function plannedAlignment(overrides = {}) {
   return {
@@ -59,6 +119,7 @@ function plannedAlignment(overrides = {}) {
       plans: [{
         operations: [{
           body: { value: "on" },
+          currentValue: { value: "off" },
           label: "Enable Always Use HTTPS",
           method: "PATCH",
           path: "zones/zone-one/settings/always_use_https",
@@ -68,6 +129,7 @@ function plannedAlignment(overrides = {}) {
       }],
       preview: [{
         body: { value: "on" },
+        currentValue: { value: "off" },
         label: "Enable Always Use HTTPS",
         method: "PATCH",
         path: "zones/zone-one/settings/always_use_https",
@@ -197,15 +259,30 @@ function verifiedAlignmentBatch() {
 
 function serviceFixture(overrides = {}) {
   const calls = {
+    applyChange: [],
+    applyIntent: [],
+    applyUndo: [],
     apply: [],
     applyBatch: [],
+    getIntent: 0,
     listActivity: 0,
     listAlignments: 0,
     plan: [],
     planBatch: [],
+    planChange: [],
+    planIntent: [],
+    planUndo: [],
   }
   const service = {
     accountId: "account-one",
+    async applyActivityUndo(activityId, digest) {
+      calls.applyUndo.push({ activityId, digest })
+      return {
+        ...verifiedAlignment(),
+        activityId,
+        selector: undefined,
+      }
+    },
     async applyAlignment(selector, digest) {
       calls.apply.push({ digest, selector })
       return overrides.applyResult || verifiedAlignment()
@@ -213,6 +290,39 @@ function serviceFixture(overrides = {}) {
     async applyAlignments(selectors, digest) {
       calls.applyBatch.push({ digest, selectors })
       return overrides.applyBatchResult || verifiedAlignmentBatch()
+    },
+    async applyChange(change, digest) {
+      calls.applyChange.push({ change, digest })
+      return {
+        ...verifiedAlignment(),
+        change,
+        selector: undefined,
+        title: "Update zone setting",
+      }
+    },
+    async applyIntent(document, digest) {
+      calls.applyIntent.push({ digest, document })
+      return {
+        accountId: "account-one",
+        applied: true,
+        document: {
+          ...document,
+          revision: "c".repeat(64),
+          updatedAt: "2026-08-28T00:00:00.000Z",
+        },
+        planDigest: digest,
+        schemaVersion: 1,
+        status: "saved",
+      }
+    },
+    async getIntent() {
+      calls.getIntent += 1
+      return {
+        accountId: "account-one",
+        document: INTENT_DOCUMENT,
+        schemaVersion: 1,
+        status: "ok",
+      }
     },
     async listActivity() {
       calls.listActivity += 1
@@ -249,6 +359,42 @@ function serviceFixture(overrides = {}) {
     async planAlignments(selectors) {
       calls.planBatch.push(selectors)
       return overrides.planBatchResult || plannedAlignmentBatch()
+    },
+    async planActivityUndo(activityId) {
+      calls.planUndo.push(activityId)
+      return reviewedPlan({
+        activityId,
+        activityRevision: "activity-one",
+        kind: "activity-undo",
+      }, {
+        activityId,
+        entry: { id: activityId, title: "Enable HTTPS" },
+      })
+    },
+    async planChange(change) {
+      calls.planChange.push(change)
+      return reviewedPlan(change, {
+        change,
+        title: "Update zone setting",
+      })
+    },
+    async planIntent(document) {
+      calls.planIntent.push(document)
+      const result = reviewedPlan({
+        document,
+        expectedRevision: document.revision,
+        kind: "fleet-intent-replace",
+      }, {
+        diff: {
+          acknowledgements: { added: [], changed: [], removed: [] },
+          coverageExpectations: { added: [], changed: [], removed: [] },
+          groups: { added: [], changed: [], removed: [] },
+          policies: { added: [], changed: [], removed: [] },
+        },
+      })
+      result.planSet.plans = []
+      result.planSet.preview = []
+      return result
     },
     stateFile: "/unused/fleet-state.json",
   }
@@ -318,14 +464,7 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
 
   assert.deepEqual(
     result.tools.map((entry) => entry.name),
-    [
-      "audit_fleet",
-      "list_alignment_candidates",
-      "plan_alignment",
-      "apply_alignment",
-      "apply_alignments",
-      "list_activity",
-    ],
+    TOOL_NAMES,
   )
   const apply = result.tools.find((entry) => entry.name === "apply_alignment")
   assert.deepEqual(apply.annotations, {
@@ -335,7 +474,7 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
     readOnlyHint: false,
   })
   assert.deepEqual(apply.inputSchema.required, ["planDigest", "selector"])
-  assert.deepEqual(apply.outputSchema.required, ["schemaVersion", "status"])
+  assert.match(JSON.stringify(apply.outputSchema), /execution/)
   const applyBatch = result.tools.find((entry) => entry.name === "apply_alignments")
   assert.deepEqual(applyBatch.inputSchema.required, ["selectors"])
   assert.equal(
@@ -344,16 +483,43 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   )
   const activity = result.tools.find((entry) => entry.name === "list_activity")
   assert.equal(activity.annotations.openWorldHint, false)
+  assert.match(JSON.stringify(activity.outputSchema), /"title"/)
+  const candidates = result.tools.find(
+    (entry) => entry.name === "list_alignment_candidates",
+  )
+  assert.match(JSON.stringify(candidates.outputSchema), /"assessment"/)
+  const change = result.tools.find((entry) => entry.name === "plan_fleet_change")
+  assert.doesNotMatch(JSON.stringify(change.inputSchema), /"method"|"path"/)
+  assert.match(JSON.stringify(change.outputSchema), /"operations"/)
+  const intentApply = result.tools.find((entry) => entry.name === "apply_fleet_intent")
+  assert.equal(intentApply.annotations.openWorldHint, false)
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
 })
 
 test("MCP read tools return structured service and audit results", async (context) => {
   const { auditCalls, calls, client } = await connectedFixture(context)
 
-  const [audit, candidates, plan, activity] = await Promise.all([
+  const [
+    audit,
+    intent,
+    intentPlan,
+    candidates,
+    plan,
+    changePlan,
+    activity,
+    undoPlan,
+  ] = await Promise.all([
     client.callTool({
       arguments: { deep: true },
       name: "audit_fleet",
+    }),
+    client.callTool({
+      arguments: {},
+      name: "get_fleet_intent",
+    }),
+    client.callTool({
+      arguments: { document: INTENT_DOCUMENT },
+      name: "plan_fleet_intent",
     }),
     client.callTool({
       arguments: {},
@@ -364,20 +530,40 @@ test("MCP read tools return structured service and audit results", async (contex
       name: "plan_alignment",
     }),
     client.callTool({
+      arguments: { change: CHANGE },
+      name: "plan_fleet_change",
+    }),
+    client.callTool({
       arguments: {},
       name: "list_activity",
+    }),
+    client.callTool({
+      arguments: { activityId: "activity-one" },
+      name: "plan_activity_undo",
     }),
   ])
 
   assert.equal(audit.structuredContent.report.summary.findings, 0)
   assert.equal(auditCalls[0].deep, true)
+  assert.equal(intent.structuredContent.document.accountId, "account-one")
+  assert.equal(intentPlan.structuredContent.planSet.digest, DIGEST)
   assert.equal(candidates.structuredContent.status, "ok")
   assert.equal(plan.structuredContent.planSet.digest, DIGEST)
   assert.match(plan.content[0].text, new RegExp(DIGEST))
   assert.equal(activity.structuredContent.status, "ok")
+  assert.equal(changePlan.structuredContent.planSet.digest, DIGEST)
+  assert.equal(undoPlan.structuredContent.activityId, "activity-one")
+  assert.deepEqual(
+    JSON.parse(plan.content[1].text),
+    plan.structuredContent,
+  )
+  assert.equal(calls.getIntent, 1)
   assert.equal(calls.listAlignments, 1)
   assert.equal(calls.listActivity, 1)
   assert.deepEqual(calls.plan, [SELECTOR])
+  assert.deepEqual(calls.planChange, [CHANGE])
+  assert.deepEqual(calls.planIntent, [INTENT_DOCUMENT])
+  assert.deepEqual(calls.planUndo, ["activity-one"])
 })
 
 test("MCP apply elicits one explicit plan approval before invoking the write service", async (context) => {
@@ -413,6 +599,7 @@ test("MCP apply elicits one explicit plan approval before invoking the write ser
   assert.match(request.params.message, new RegExp(DIGEST))
   assert.match(request.params.message, /PATCH zones\/zone-one\/settings\/always_use_https/)
   assert.match(request.params.message, /Body: \{"value":"on"\}/)
+  assert.match(request.params.message, /Current: \{"value":"off"\}/)
   assert.deepEqual(request.params.requestedSchema.required, ["approve"])
   assert.equal(
     Object.hasOwn(request.params.requestedSchema.properties, "confirmDigest"),
@@ -541,6 +728,53 @@ test("MCP batch apply stops without writing when confirmation is declined", asyn
   assert.equal(calls.applyBatch.length, 0)
 })
 
+test("MCP reviewed mutation tools bind intent, direct changes, and undo to signed confirmation", async (context) => {
+  const messages = []
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async (request) => {
+      messages.push(request.params.message)
+      return {
+        action: "accept",
+        content: { approve: true },
+      }
+    },
+  })
+
+  const intent = await client.callTool({
+    arguments: {
+      document: INTENT_DOCUMENT,
+      planDigest: DIGEST,
+    },
+    name: "apply_fleet_intent",
+  })
+  const change = await client.callTool({
+    arguments: {
+      change: CHANGE,
+      planDigest: DIGEST,
+    },
+    name: "apply_fleet_change",
+  })
+  const undo = await client.callTool({
+    arguments: {
+      activityId: "activity-one",
+      planDigest: DIGEST,
+    },
+    name: "apply_activity_undo",
+  })
+
+  assert.equal(intent.structuredContent.status, "saved")
+  assert.equal(change.structuredContent.status, "verified")
+  assert.equal(undo.structuredContent.status, "verified")
+  assert.equal(calls.applyIntent.length, 1)
+  assert.equal(calls.applyChange.length, 1)
+  assert.equal(calls.applyUndo.length, 1)
+  assert.equal(messages.length, 3)
+  assert.match(messages[0], /Exact request:/)
+  assert.match(messages[0], /No Cloudflare API writes/)
+  assert.match(messages[1], /zone-setting-update/)
+  assert.match(messages[2], /activity-one/)
+})
+
 test("MCP tool errors redact the Cloudflare API token", async (context) => {
   const { client } = await connectedFixture(context, {
     serviceOverrides: {
@@ -631,14 +865,7 @@ test("MCP stdio entrypoint negotiates the modern protocol without stdout noise",
 
   assert.deepEqual(
     result.tools.map((entry) => entry.name),
-    [
-      "audit_fleet",
-      "list_alignment_candidates",
-      "plan_alignment",
-      "apply_alignment",
-      "apply_alignments",
-      "list_activity",
-    ],
+    TOOL_NAMES,
   )
   assert.match(diagnostics, /stdio server ready/)
   assert.doesNotMatch(diagnostics, new RegExp(SECRET))

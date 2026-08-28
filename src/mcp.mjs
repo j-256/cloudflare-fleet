@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import process from "node:process"
 
 import {
@@ -19,22 +19,32 @@ import {
   normalizeAlignmentSelectors,
 } from "./alignment-service.mjs"
 import { collectFleetAudit } from "./audit.mjs"
+import {
+  FLEET_CLI_EXIT_CODE,
+  FleetConfigurationError,
+} from "./cli-contract.mjs"
 import { isMainModule } from "./entrypoint.mjs"
 import {
   createLocalFleetService,
   FLEET_SERVICE_SCHEMA_VERSION,
 } from "./fleet-service.mjs"
+import {
+  activityUndoInputSchema,
+  digestSchema,
+  fleetChangeSchema,
+  fleetIntentDocumentSchema,
+  identifierSchema,
+} from "./interface-schemas.mjs"
 import { stableString } from "./normalize.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
+import { PACKAGE_VERSION } from "./package-metadata.mjs"
+import { createProgressReporter } from "./progress.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 
 const MCP_SERVER_NAME = "cloudflare-fleet"
-const MCP_SERVER_VERSION = "0.1.0"
-const CONFIRMATION_KEY = "confirm_alignment"
+const CONFIRMATION_KEY = "confirm_action"
 const REQUEST_STATE_TTL_SECONDS = 600
 
-const identifierSchema = z.string().trim().min(1).max(256)
-const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const policySelectorSchema = z.strictObject({
   policyId: identifierSchema.describe("Fleet intent policy identifier"),
 })
@@ -61,6 +71,21 @@ const applyInputSchema = z.strictObject({
 const batchApplyInputSchema = z.strictObject({
   selectors: selectorsSchema.describe("Distinct alignment selectors to review and apply together"),
 })
+const intentInputSchema = z.strictObject({
+  document: fleetIntentDocumentSchema.describe("Complete desired fleet intent document based on get_fleet_intent"),
+})
+const intentApplyInputSchema = intentInputSchema.extend({
+  planDigest: digestSchema.describe("Exact digest returned by plan_fleet_intent"),
+})
+const changeInputSchema = z.strictObject({
+  change: fleetChangeSchema,
+})
+const changeApplyInputSchema = changeInputSchema.extend({
+  planDigest: digestSchema.describe("Exact digest returned by plan_fleet_change"),
+})
+const undoApplyInputSchema = activityUndoInputSchema.extend({
+  planDigest: digestSchema.describe("Exact digest returned by plan_activity_undo"),
+})
 const confirmationSchema = z.strictObject({
   approve: z.boolean().describe("Set true only after reviewing the exact plan shown above"),
 })
@@ -68,7 +93,7 @@ const confirmationRequestSchema = Object.freeze({
   properties: {
     approve: {
       description: "Set true only after reviewing the exact plan shown above",
-      title: "Approve alignment",
+      title: "Approve reviewed action",
       type: "boolean",
     },
   },
@@ -85,10 +110,165 @@ const batchRequestStateSchema = z.strictObject({
   planDigest: digestSchema,
   selectors: selectorsSchema,
 })
-const toolOutputSchema = z.looseObject({
+const reviewedRequestStateSchema = z.strictObject({
+  accountId: identifierSchema,
+  action: identifierSchema,
+  fingerprint: digestSchema,
+  planDigest: digestSchema,
+})
+const errorOutputSchema = z.looseObject({
+  error: z.looseObject({
+    message: z.string(),
+    name: z.string(),
+  }),
   schemaVersion: z.number().int(),
   status: z.string(),
 })
+const accountOutputSchema = z.looseObject({
+  accountId: identifierSchema,
+  schemaVersion: z.number().int(),
+  status: z.string(),
+})
+const operationOutputSchema = z.looseObject({
+  body: z.unknown().optional(),
+  currentValue: z.unknown().optional(),
+  label: z.string(),
+  method: z.string(),
+  path: z.string(),
+})
+const operationPlanOutputSchema = z.looseObject({
+  id: z.string().optional(),
+  kind: z.string().optional(),
+  operations: z.array(operationOutputSchema),
+  summary: z.string().optional(),
+  zoneId: identifierSchema,
+  zoneName: z.string(),
+})
+const operationPreviewOutputSchema = operationOutputSchema.extend({
+  zoneId: identifierSchema,
+  zoneName: z.string(),
+})
+const planSetOutputSchema = z.looseObject({
+  digest: digestSchema,
+  plans: z.array(operationPlanOutputSchema),
+  preview: z.array(operationPreviewOutputSchema),
+  request: z.unknown().optional(),
+  validatedAt: z.string(),
+})
+const assessmentOutputSchema = z.looseObject({
+  actionableCount: z.number().int().nonnegative(),
+  available: z.boolean(),
+  blockers: z.array(z.looseObject({
+    reason: z.string(),
+    zoneId: identifierSchema,
+    zoneName: z.string(),
+  })),
+  reason: z.string(),
+  targetCount: z.number().int().nonnegative(),
+  targetZones: z.array(z.looseObject({
+    zoneId: identifierSchema,
+    zoneName: z.string(),
+  })),
+})
+const candidateOutputSchema = z.looseObject({
+  assessment: assessmentOutputSchema,
+  facet: z.looseObject({
+    category: z.string(),
+    key: z.string(),
+    label: z.string(),
+    phase: z.string(),
+  }),
+  policyId: identifierSchema.nullable(),
+  scope: z.string(),
+  selector: z.looseObject({
+    kind: z.string(),
+  }),
+})
+const verificationGuardOutputSchema = z.looseObject({
+  canonical: z.string(),
+  summary: z.string(),
+  target: z.looseObject({
+    kind: z.string(),
+    zoneId: identifierSchema,
+  }),
+  value: z.unknown(),
+})
+const activityEntryOutputSchema = z.looseObject({
+  completedAt: z.string().nullable(),
+  error: z.string().nullable(),
+  execution: z.looseObject({
+    completed: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  }).nullable(),
+  id: identifierSchema,
+  inverse: z.looseObject({
+    available: z.boolean(),
+    plans: z.array(operationPlanOutputSchema),
+    reason: z.string(),
+  }).nullable(),
+  plans: z.array(operationPlanOutputSchema),
+  startedAt: z.string(),
+  status: z.string(),
+  title: z.string(),
+  undoOf: identifierSchema.nullable(),
+  validatedAt: z.string(),
+  verification: z.array(verificationGuardOutputSchema),
+})
+const auditOutputSchema = z.union([
+  z.looseObject({
+    report: z.looseObject({
+      accountId: identifierSchema,
+      findings: z.array(z.unknown()),
+      summary: z.looseObject({
+        findings: z.number().int(),
+        zones: z.number().int(),
+      }),
+    }),
+    schemaVersion: z.number().int(),
+    status: z.string(),
+  }),
+  errorOutputSchema,
+])
+const candidatesOutputSchema = z.union([
+  accountOutputSchema.extend({
+    candidates: z.array(candidateOutputSchema),
+    summary: z.looseObject({
+      candidates: z.number().int(),
+    }),
+  }),
+  errorOutputSchema,
+])
+const planOutputSchema = z.union([
+  accountOutputSchema.extend({
+    planSet: planSetOutputSchema.nullable(),
+    reason: z.string(),
+  }),
+  errorOutputSchema,
+])
+const applyOutputSchema = z.union([
+  accountOutputSchema.extend({
+    applied: z.boolean().optional(),
+    execution: z.looseObject({
+      completed: z.number().int(),
+      total: z.number().int(),
+    }).optional(),
+    reason: z.string().optional(),
+  }),
+  errorOutputSchema,
+])
+const activityOutputSchema = z.union([
+  accountOutputSchema.extend({
+    entries: z.array(activityEntryOutputSchema),
+    revision: z.string(),
+  }),
+  errorOutputSchema,
+])
+const intentOutputSchema = z.union([
+  accountOutputSchema.extend({
+    document: fleetIntentDocumentSchema,
+  }),
+  errorOutputSchema,
+])
 
 const READ_ONLY_EXTERNAL_ANNOTATIONS = Object.freeze({
   destructiveHint: false,
@@ -108,6 +288,12 @@ const APPLY_ANNOTATIONS = Object.freeze({
   openWorldHint: true,
   readOnlyHint: false,
 })
+const APPLY_LOCAL_ANNOTATIONS = Object.freeze({
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: false,
+  readOnlyHint: false,
+})
 
 function jsonClone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -115,7 +301,10 @@ function jsonClone(value) {
 
 function toolResult(result, summary, options = {}) {
   return {
-    content: [{ type: "text", text: summary }],
+    content: [
+      { type: "text", text: summary },
+      { type: "text", text: JSON.stringify(result) },
+    ],
     ...(options.isError ? { isError: true } : {}),
     structuredContent: jsonClone(result),
   }
@@ -159,17 +348,6 @@ function safeToolHandler(handler, secrets) {
       const result = errorEnvelope(error, secrets)
       return toolResult(result, result.error.message, { isError: true })
     }
-  }
-}
-
-function progressReporter(stderr, toolName) {
-  let lastMessage = ""
-  return (progress) => {
-    const message = progress.message
-      || `${progress.stage || "working"} ${progress.completed}/${progress.total}`
-    if (message === lastMessage) return
-    lastMessage = message
-    stderr.write(`[mcp:${toolName}] ${message}\n`)
   }
 }
 
@@ -217,13 +395,119 @@ function activitySummary(result) {
   return `Fleet activity contains ${result.entries.length} entries`
 }
 
-function confirmationMessage(plan) {
-  const operations = plan.planSet.preview.map((operation, index) => [
+function intentSummary(result) {
+  return `Fleet intent revision ${result.document.revision || "empty"} contains ${result.document.groups.length} groups and ${result.document.policies.length} policies`
+}
+
+function intentPlanSummary(result) {
+  if (result.status !== "planned") {
+    return `Fleet intent persistence is ${result.status}: ${result.reason}`
+  }
+  const changes = Object.values(result.diff).reduce((total, difference) => (
+    total
+      + difference.added.length
+      + difference.changed.length
+      + difference.removed.length
+  ), 0)
+  return `Fleet intent persistence plan ${result.planSet.digest} contains ${changes} collection changes and no Cloudflare API writes`
+}
+
+function reviewedPlanSummary(result, label) {
+  if (result.status !== "planned") {
+    return `${label} is ${result.status}: ${result.reason}`
+  }
+  return `${label} plan ${result.planSet.digest} contains ${operationCount(result.planSet)} Cloudflare operations`
+}
+
+function reviewedApplySummary(result, label) {
+  if (!result.execution) {
+    if (result.applied) return `${label} completed with status ${result.status}`
+    return `${label} is ${result.status}: ${result.reason || "no mutation was required"}`
+  }
+  return `${label} ${result.status}: ${result.execution.completed}/${result.execution.total} operations completed and ${result.verification.length} resources reread`
+}
+
+function inputFingerprint(value) {
+  return `sha256:${createHash("sha256")
+    .update(stableString(value))
+    .digest("hex")}`
+}
+
+function confirmationOperation(operation, index) {
+  return [
     `${index + 1}. ${operation.method} ${operation.path}`,
     `Zone: ${operation.zoneName} (${operation.zoneId})`,
     `Change: ${operation.label}`,
-    `Body: ${JSON.stringify(operation.body)}`,
-  ].join("\n"))
+    ...(Object.hasOwn(operation, "currentValue")
+      ? [`Current: ${JSON.stringify(operation.currentValue)}`]
+      : []),
+    ...(Object.hasOwn(operation, "body")
+      ? [`Body: ${JSON.stringify(operation.body)}`]
+      : []),
+  ].join("\n")
+}
+
+function reviewedConfirmationMessage(title, plan) {
+  const operations = plan.planSet.preview.map(confirmationOperation)
+  const operationSection = operations.length > 0
+    ? operations
+    : ["No Cloudflare API writes; this action persists the exact request locally."]
+  return [
+    `Approve ${title} for account ${plan.accountId}?`,
+    `Plan digest: ${plan.planSet.digest}`,
+    `Validated: ${plan.planSet.validatedAt}`,
+    `Exact request: ${JSON.stringify(plan.planSet.request)}`,
+    "",
+    ...operationSection,
+    "",
+    "Set approve to true only after reviewing the exact request and every operation.",
+  ].join("\n")
+}
+
+function reviewedPlanChanged(plan, expectedDigest, action) {
+  return {
+    accountId: plan.accountId,
+    action,
+    actualDigest: plan.planSet?.digest || null,
+    expectedDigest,
+    reason: "The fresh reviewed plan does not match the requested approval digest",
+    schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+    status: "plan-changed",
+  }
+}
+
+function reviewedConfirmationOutcome(accountId, action, status, reason) {
+  return {
+    accountId,
+    action,
+    reason,
+    schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+    status,
+  }
+}
+
+function declinedConfirmationReason(subject, action) {
+  const outcome = action === "cancel" ? "cancelled" : "declined"
+  return `${subject} confirmation was ${outcome}`
+}
+
+function validReviewedRequestState(
+  value,
+  accountId,
+  action,
+  fingerprint,
+  planDigest,
+) {
+  const parsed = reviewedRequestStateSchema.safeParse(value)
+  return parsed.success
+    && parsed.data.accountId === accountId
+    && parsed.data.action === action
+    && parsed.data.fingerprint === fingerprint
+    && parsed.data.planDigest === planDigest
+}
+
+function confirmationMessage(plan) {
+  const operations = plan.planSet.preview.map(confirmationOperation)
   return [
     `Approve Cloudflare Fleet alignment for account ${plan.accountId}?`,
     `Facet: ${plan.facet.label}`,
@@ -240,12 +524,7 @@ function batchConfirmationMessage(plan) {
   const scopes = plan.alignments.map((alignment) => (
     `- ${alignment.facet?.label || "Unknown facet"}: ${alignment.status}`
   ))
-  const operations = plan.planSet.preview.map((operation, index) => [
-    `${index + 1}. ${operation.method} ${operation.path}`,
-    `Zone: ${operation.zoneName} (${operation.zoneId})`,
-    `Change: ${operation.label}`,
-    `Body: ${JSON.stringify(operation.body)}`,
-  ].join("\n"))
+  const operations = plan.planSet.preview.map(confirmationOperation)
   return [
     `Approve Cloudflare Fleet alignment batch for account ${plan.accountId}?`,
     `Plan digest: ${plan.planSet.digest}`,
@@ -321,6 +600,7 @@ export function createFleetMcpServer(options = {}) {
   const stderr = options.stderr || process.stderr
   const service = options.service || createLocalFleetService({
     environment,
+    policyFile: options.policyFile,
     stateFile: options.stateFile,
   })
   const auditFleet = options.auditFleet || ((auditOptions) => collectFleetAudit({
@@ -339,16 +619,128 @@ export function createFleetMcpServer(options = {}) {
   const server = new McpServer(
     {
       name: MCP_SERVER_NAME,
-      version: MCP_SERVER_VERSION,
+      version: PACKAGE_VERSION,
     },
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Inspect Cloudflare Fleet with read-only tools, prepare exact intent alignment plans, and use apply_alignments to review several selectors through one confirmation. Every apply tool performs a fresh plan check before writes.",
+      instructions: "Use read and plan tools before mutations. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
   const secrets = [environment.CLOUDFLARE_API_TOKEN]
+
+  function reviewedMutationHandler(configuration) {
+    return safeToolHandler(async (input, context) => {
+      const request = configuration.request(input)
+      const planDigest = input.planDigest
+      const fingerprint = inputFingerprint(request)
+      const requestState = context.mcpReq.requestState()
+      if (requestState !== undefined) {
+        if (!validReviewedRequestState(
+          requestState,
+          service.accountId,
+          configuration.action,
+          fingerprint,
+          planDigest,
+        )) {
+          const result = reviewedConfirmationOutcome(
+            service.accountId,
+            configuration.action,
+            "confirmation-invalid",
+            "Signed confirmation state does not match this account, action, request, or plan digest",
+          )
+          return toolResult(result, result.reason, { isError: true })
+        }
+        const response = inputResponse(
+          context.mcpReq.inputResponses,
+          CONFIRMATION_KEY,
+        )
+        if (response.kind === "elicit"
+          && ["cancel", "decline"].includes(response.action)) {
+          const result = reviewedConfirmationOutcome(
+            service.accountId,
+            configuration.action,
+            "confirmation-declined",
+            declinedConfirmationReason(configuration.title, response.action),
+          )
+          return toolResult(result, result.reason)
+        }
+        const confirmation = acceptedContent(
+          context.mcpReq.inputResponses,
+          CONFIRMATION_KEY,
+          confirmationSchema,
+        )
+        if (!confirmation || confirmation.approve !== true) {
+          const result = reviewedConfirmationOutcome(
+            service.accountId,
+            configuration.action,
+            "confirmation-invalid",
+            "Confirmation must explicitly approve the displayed request and plan",
+          )
+          return toolResult(result, result.reason, { isError: true })
+        }
+        const result = await configuration.apply(request, planDigest, {
+          onProgress: createProgressReporter(
+            stderr,
+            `[mcp:${configuration.toolName}]`,
+          ),
+          signal: context.mcpReq.signal,
+        })
+        return toolResult(
+          result,
+          reviewedApplySummary(result, configuration.title),
+          { isError: resultIsExecutionError(result) },
+        )
+      }
+      if (context.mcpReq.inputResponses !== undefined) {
+        const result = reviewedConfirmationOutcome(
+          service.accountId,
+          configuration.action,
+          "confirmation-invalid",
+          "Confirmation responses require signed request state",
+        )
+        return toolResult(result, result.reason, { isError: true })
+      }
+
+      const plan = await configuration.plan(request, {
+        onProgress: createProgressReporter(
+          stderr,
+          `[mcp:${configuration.toolName}]`,
+        ),
+        signal: context.mcpReq.signal,
+      })
+      if (plan.status !== "planned") {
+        return toolResult(
+          plan,
+          reviewedPlanSummary(plan, configuration.title),
+        )
+      }
+      if (plan.planSet.digest !== planDigest) {
+        const result = reviewedPlanChanged(
+          plan,
+          planDigest,
+          configuration.action,
+        )
+        return toolResult(result, result.reason)
+      }
+      const signedState = await requestStateCodec.mint({
+        accountId: service.accountId,
+        action: configuration.action,
+        fingerprint,
+        planDigest,
+      }, context)
+      return inputRequired({
+        inputRequests: {
+          [CONFIRMATION_KEY]: inputRequired.elicit({
+            message: reviewedConfirmationMessage(configuration.title, plan),
+            requestedSchema: confirmationRequestSchema,
+          }),
+        },
+        requestState: signedState,
+      })
+    }, secrets)
+  }
 
   server.registerTool(
     "audit_fleet",
@@ -358,13 +750,13 @@ export function createFleetMcpServer(options = {}) {
       inputSchema: z.strictObject({
         deep: z.boolean().default(false),
       }),
-      outputSchema: toolOutputSchema,
+      outputSchema: auditOutputSchema,
       title: "Audit Cloudflare fleet",
     },
     safeToolHandler(async ({ deep }, context) => {
       const report = await auditFleet({
         deep,
-        onProgress: progressReporter(stderr, "audit_fleet"),
+        onProgress: createProgressReporter(stderr, "[mcp:audit_fleet]"),
         signal: context.mcpReq.signal,
       })
       const result = {
@@ -377,17 +769,76 @@ export function createFleetMcpServer(options = {}) {
   )
 
   server.registerTool(
+    "get_fleet_intent",
+    {
+      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      description: "Read the complete revisioned fleet intent document for editing without reading or writing Cloudflare.",
+      inputSchema: emptyInputSchema,
+      outputSchema: intentOutputSchema,
+      title: "Get fleet intent",
+    },
+    safeToolHandler(async () => {
+      const result = await service.getIntent()
+      return toolResult(result, intentSummary(result))
+    }, secrets),
+  )
+
+  server.registerTool(
+    "plan_fleet_intent",
+    {
+      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      description: "Validate a complete desired fleet intent document against its current account and revision, then return an exact digest-bound collection diff without persisting it.",
+      inputSchema: intentInputSchema,
+      outputSchema: planOutputSchema,
+      title: "Plan fleet intent persistence",
+    },
+    safeToolHandler(async ({ document }) => {
+      const result = await service.planIntent(document)
+      return toolResult(
+        result,
+        intentPlanSummary(result),
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "apply_fleet_intent",
+    {
+      annotations: APPLY_LOCAL_ANNOTATIONS,
+      description: "Persist only the exact reviewed complete fleet intent document after signed interactive confirmation, exclusive locking, fresh revision validation, and digest comparison.",
+      inputSchema: intentApplyInputSchema,
+      outputSchema: applyOutputSchema,
+      title: "Apply reviewed fleet intent",
+    },
+    reviewedMutationHandler({
+      action: "fleet-intent-apply",
+      apply: (document, digest, commandOptions) => (
+        service.applyIntent(document, digest, commandOptions)
+      ),
+      plan: (document, commandOptions) => (
+        service.planIntent(document, commandOptions)
+      ),
+      request: (input) => input.document,
+      title: "fleet intent persistence",
+      toolName: "apply_fleet_intent",
+    }),
+  )
+
+  server.registerTool(
     "list_alignment_candidates",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
       description: "Read complete live fleet inventory and list intent scopes that are aligned, actionable, or blocked.",
       inputSchema: emptyInputSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: candidatesOutputSchema,
       title: "List fleet alignment candidates",
     },
     safeToolHandler(async (_input, context) => {
       const result = await service.listAlignments({
-        onProgress: progressReporter(stderr, "list_alignment_candidates"),
+        onProgress: createProgressReporter(
+          stderr,
+          "[mcp:list_alignment_candidates]",
+        ),
         signal: context.mcpReq.signal,
       })
       return toolResult(result, candidateSummary(result))
@@ -400,12 +851,12 @@ export function createFleetMcpServer(options = {}) {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
       description: "Prepare an exact intent alignment from fresh full and scoped Cloudflare reads without writing.",
       inputSchema: selectorInputSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: planOutputSchema,
       title: "Plan fleet intent alignment",
     },
     safeToolHandler(async ({ selector }, context) => {
       const result = await service.planAlignment(selector, {
-        onProgress: progressReporter(stderr, "plan_alignment"),
+        onProgress: createProgressReporter(stderr, "[mcp:plan_alignment]"),
         signal: context.mcpReq.signal,
       })
       return toolResult(result, planSummary(result))
@@ -418,7 +869,7 @@ export function createFleetMcpServer(options = {}) {
       annotations: APPLY_ANNOTATIONS,
       description: "Apply only the exact reviewed alignment plan after interactive plan confirmation, fresh replanning, pending journaling, sequential writes, and scoped verification.",
       inputSchema: applyInputSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: applyOutputSchema,
       title: "Apply reviewed fleet alignment",
     },
     safeToolHandler(async ({ planDigest, selector: requestedSelector }, context) => {
@@ -449,7 +900,7 @@ export function createFleetMcpServer(options = {}) {
             service.accountId,
             selector,
             "confirmation-declined",
-            `Alignment confirmation was ${response.action}d`,
+            declinedConfirmationReason("Alignment", response.action),
           )
           return toolResult(result, result.reason)
         }
@@ -468,7 +919,10 @@ export function createFleetMcpServer(options = {}) {
           return toolResult(result, result.reason, { isError: true })
         }
         const result = await service.applyAlignment(selector, planDigest, {
-          onProgress: progressReporter(stderr, "apply_alignment"),
+          onProgress: createProgressReporter(
+            stderr,
+            "[mcp:apply_alignment]",
+          ),
           signal: context.mcpReq.signal,
         })
         return toolResult(result, applySummary(result), {
@@ -486,7 +940,10 @@ export function createFleetMcpServer(options = {}) {
       }
 
       const plan = await service.planAlignment(selector, {
-        onProgress: progressReporter(stderr, "apply_alignment"),
+        onProgress: createProgressReporter(
+          stderr,
+          "[mcp:apply_alignment]",
+        ),
         signal: context.mcpReq.signal,
       })
       if (plan.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
@@ -519,7 +976,7 @@ export function createFleetMcpServer(options = {}) {
       annotations: APPLY_ANNOTATIONS,
       description: "Plan and apply several alignment selectors through one interactive review, one signed batch digest, a fresh composed replan, pending journaling, sequential writes, and scoped verification.",
       inputSchema: batchApplyInputSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: applyOutputSchema,
       title: "Apply reviewed fleet alignment batch",
     },
     safeToolHandler(async ({ selectors: requestedSelectors }, context) => {
@@ -549,7 +1006,7 @@ export function createFleetMcpServer(options = {}) {
           && ["cancel", "decline"].includes(response.action)) {
           const result = {
             accountId: service.accountId,
-            reason: `Alignment confirmation was ${response.action}d`,
+            reason: declinedConfirmationReason("Alignment", response.action),
             schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
             selectors,
             status: "confirmation-declined",
@@ -575,7 +1032,10 @@ export function createFleetMcpServer(options = {}) {
           selectors,
           state.planDigest,
           {
-            onProgress: progressReporter(stderr, "apply_alignments"),
+            onProgress: createProgressReporter(
+              stderr,
+              "[mcp:apply_alignments]",
+            ),
             signal: context.mcpReq.signal,
           },
         )
@@ -595,7 +1055,10 @@ export function createFleetMcpServer(options = {}) {
       }
 
       const plan = await service.planAlignments(selectors, {
-        onProgress: progressReporter(stderr, "apply_alignments"),
+        onProgress: createProgressReporter(
+          stderr,
+          "[mcp:apply_alignments]",
+        ),
         signal: context.mcpReq.signal,
       })
       if (plan.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
@@ -619,18 +1082,112 @@ export function createFleetMcpServer(options = {}) {
   )
 
   server.registerTool(
+    "plan_fleet_change",
+    {
+      annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description: "Prepare a bounded direct operator change from purpose-built fresh Cloudflare reads and safe dashboard plan builders without writing. Raw HTTP methods and paths are not accepted.",
+      inputSchema: changeInputSchema,
+      outputSchema: planOutputSchema,
+      title: "Plan bounded fleet change",
+    },
+    safeToolHandler(async ({ change }, context) => {
+      const result = await service.planChange(change, {
+        onProgress: createProgressReporter(
+          stderr,
+          "[mcp:plan_fleet_change]",
+        ),
+        signal: context.mcpReq.signal,
+      })
+      return toolResult(
+        result,
+        reviewedPlanSummary(result, "Fleet change"),
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "apply_fleet_change",
+    {
+      annotations: APPLY_ANNOTATIONS,
+      description: "Apply only an exact reviewed bounded fleet change after signed interactive confirmation, exclusive locking, fresh scoped replanning, pending journaling, sequential writes, and verification.",
+      inputSchema: changeApplyInputSchema,
+      outputSchema: applyOutputSchema,
+      title: "Apply reviewed bounded fleet change",
+    },
+    reviewedMutationHandler({
+      action: "fleet-change-apply",
+      apply: (change, digest, commandOptions) => (
+        service.applyChange(change, digest, commandOptions)
+      ),
+      plan: (change, commandOptions) => (
+        service.planChange(change, commandOptions)
+      ),
+      request: (input) => input.change,
+      title: "bounded fleet change",
+      toolName: "apply_fleet_change",
+    }),
+  )
+
+  server.registerTool(
     "list_activity",
     {
       annotations: READ_ONLY_LOCAL_ANNOTATIONS,
       description: "List durable local operation activity newest first without reading or writing Cloudflare.",
       inputSchema: emptyInputSchema,
-      outputSchema: toolOutputSchema,
+      outputSchema: activityOutputSchema,
       title: "List fleet operation activity",
     },
     safeToolHandler(async () => {
       const result = await service.listActivity()
       return toolResult(result, activitySummary(result))
     }, secrets),
+  )
+
+  server.registerTool(
+    "plan_activity_undo",
+    {
+      annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description: "Prepare a guarded inverse only for a verified reversible activity entry whose recorded post-write state still matches fresh live Cloudflare reads.",
+      inputSchema: activityUndoInputSchema,
+      outputSchema: planOutputSchema,
+      title: "Plan guarded activity undo",
+    },
+    safeToolHandler(async ({ activityId }, context) => {
+      const result = await service.planActivityUndo(activityId, {
+        onProgress: createProgressReporter(
+          stderr,
+          "[mcp:plan_activity_undo]",
+        ),
+        signal: context.mcpReq.signal,
+      })
+      return toolResult(
+        result,
+        reviewedPlanSummary(result, "Guarded activity undo"),
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "apply_activity_undo",
+    {
+      annotations: APPLY_ANNOTATIONS,
+      description: "Apply a guarded inverse after signed interactive confirmation, exclusive locking, fresh drift checks before review and execution, pending journaling, sequential writes, and verification. Undo entries never create an implicit redo chain.",
+      inputSchema: undoApplyInputSchema,
+      outputSchema: applyOutputSchema,
+      title: "Apply guarded activity undo",
+    },
+    reviewedMutationHandler({
+      action: "activity-undo-apply",
+      apply: (activityId, digest, commandOptions) => (
+        service.applyActivityUndo(activityId, digest, commandOptions)
+      ),
+      plan: (activityId, commandOptions) => (
+        service.planActivityUndo(activityId, commandOptions)
+      ),
+      request: (input) => input.activityId,
+      title: "guarded activity undo",
+      toolName: "apply_activity_undo",
+    }),
   )
 
   return server
@@ -654,10 +1211,10 @@ export async function runFleetMcpMain(options = {}) {
   const environment = options.environment || process.env
   const stderr = options.stderr || process.stderr
   const stdout = options.stdout || process.stdout
-  const { fleetUsage, parseFleetArguments } = await import("./cli.mjs")
+  const { fleetMcpUsage, parseFleetArguments } = await import("./cli.mjs")
   const parsed = parseFleetArguments(["mcp", ...argv])
-  if (parsed.command === "help") {
-    stdout.write(`${fleetUsage()}\n`)
+  if (parsed.command === "mcp-help") {
+    stdout.write(`${fleetMcpUsage()}\n`)
     return null
   }
   const runServer = options.runServer || runFleetMcpServer
@@ -673,6 +1230,9 @@ if (isMainModule(import.meta.url)) {
   runFleetMcpMain().catch((error) => {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`[mcp] ${redact(message, [process.env.CLOUDFLARE_API_TOKEN])}\n`)
-    process.exitCode = 1
+    process.exitCode = error?.name === "CliUsageError"
+      || error instanceof FleetConfigurationError
+      ? FLEET_CLI_EXIT_CODE.USAGE
+      : FLEET_CLI_EXIT_CODE.ERROR
   })
 }
