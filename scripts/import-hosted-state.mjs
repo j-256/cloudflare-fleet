@@ -1,75 +1,90 @@
 import { readFile } from "node:fs/promises"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 
 import {
   isFleetStateDocument,
 } from "../src/fleet-state.mjs"
+import {
+  FLEET_CLI_EXIT_CODE,
+  FleetConfigurationError,
+} from "../src/cli-contract.mjs"
+import { CliUsageError, parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
+import {
+  defaultFleetStateFile,
+  defaultWranglerConfigurationFile,
+} from "../src/operator-paths.mjs"
 
-const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const DEFAULT_STATE_FILE = path.join(PROJECT_ROOT, "state.json")
-const DEFAULT_WRANGLER_CONFIG = path.join(PROJECT_ROOT, "wrangler.jsonc")
 const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4/"
+
+function configuredStateFile(environment) {
+  const configured = environment.CLOUDFLARE_FLEET_STATE_FILE
+  if (!configured) return defaultFleetStateFile(environment)
+  if (!path.isAbsolute(configured)) {
+    throw new FleetConfigurationError(
+      "CLOUDFLARE_FLEET_STATE_FILE must be an absolute path",
+    )
+  }
+  return path.resolve(configured)
+}
 
 export function importHostedStateUsage() {
   return [
-    "Usage: import-hosted-state.mjs [options] [STATE_FILE]",
+    "NAME",
+    "  cloudflare-fleet hosted import-state - import local fleet state into hosted D1",
     "",
-    "Options:",
-    "  -f, --force         Replace existing hosted state",
-    "  -c, --config FILE   Read Wrangler configuration from FILE",
+    "SYNOPSIS",
+    "  cloudflare-fleet hosted import-state [OPTIONS] [STATE_FILE]",
+    "",
+    "OPTIONS",
+    "  -f, --force         Delete and replace existing hosted state after review",
+    "  -c, --config FILE   Read the D1 database identifier from Wrangler FILE",
     "  -h, --help          Show this help",
+    "",
+    "ENVIRONMENT",
+    "  CLOUDFLARE_ACCOUNT_ID          Required Cloudflare account identifier",
+    "  CLOUDFLARE_API_TOKEN           Required account-level Cloudflare API token",
+    "  CLOUDFLARE_FLEET_D1_DATABASE_ID Optional D1 database identifier",
+    "  CLOUDFLARE_FLEET_STATE_FILE    Optional absolute fleet-state JSON file",
+    "  XDG_STATE_HOME                 Optional absolute base for default fleet state",
+    "",
+    "FILES",
+    "  STATE_FILE defaults to the Fleet file in the standard user state directory",
+    "  Wrangler configuration defaults to wrangler.jsonc in the working directory",
+    "  The command sends the validated document to the configured remote D1 database",
+    "",
+    "EXIT STATUS",
+    "  0  State was imported and verified",
+    "  1  Import or verification failed",
+    "  2  Command usage was invalid",
   ].join("\n")
 }
 
-export function parseImportHostedStateArguments(values) {
-  let configFile = DEFAULT_WRANGLER_CONFIG
-  let force = false
-  let help = false
-  let stateFile = DEFAULT_STATE_FILE
-  let stateFileSet = false
-  for (let index = 0; index < values.length; index += 1) {
-    const value = values[index]
-    if (value === "-h" || value === "--help") {
-      help = true
-      continue
-    }
-    if (value === "-f" || value === "--force") {
-      force = true
-      continue
-    }
-    if (value === "-c" || value === "--config" || value.startsWith("--config=")) {
-      const configured = value.startsWith("--config=")
-        ? value.slice("--config=".length)
-        : values[index + 1]
-      if (!configured || configured.startsWith("-")) {
-        throw new Error("--config requires a value")
-      }
-      configFile = path.resolve(configured)
-      if (!value.startsWith("--config=")) index += 1
-      continue
-    }
-    if (value.startsWith("-")) {
-      throw new Error(`Unknown option: ${value}`)
-    }
-    if (stateFileSet) {
-      throw new Error(importHostedStateUsage())
-    }
-    stateFile = path.resolve(value)
-    stateFileSet = true
-  }
+export function parseImportHostedStateArguments(
+  values,
+  environment = process.env,
+) {
+  const options = parseCliOptions(values, [
+    { default: defaultWranglerConfigurationFile(), key: "configFile", name: "config", short: "c", value: true },
+    { default: false, name: "force", short: "f", value: false },
+    { default: false, name: "help", short: "h", value: false },
+  ], { maxPositionals: 1 })
   return {
-    configFile,
-    force,
-    help,
-    stateFile,
+    configFile: path.resolve(options.configFile),
+    force: options.force,
+    help: options.help,
+    stateFile: options.help && !options.positionals[0]
+      ? null
+      : path.resolve(
+          options.positionals[0]
+            || configuredStateFile(environment),
+        ),
   }
 }
 
-function requiredEnvironment(name) {
-  const value = process.env[name]
-  if (!value) throw new Error(`${name} is required`)
+function requiredEnvironment(name, environment) {
+  const value = environment[name]
+  if (!value) throw new FleetConfigurationError(`${name} is required`)
   return value
 }
 
@@ -228,12 +243,20 @@ function importBatch(state, force) {
 }
 
 export async function importHostedState(options = {}) {
-  const accountId = options.accountId || requiredEnvironment("CLOUDFLARE_ACCOUNT_ID")
-  const apiToken = options.apiToken || requiredEnvironment("CLOUDFLARE_API_TOKEN")
+  const environment = options.environment || process.env
+  const accountId = options.accountId
+    || requiredEnvironment("CLOUDFLARE_ACCOUNT_ID", environment)
+  const apiToken = options.apiToken
+    || requiredEnvironment("CLOUDFLARE_API_TOKEN", environment)
   const databaseId = options.databaseId
-    || process.env.CLOUDFLARE_FLEET_D1_DATABASE_ID
-    || await databaseIdFromWrangler(options.configFile || DEFAULT_WRANGLER_CONFIG)
-  const state = await readState(options.stateFile || DEFAULT_STATE_FILE, accountId)
+    || environment.CLOUDFLARE_FLEET_D1_DATABASE_ID
+    || await databaseIdFromWrangler(
+      options.configFile || defaultWranglerConfigurationFile(),
+    )
+  const state = await readState(
+    options.stateFile || configuredStateFile(environment),
+    accountId,
+  )
   const counts = await hostedStateCounts(accountId, apiToken, databaseId)
   const occupied = Object.values(counts).some((count) => Number(count) > 0)
   if (occupied && !options.force) {
@@ -255,22 +278,32 @@ export async function importHostedState(options = {}) {
   }
 }
 
+export async function runImportHostedStateCommand(options = {}) {
+  const argv = options.argv || process.argv.slice(2)
+  const environment = options.environment || process.env
+  const stdout = options.stdout || process.stdout
+  const parsed = parseImportHostedStateArguments(argv, environment)
+  if (parsed.help) {
+    stdout.write(`${importHostedStateUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  const result = await importHostedState({ ...parsed, environment })
+  stdout.write(`${JSON.stringify(result)}\n`)
+  options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+  return result
+}
+
 if (isMainModule(import.meta.url)) {
-  let parsed
-  try {
-    parsed = parseImportHostedStateArguments(process.argv.slice(2))
-  } catch (error) {
+  runImportHostedStateCommand({
+    onExitCode(exitCode) {
+      process.exitCode = exitCode
+    },
+  }).catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-    process.exitCode = 1
-  }
-  if (parsed) {
-    if (parsed.help) {
-      process.stdout.write(`${importHostedStateUsage()}\n`)
-    } else importHostedState(parsed).then((result) => {
-      process.stdout.write(`${JSON.stringify(result)}\n`)
-    }).catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-      process.exitCode = 1
-    })
-  }
+    process.exitCode = error instanceof CliUsageError
+      || error instanceof FleetConfigurationError
+      ? FLEET_CLI_EXIT_CODE.USAGE
+      : FLEET_CLI_EXIT_CODE.ERROR
+  })
 }

@@ -37,10 +37,12 @@ CACHE_DIR=""
 CACHE_RESULT=""
 INTENT_RESULT=""
 STATE_FILE=""
-DEFAULT_STATE_FILENAME="state.json"
+STATE_FILE_OPTION=""
+STATE_BASE=""
 POLICY_FILE=""
+POLICY_FILE_OPTION=""
 POLICY_RESULT=""
-DEFAULT_POLICY_FILENAME="fleet-policy.json"
+POLICY_BASE=""
 CACHE_HIT="false"
 CACHE_FRESH="false"
 CACHE_LOADED_AT=""
@@ -83,24 +85,30 @@ _cloudflare_fleet_self_dir() {
 }
 
 SCRIPT_DIR="$(_cloudflare_fleet_self_dir)"
-SCRIPT_COMMAND="$(basename "${BASH_SOURCE[0]}")"
-case "$SCRIPT_COMMAND" in
-    bash|sh|zsh|dash|"")
-        SCRIPT_COMMAND="$SCRIPT_NAME"
-        ;;
-esac
+if [ -n "${CLOUDFLARE_FLEET_COMMAND_NAME:-}" ]; then
+    SCRIPT_COMMAND="$CLOUDFLARE_FLEET_COMMAND_NAME"
+else
+    SCRIPT_COMMAND="$(basename "${BASH_SOURCE[0]}")"
+    case "$SCRIPT_COMMAND" in
+        bash|sh|zsh|dash|"")
+            SCRIPT_COMMAND="$SCRIPT_NAME"
+            ;;
+    esac
+fi
 
 show_help() {
     echo "NAME"
     echo "  $SCRIPT_NAME - launch the local Cloudflare fleet control plane"
     echo "SYNOPSIS"
-    echo "  $SCRIPT_COMMAND [-r | -w] [-f | -c] [-d PORT]"
+    echo "  $SCRIPT_COMMAND [-r | -w] [-f | -c] [-d PORT] [-s PATH] [-p PATH]"
     echo "OPTIONS"
     echo "  -r, --read-only        Disable every write control"
     echo "  -w, --write            Enable previewed and confirmed write controls (default)"
     echo "  -f, --fresh            Bypass the cached snapshot for this launch"
     echo "  -c, --clear-cache      Clear cached snapshots before loading live"
     echo "  -d, --debug-port PORT  Open an isolated direct-client session with Chrome DevTools"
+    echo "  -s, --state-file PATH  Read and persist fleet state at PATH"
+    echo "  -p, --policy-file PATH Read fleet policy exceptions from PATH"
     echo "  -h, --help             Show this help text"
     echo "ENVIRONMENT"
     echo "  CLOUDFLARE_API_TOKEN   Required account-level Cloudflare API token"
@@ -110,10 +118,57 @@ show_help() {
     echo "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file"
     echo "  CLOUDFLARE_FLEET_CHROME_APP Optional Chromium application bundle"
     echo "  CLOUDFLARE_FLEET_CHROME Optional path to a Chromium-compatible browser"
+    echo "  XDG_STATE_HOME         Optional absolute base for default fleet state"
+    echo "  XDG_CONFIG_HOME        Optional absolute base for default fleet policy"
+    echo "FILES"
+    echo "  State defaults below XDG_STATE_HOME or ~/.local/state/cloudflare-fleet"
+    echo "  Policy defaults below XDG_CONFIG_HOME or ~/.config/cloudflare-fleet"
+    echo "  Runtime credentials are written mode 0600 below the macOS temporary directory"
+    echo "DEPENDENCIES"
+    echo "  macOS, Node.js 22 or newer, jq, curl, plutil, launchctl, open, and Chrome"
+    echo "EXIT STATUS"
+    echo "  0  Session launched or help displayed"
+    echo "  1  Session launch failed"
+    echo "  2  Command usage or configuration precondition was invalid"
+    echo "  3  A required local dependency was unavailable"
 }
 
 error() {
     echo "[ERR][$SCRIPT_NAME] $*" >&2
+}
+
+info() {
+    echo "[INF][$SCRIPT_NAME] $*" >&2
+}
+
+_expand_short_opts() {
+    # $1 = string of short-opt letters that take a value (e.g. "nXHd"); "" for flag-only scripts
+    # $2..$N = "$@"
+    # Populates _EXPANDED; caller does: set -- "${_EXPANDED[@]}"; unset _EXPANDED
+    local value_opts="$1"; shift
+    _EXPANDED=()
+    local passthru=""
+    local arg
+    local rest
+    local c
+    for arg in "$@"; do
+        if [ -n "$passthru" ]; then _EXPANDED+=("$arg"); continue; fi
+        case "$arg" in
+            --)       passthru=1; _EXPANDED+=("$arg") ;;
+            --*|-|"") _EXPANDED+=("$arg") ;;
+            -[a-zA-Z]?*)
+                rest="${arg#-}"
+                while [ -n "$rest" ]; do
+                    c="${rest%"${rest#?}"}"; rest="${rest#?}"
+                    _EXPANDED+=("-$c")
+                    case "$value_opts" in *"$c"*)
+                        [ -n "$rest" ] && _EXPANDED+=("$rest")
+                        rest="" ;;
+                    esac
+                done ;;
+            *)        _EXPANDED+=("$arg") ;;
+        esac
+    done
 }
 
 cleanup() {
@@ -283,8 +338,20 @@ start_session_watcher() {
     /bin/launchctl bootstrap "$WATCHER_DOMAIN" "$WATCHER_PLIST"
 }
 
+_expand_short_opts "dps" "$@"
+set -- "${_EXPANDED[@]}"; unset _EXPANDED
+
+PASSTHROUGH=false
 while [ "$#" -gt 0 ]; do
+    if [ "$PASSTHROUGH" = true ]; then
+        error "Unexpected argument: $1"
+        exit 2
+    fi
     case "$1" in
+        --)
+            PASSTHROUGH=true
+            shift
+            ;;
         -r|--read-only)
             if [ "$MODE_OPTION" = "write" ]; then
                 error "--read-only and --write cannot be combined"
@@ -324,6 +391,46 @@ while [ "$#" -gt 0 ]; do
             DEBUG_PORT="$2"
             shift 2
             ;;
+        --debug-port=*)
+            DEBUG_PORT="${1#--debug-port=}"
+            if [ -z "$DEBUG_PORT" ]; then
+                error "--debug-port requires a value"
+                exit 2
+            fi
+            shift
+            ;;
+        -s|--state-file)
+            if [ "$#" -lt 2 ]; then
+                error "--state-file requires a value"
+                exit 2
+            fi
+            STATE_FILE_OPTION="$2"
+            shift 2
+            ;;
+        --state-file=*)
+            STATE_FILE_OPTION="${1#--state-file=}"
+            if [ -z "$STATE_FILE_OPTION" ]; then
+                error "--state-file requires a value"
+                exit 2
+            fi
+            shift
+            ;;
+        -p|--policy-file)
+            if [ "$#" -lt 2 ]; then
+                error "--policy-file requires a value"
+                exit 2
+            fi
+            POLICY_FILE_OPTION="$2"
+            shift 2
+            ;;
+        --policy-file=*)
+            POLICY_FILE_OPTION="${1#--policy-file=}"
+            if [ -z "$POLICY_FILE_OPTION" ]; then
+                error "--policy-file requires a value"
+                exit 2
+            fi
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -337,12 +444,22 @@ done
 
 if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
     error "CLOUDFLARE_API_TOKEN is unset"
-    exit 4
+    exit 2
 fi
 
 if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
     error "CLOUDFLARE_ACCOUNT_ID is unset"
-    exit 4
+    exit 2
+fi
+
+if [ "$(uname -s 2>/dev/null || true)" != "Darwin" ]; then
+    error "macOS is required"
+    exit 3
+fi
+
+if [ ! -x /bin/launchctl ] || [ ! -x /usr/bin/open ]; then
+    error "macOS launchctl and open are required"
+    exit 3
 fi
 
 if [ -z "$CHROME_APP" ]; then
@@ -383,8 +500,8 @@ if ! command -v node >/dev/null 2>&1; then
     exit 3
 fi
 NODE_BINARY="$(command -v node)"
-if ! "$NODE_BINARY" -e 'process.exit(typeof globalThis.fetch === "function" && typeof globalThis.AbortSignal?.timeout === "function" ? 0 : 1)'; then
-    error "Node.js must provide built-in fetch and AbortSignal.timeout"
+if ! "$NODE_BINARY" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'; then
+    error "Node.js 22 or newer is required"
     exit 3
 fi
 if [ -n "$DEBUG_PORT" ] && ! "$NODE_BINARY" -e 'process.exit(typeof globalThis.WebSocket === "function" ? 0 : 1)'; then
@@ -414,56 +531,106 @@ fi
 RUNTIME_BASE="${TMPDIR:-/tmp}"
 RUNTIME_BASE="${RUNTIME_BASE%/}"
 
-if [ -n "${CLOUDFLARE_FLEET_STATE_FILE:-}" ]; then
+if [ -n "$STATE_FILE_OPTION" ]; then
+    case "$STATE_FILE_OPTION" in
+        /*)
+            STATE_FILE="$STATE_FILE_OPTION"
+            ;;
+        *)
+            STATE_FILE="$(pwd -P)/$STATE_FILE_OPTION"
+            ;;
+    esac
+elif [ -n "${CLOUDFLARE_FLEET_STATE_FILE:-}" ]; then
     case "$CLOUDFLARE_FLEET_STATE_FILE" in
         /*)
             STATE_FILE="$CLOUDFLARE_FLEET_STATE_FILE"
             ;;
         *)
             error "CLOUDFLARE_FLEET_STATE_FILE must be an absolute path"
-            exit 3
+            exit 2
             ;;
     esac
 else
-    STATE_FILE="$SCRIPT_DIR/$DEFAULT_STATE_FILENAME"
+    if [ -n "${XDG_STATE_HOME:-}" ]; then
+        case "$XDG_STATE_HOME" in
+            /*)
+                STATE_BASE="${XDG_STATE_HOME%/}"
+                ;;
+            *)
+                error "XDG_STATE_HOME must be an absolute path"
+                exit 2
+                ;;
+        esac
+    elif [ -n "${HOME:-}" ]; then
+        STATE_BASE="${HOME%/}/.local/state"
+    else
+        error "HOME is required when XDG_STATE_HOME is unset"
+        exit 2
+    fi
+    STATE_FILE="$STATE_BASE/cloudflare-fleet/state.json"
 fi
 
 case "$STATE_FILE" in
     /|*/)
-        error "CLOUDFLARE_FLEET_STATE_FILE must name a file"
-        exit 3
+        error "The fleet state path must name a file"
+        exit 2
         ;;
 esac
 
 if [ -d "$STATE_FILE" ]; then
-    error "CLOUDFLARE_FLEET_STATE_FILE points to a directory"
-    exit 3
+    error "The fleet state path points to a directory"
+    exit 2
 fi
 
-if [ -n "${CLOUDFLARE_FLEET_POLICY_FILE:-}" ]; then
+if [ -n "$POLICY_FILE_OPTION" ]; then
+    case "$POLICY_FILE_OPTION" in
+        /*)
+            POLICY_FILE="$POLICY_FILE_OPTION"
+            ;;
+        *)
+            POLICY_FILE="$(pwd -P)/$POLICY_FILE_OPTION"
+            ;;
+    esac
+elif [ -n "${CLOUDFLARE_FLEET_POLICY_FILE:-}" ]; then
     case "$CLOUDFLARE_FLEET_POLICY_FILE" in
         /*)
             POLICY_FILE="$CLOUDFLARE_FLEET_POLICY_FILE"
             ;;
         *)
             error "CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path"
-            exit 3
+            exit 2
             ;;
     esac
 else
-    POLICY_FILE="$SCRIPT_DIR/$DEFAULT_POLICY_FILENAME"
+    if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+        case "$XDG_CONFIG_HOME" in
+            /*)
+                POLICY_BASE="${XDG_CONFIG_HOME%/}"
+                ;;
+            *)
+                error "XDG_CONFIG_HOME must be an absolute path"
+                exit 2
+                ;;
+        esac
+    elif [ -n "${HOME:-}" ]; then
+        POLICY_BASE="${HOME%/}/.config"
+    else
+        error "HOME is required when XDG_CONFIG_HOME is unset"
+        exit 2
+    fi
+    POLICY_FILE="$POLICY_BASE/cloudflare-fleet/fleet-policy.json"
 fi
 
 case "$POLICY_FILE" in
     /|*/)
-        error "CLOUDFLARE_FLEET_POLICY_FILE must name a file"
-        exit 3
+        error "The fleet policy path must name a file"
+        exit 2
         ;;
 esac
 
 if [ -d "$POLICY_FILE" ]; then
-    error "CLOUDFLARE_FLEET_POLICY_FILE points to a directory"
-    exit 3
+    error "The fleet policy path points to a directory"
+    exit 2
 fi
 
 if [ -n "${CLOUDFLARE_FLEET_CACHE_DIR:-}" ]; then
@@ -509,22 +676,22 @@ POLICY_RESULT="$("$NODE_BINARY" "$SCRIPT_DIR/src/fleet-policy-store.mjs" prepare
     "$POLICY_FILE" "$RUNTIME_DIR/policy.js")"
 
 if [ "$(printf '%s' "$INTENT_RESULT" | jq -r '.policies')" -gt 0 ]; then
-    echo "[INF][$SCRIPT_NAME] Fleet intent loaded from project state"
+    info "Fleet intent loaded from durable operator state"
 fi
 if [ "$(printf '%s' "$POLICY_RESULT" | jq -r '.emailDnsRecordExceptions')" -gt 0 ]; then
-    echo "[INF][$SCRIPT_NAME] Fleet policy exceptions loaded from operator configuration"
+    info "Fleet policy exceptions loaded from operator configuration"
 fi
 
 if [ "$CACHE_HIT" = true ]; then
     if [ "$CACHE_FRESH" = true ]; then
-        echo "[INF][$SCRIPT_NAME] Cached snapshot $CACHE_LOADED_AT will render immediately; full refresh is explicit"
+        info "Cached snapshot $CACHE_LOADED_AT will render immediately; full refresh is explicit"
     else
-        echo "[INF][$SCRIPT_NAME] Cached snapshot $CACHE_LOADED_AT exceeds the ${CACHE_MAX_AGE_HOURS}-hour freshness window; it will render immediately while a full audit refreshes it"
+        info "Cached snapshot $CACHE_LOADED_AT exceeds the ${CACHE_MAX_AGE_HOURS}-hour freshness window; it will render immediately while a full audit refreshes it"
     fi
 elif [ "$CACHE_MODE" = "$CACHE_MODE_CLEAR" ]; then
-    echo "[INF][$SCRIPT_NAME] Cached snapshots cleared; loading live state"
+    info "Cached snapshots cleared; loading live state"
 elif [ "$CACHE_MODE" = "$CACHE_MODE_FRESH" ]; then
-    echo "[INF][$SCRIPT_NAME] Cache bypassed; loading live state"
+    info "Cache bypassed; loading live state"
 fi
 
 if [ -z "$DEBUG_PORT" ]; then
@@ -576,7 +743,7 @@ if [ -z "$DEBUG_PORT" ]; then
         if [ -s "$BROKER_STATE_LOG" ]; then
             awk '/state =|pid =|last exit code/' "$BROKER_STATE_LOG" >&2 || true
         fi
-        exit 5
+        exit 1
     fi
 
     SESSION_URL="$(jq -r '.sessionUrl // empty' "$BROKER_READY")"
@@ -584,7 +751,7 @@ if [ -z "$DEBUG_PORT" ]; then
     case "$BROKER_REPORTED_PID" in
         ""|*[!0-9]*)
             error "The loopback session broker reported an invalid process identifier"
-            exit 5
+            exit 1
             ;;
     esac
     BROKER_PID="$BROKER_REPORTED_PID"
@@ -593,11 +760,11 @@ if [ -z "$DEBUG_PORT" ]; then
             ;;
         *)
             error "The loopback session broker reported an unexpected URL"
-            exit 5
+            exit 1
             ;;
     esac
 
-    echo "[INF][$SCRIPT_NAME] Opening protected $SESSION_MODE session in an existing Chrome tab"
+    info "Opening protected $SESSION_MODE session in an existing Chrome tab"
     if [ -n "$CHROME_APP" ]; then
         /usr/bin/open -a "$CHROME_APP" "$SESSION_URL"
     else
@@ -608,12 +775,12 @@ if [ -z "$DEBUG_PORT" ]; then
         if [ -s "$BROKER_LOG" ]; then
             tail -n 12 "$BROKER_LOG" >&2
         fi
-        exit 5
+        exit 1
     fi
 
     BROKER_PID=""
     trap - EXIT INT TERM
-    echo "[INF][$SCRIPT_NAME] Session ready; the launcher has exited and the tab remains $SESSION_MODE"
+    echo "Session ready; the launcher has exited and the tab remains $SESSION_MODE"
     exit 0
 fi
 
@@ -649,7 +816,7 @@ fi
 
 CHROME_ARGS+=("$SESSION_URL")
 
-echo "[INF][$SCRIPT_NAME] Opening protected $SESSION_MODE debug session in an isolated Chrome window"
+info "Opening protected $SESSION_MODE debug session in an isolated Chrome window"
 if [ -n "$CHROME_APP" ]; then
     /usr/bin/open -n -a "$CHROME_APP" --stdin /dev/null --stdout "$CHROME_LOG" --stderr "$CHROME_LOG" --args "${CHROME_ARGS[@]}"
 else
@@ -659,14 +826,14 @@ fi
 
 if ! wait_for_devtools_port; then
     error "Chrome did not expose its local debugging endpoint"
-    exit 5
+    exit 1
 fi
 
 resolve_chrome_pid
 
 if [ -z "$CHROME_PID" ]; then
     error "Chrome process could not be resolved for the session watcher"
-    exit 5
+    exit 1
 fi
 
 if ! wait_for_session_ready; then
@@ -674,7 +841,7 @@ if ! wait_for_session_ready; then
     if [ -s "$CHROME_LOG" ]; then
         tail -n 12 "$CHROME_LOG" >&2
     fi
-    exit 5
+    exit 1
 fi
 
 /bin/rm "$RUNTIME_DIR/auth.js"
@@ -685,4 +852,4 @@ fi
 CHROME_PID=""
 trap - EXIT INT TERM
 
-echo "[INF][$SCRIPT_NAME] Session ready; the launcher has exited and the page remains $SESSION_MODE"
+echo "Session ready; the launcher has exited and the page remains $SESSION_MODE"

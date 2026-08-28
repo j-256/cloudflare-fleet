@@ -75,6 +75,29 @@ function gitOutput(args) {
   return result.stdout
 }
 
+function packedFiles() {
+  const result = spawnSync(
+    "npm",
+    ["pack", "--dry-run", "--json", "--ignore-scripts"],
+    {
+      cwd: PROJECT_ROOT,
+      encoding: "utf8",
+    },
+  )
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || "npm pack --dry-run failed")
+  }
+  let report
+  try {
+    report = JSON.parse(result.stdout)
+  } catch {
+    throw new Error("npm pack --dry-run returned invalid JSON")
+  }
+  return new Set(
+    (report[0]?.files || []).map((entry) => entry.path),
+  )
+}
+
 async function publicationFiles() {
   const source = gitOutput([
     "ls-files",
@@ -215,6 +238,32 @@ export async function checkPublication() {
   }
   if (!packageMetadata.private) {
     errors.push("package.json must prevent accidental npm publication")
+  }
+  if (packageMetadata.bin?.[packageMetadata.name] !== "src/cli.mjs") {
+    errors.push("package.json must expose src/cli.mjs as the cloudflare-fleet binary")
+  }
+  const artifactFiles = packedFiles()
+  for (const required of [
+    "README.md",
+    "launch.sh",
+    "src/cli.mjs",
+    "src/mcp.mjs",
+    "scripts/configure-hosted.mjs",
+    "scripts/import-hosted-state.mjs",
+  ]) {
+    if (!artifactFiles.has(required)) {
+      errors.push(`Source package is missing required runtime file: ${required}`)
+    }
+  }
+  for (const file of artifactFiles) {
+    if (file.startsWith("test/")
+      || file === "AGENTS.md"
+      || file === "CLAUDE.md"
+      || PRIVATE_TRACKED_FILES.has(file)
+      || file.startsWith(".dev.vars")
+      || file.startsWith(".env")) {
+      errors.push(`Source package contains non-runtime or private file: ${file}`)
+    }
   }
   if (errors.length > 0) {
     throw new Error(`Publication check failed:\n- ${errors.join("\n- ")}`)

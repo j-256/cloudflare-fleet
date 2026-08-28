@@ -22,6 +22,27 @@ test("hosted state import accepts an explicit state and config", () => {
   assert.equal(parsed.stateFile, path.resolve("profiles/team.json"))
 })
 
+test("hosted state import defaults to durable state and working-directory config", () => {
+  const parsed = parseImportHostedStateArguments([], {
+    XDG_STATE_HOME: "/state",
+  })
+
+  assert.equal(parsed.configFile, path.resolve("wrangler.jsonc"))
+  assert.equal(parsed.stateFile, "/state/cloudflare-fleet/state.json")
+  assert.throws(
+    () => parseImportHostedStateArguments([], {
+      CLOUDFLARE_FLEET_STATE_FILE: "relative/state.json",
+    }),
+    /must be an absolute path/,
+  )
+  assert.equal(
+    parseImportHostedStateArguments(["--help"], {
+      CLOUDFLARE_FLEET_STATE_FILE: "relative/state.json",
+    }).help,
+    true,
+  )
+})
+
 test("hosted state import resolves its D1 database from Wrangler", async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "fleet-import-config-test."))
   const configFile = path.join(root, "wrangler.jsonc")

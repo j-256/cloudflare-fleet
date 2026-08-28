@@ -19,6 +19,21 @@
     "mcp-server"
   ],
   "type": "module",
+  "files": [
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "docs/",
+    "fleet-policy.example.json",
+    "index.html",
+    "launch.sh",
+    "migrations/",
+    "scripts/build-worker-assets.mjs",
+    "scripts/configure-hosted.mjs",
+    "scripts/import-hosted-state.mjs",
+    "src/",
+    "styles.css",
+    "wrangler.example.jsonc"
+  ],
   "bin": {
     "cloudflare-fleet": "src/cli.mjs"
   },
@@ -26,20 +41,21 @@
     "node": ">=22"
   },
   "scripts": {
-    "audit": "node src/audit.mjs",
+    "audit": "node src/cli.mjs audit",
     "build:hosted": "node scripts/build-worker-assets.mjs",
     "check:publication": "node scripts/check-publication.mjs",
-    "configure:hosted": "node scripts/configure-hosted.mjs",
+    "configure:hosted": "node src/cli.mjs hosted configure",
+    "dashboard": "node src/cli.mjs dashboard",
     "db:migrate:local": "wrangler d1 migrations apply cloudflare-fleet --local",
     "db:migrate:remote": "wrangler d1 migrations apply cloudflare-fleet --remote",
     "deploy": "wrangler deploy",
     "docs:serve": "node scripts/serve-docs.mjs",
     "dev:hosted": "wrangler dev",
     "fleet": "node src/cli.mjs",
-    "mcp": "node src/mcp.mjs",
+    "mcp": "node src/cli.mjs mcp",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "screenshots:ci": "node scripts/capture-screenshots.mjs --output test-results/publication-screenshots",
-    "state:import:hosted": "node scripts/import-hosted-state.mjs",
+    "state:import:hosted": "node src/cli.mjs hosted import-state",
     "test": "node --test test/*.test.mjs",
     "test:all": "npm test && npm run test:e2e",
     "test:e2e": "playwright test",

@@ -1,53 +1,96 @@
 #!/usr/bin/env node
 
 import process from "node:process"
+import { spawn } from "node:child_process"
+import { promises as fs } from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import {
   ALIGNMENT_PREPARATION_STATUS,
   normalizeAlignmentSelector,
 } from "./alignment-service.mjs"
 import { runFleetAuditCommand } from "./audit.mjs"
+import {
+  FLEET_CLI_EXIT_CODE,
+  FleetConfigurationError,
+} from "./cli-contract.mjs"
+import { CliUsageError, parseCliOptions } from "./cli-options.mjs"
 import { isMainModule } from "./entrypoint.mjs"
+import { normalizeFleetChange } from "./fleet-change.mjs"
 import {
   createLocalFleetService,
   FLEET_SERVICE_SCHEMA_VERSION,
 } from "./fleet-service.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
+import { PACKAGE_VERSION } from "./package-metadata.mjs"
+import { createProgressReporter } from "./progress.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 
 const CLI_FORMAT = Object.freeze({
   JSON: "json",
   TEXT: "text",
 })
+const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 
-export const FLEET_CLI_EXIT_CODE = Object.freeze({
-  BLOCKED: 2,
-  ERROR: 1,
-  PLAN_CHANGED: 3,
-  SUCCESS: 0,
-  VERIFICATION_FAILED: 5,
-  WRITE_FAILED: 4,
+export { FLEET_CLI_EXIT_CODE }
+
+const HELP_OPTION = Object.freeze({
+  default: false,
+  name: "help",
+  short: "h",
+  value: false,
 })
-
-const OPTION_WITH_VALUE = new Set([
-  "category",
-  "expect-plan",
-  "format",
-  "key",
-  "phase",
-  "policy-file",
-  "policy",
-  "state-file",
-  "zone-id",
+const FORMAT_OPTION = Object.freeze({
+  default: CLI_FORMAT.TEXT,
+  name: "format",
+  short: "f",
+  value: true,
+})
+const STATE_FILE_OPTION = Object.freeze({
+  key: "statefile",
+  name: "state-file",
+  short: "s",
+  value: true,
+})
+const INPUT_OPTION = Object.freeze({
+  name: "input",
+  short: "i",
+  value: true,
+})
+const POLICY_FILE_OPTION = Object.freeze({
+  key: "policyfile",
+  name: "policy-file",
+  short: "p",
+  value: true,
+})
+const EXPECT_PLAN_OPTION = Object.freeze({
+  key: "expectplan",
+  name: "expect-plan",
+  short: "e",
+  value: true,
+})
+const COMMON_OPTIONS = Object.freeze([
+  FORMAT_OPTION,
+  HELP_OPTION,
+  STATE_FILE_OPTION,
 ])
-const SHORT_OPTION_NAMES = Object.freeze({
-  "-c": ["category"],
-  "-e": ["expect-plan"],
-  "-f": ["format"],
-  "-k": ["key"],
-  "-p": ["policy", "policy-file"],
-  "-s": ["state-file"],
-  "-z": ["zone-id"],
+const SELECTOR_OPTIONS = Object.freeze([
+  ...COMMON_OPTIONS,
+  { name: "category", short: "c", value: true },
+  { name: "key", short: "k", value: true },
+  { name: "phase", value: true },
+  { name: "policy", short: "p", value: true },
+  { key: "zoneIds", multiple: true, name: "zone-id", short: "z", value: true },
+])
+const HELP_COMMAND_BY_TOPIC = Object.freeze({
+  activity: "activity-help",
+  alignment: "alignment-help",
+  change: "change-help",
+  hosted: "hosted-help",
+  intent: "intent-help",
+  mcp: "mcp-help",
+  schema: "schema-help",
 })
 
 export function fleetUsage() {
@@ -56,21 +99,29 @@ export function fleetUsage() {
     "  cloudflare-fleet - inspect and align Cloudflare fleet intent",
     "",
     "SYNOPSIS",
+    "  cloudflare-fleet dashboard [DASHBOARD_OPTIONS]",
     "  cloudflare-fleet audit [AUDIT_OPTIONS]",
     "  cloudflare-fleet alignment list [--format text|json] [--state-file PATH]",
-    "  cloudflare-fleet alignment plan SELECTOR [--format text|json] [--state-file PATH]",
-    "  cloudflare-fleet alignment apply SELECTOR --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet alignment plan SELECTOR_OPTIONS [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet intent show|plan|apply [OPTIONS]",
+    "  cloudflare-fleet change plan|apply --input FILE|- [OPTIONS]",
     "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet activity undo plan|apply --id ID [OPTIONS]",
     "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
+    "  cloudflare-fleet hosted configure [OPTIONS]",
+    "  cloudflare-fleet hosted import-state [OPTIONS] [STATE_FILE]",
+    "  cloudflare-fleet schema change|intent",
+    "  cloudflare-fleet --version",
     "",
-    "SELECTOR",
+    "SELECTOR OPTIONS",
     "  -p, --policy ID",
     "  -c, --category CATEGORY -k, --key KEY [--phase PHASE] [-z, --zone-id ID ...]",
     "",
     "OPTIONS",
     "  -e, --expect-plan DIGEST  Require the approved plan digest when applying",
     "  -f, --format text|json    Select operator text or structured JSON output",
-    "  -p, --policy-file PATH    Select an MCP policy profile (mcp command only)",
+    "  -p, --policy-file PATH    Select an operator policy profile where supported",
     "  -s, --state-file PATH     Select a fleet state profile",
     "  -h, --help                Show this help",
     "",
@@ -78,139 +129,359 @@ export function fleetUsage() {
     "  CLOUDFLARE_API_TOKEN        Required account-level Cloudflare API token",
     "  CLOUDFLARE_ACCOUNT_ID       Required Cloudflare account identifier",
     "  CLOUDFLARE_FLEET_STATE_FILE Optional absolute fleet-state JSON file",
+    "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file",
+    "  XDG_STATE_HOME               Optional absolute base for default fleet state",
+    "  XDG_CONFIG_HOME              Optional absolute base for default fleet policy",
+    "",
+    "FILES",
+    "  State and policy use standard per-user directories when no profile is selected",
+    "",
+    "EXIT STATUS",
+    "  0  Command completed successfully",
+    "  1  Runtime failure",
+    "  2  Invalid command usage or configuration precondition",
+    "  3  Required local dependency is unavailable",
+    "  4  Action is blocked or operator attention is required",
+    "  5  The reviewed plan changed before apply",
+    "  6  A Cloudflare write failed",
+    "  7  Post-write verification failed",
   ].join("\n")
 }
 
-function splitOption(argument, allowed) {
-  if (!argument.startsWith("--")) {
-    const candidates = SHORT_OPTION_NAMES[argument]
-      ?.filter((name) => allowed.has(name)) || []
-    if (candidates.length === 1) {
-      return { name: candidates[0], value: null }
-    }
-    throw new Error(`Unknown option: ${argument}`)
-  }
-  const equals = argument.indexOf("=")
-  if (equals === -1) return { name: argument.slice(2), value: null }
-  return {
-    name: argument.slice(2, equals),
-    value: argument.slice(equals + 1),
-  }
+export function fleetIntentUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet intent - inspect and atomically replace fleet intent",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet intent show [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet intent plan --input FILE|- [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet intent apply --input FILE|- --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "",
+    "OPTIONS",
+    "  -i, --input FILE|-       Read a complete fleet intent document from FILE or stdin",
+    "  -e, --expect-plan DIGEST Require the exact reviewed plan digest before persistence",
+    "  -f, --format text|json   Select operator text or structured JSON output",
+    "  -s, --state-file PATH    Select a fleet state profile",
+    "  -h, --help               Show this help",
+    "",
+    "WORKFLOW",
+    "  intent show emits an editable document in text mode",
+    "  plan validates every collection and reports additions, changes, and removals",
+    "  apply replans under the shared write lock and persists only an exact digest match",
+  ].join("\n")
 }
 
-function setSingleOption(options, name, value) {
-  const property = name.replaceAll("-", "")
-  if (options[property] !== null) {
-    throw new Error(`--${name} may only be provided once`)
-  }
-  options[property] = value
+export function fleetAlignmentUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet alignment - inspect, plan, and apply policy alignment",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet alignment list [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet alignment plan SELECTOR_OPTIONS [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "",
+    "SELECTOR OPTIONS",
+    "  -p, --policy ID",
+    "  -c, --category CATEGORY -k, --key KEY [--phase PHASE] [-z, --zone-id ID ...]",
+    "",
+    "OPTIONS",
+    "  -e, --expect-plan DIGEST Require the exact reviewed plan digest before writes",
+    "  -f, --format text|json   Select operator text or structured JSON output",
+    "  -s, --state-file PATH    Select a fleet state profile",
+    "  -h, --help               Show this help",
+  ].join("\n")
 }
 
-function parseOptions(argv, allowed) {
-  const options = {
-    category: null,
-    expectplan: null,
-    format: CLI_FORMAT.TEXT,
-    help: false,
-    key: null,
-    phase: null,
-    policy: null,
-    policyfile: null,
-    statefile: null,
-    zoneIds: [],
-  }
-  let formatSeen = false
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
-    if (argument === "-h" || argument === "--help") {
-      options.help = true
-      continue
-    }
-    const parsed = splitOption(argument, allowed)
-    if (!allowed.has(parsed.name)) {
-      throw new Error(`Unknown option: --${parsed.name}`)
-    }
-    if (!OPTION_WITH_VALUE.has(parsed.name)) {
-      throw new Error(`Unsupported option: --${parsed.name}`)
-    }
-    let value = parsed.value
-    if (value === null) {
-      value = argv[index + 1]
-      if (!value || value.startsWith("-")) {
-        throw new Error(`--${parsed.name} requires a value`)
-      }
-      index += 1
-    }
-    if (value.length === 0) {
-      throw new Error(`--${parsed.name} requires a value`)
-    }
-    if (parsed.name === "zone-id") {
-      options.zoneIds.push(value)
-    } else if (parsed.name === "format") {
-      if (formatSeen) throw new Error("--format may only be provided once")
-      options.format = value
-      formatSeen = true
-    } else {
-      setSingleOption(options, parsed.name, value)
-    }
-  }
-  if (!Object.values(CLI_FORMAT).includes(options.format)) {
-    throw new Error(`Unsupported output format: ${options.format}`)
+export function fleetChangeUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet change - plan and apply bounded direct operator changes",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet change plan --input FILE|- [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet change apply --input FILE|- --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "",
+    "OPTIONS",
+    "  -i, --input FILE|-       Read one bounded change request from FILE or stdin",
+    "  -e, --expect-plan DIGEST Require the exact reviewed plan digest before writes",
+    "  -f, --format text|json   Select operator text or structured JSON output",
+    "  -p, --policy-file PATH   Select an operator policy profile",
+    "  -s, --state-file PATH    Select a fleet state profile",
+    "  -h, --help               Show this help",
+    "",
+    "SCHEMA",
+    "  Run cloudflare-fleet schema change for the accepted discriminated request types",
+    "  Requests describe outcomes and identifiers; HTTP methods and API paths are not accepted",
+  ].join("\n")
+}
+
+export function fleetActivityUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet activity - inspect durable write history and perform guarded undo",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet activity undo plan --id ID [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet activity undo apply --id ID --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "",
+    "OPTIONS",
+    "  --id ID                  Select a verified reversible activity entry",
+    "  -e, --expect-plan DIGEST Require the exact guarded inverse plan before writes",
+    "  -f, --format text|json   Select operator text or structured JSON output",
+    "  -s, --state-file PATH    Select a fleet state profile",
+    "  -h, --help               Show this help",
+  ].join("\n")
+}
+
+export function fleetMcpUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet mcp - serve bounded Cloudflare Fleet tools over MCP stdio",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
+    "",
+    "OPTIONS",
+    "  -p, --policy-file PATH  Read fleet policy exceptions from PATH",
+    "  -s, --state-file PATH   Read and persist local fleet state at PATH",
+    "  -h, --help              Show this help",
+    "",
+    "ENVIRONMENT",
+    "  CLOUDFLARE_API_TOKEN         Required account-level Cloudflare API token",
+    "  CLOUDFLARE_ACCOUNT_ID        Required Cloudflare account identifier",
+    "  CLOUDFLARE_FLEET_STATE_FILE  Optional absolute fleet-state JSON file",
+    "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file",
+    "  XDG_STATE_HOME                Optional absolute base for default fleet state",
+    "  XDG_CONFIG_HOME               Optional absolute base for default fleet policy",
+    "",
+    "FILES",
+    "  State and policy use standard per-user directories when no profile is selected",
+    "",
+    "TRANSPORT",
+    "  JSON-RPC messages are read from stdin and written to stdout",
+    "  Diagnostics are written to stderr; do not share stdout with logs",
+  ].join("\n")
+}
+
+export function fleetHostedUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet hosted - configure and maintain a hosted dashboard",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet hosted configure [OPTIONS]",
+    "  cloudflare-fleet hosted import-state [OPTIONS] [STATE_FILE]",
+    "",
+    "COMMANDS",
+    "  configure     Validate configuration and provision hosted resources",
+    "  import-state  Import local fleet intent into the remote D1 database",
+    "",
+    "HELP",
+    "  Run either command with --help for its options, dependencies, and side effects",
+  ].join("\n")
+}
+
+export function fleetSchemaUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet schema - print machine-readable public input schemas",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet schema change",
+    "  cloudflare-fleet schema intent",
+    "",
+    "COMMANDS",
+    "  change  Print the bounded direct-change JSON Schema",
+    "  intent  Print the complete fleet-intent JSON Schema",
+  ].join("\n")
+}
+function parseOptions(argv, definitions, positionalOptions) {
+  const options = parseCliOptions(argv, definitions, positionalOptions)
+  if (options.format !== undefined
+    && !Object.values(CLI_FORMAT).includes(options.format)) {
+    throw new CliUsageError(`Unsupported output format: ${options.format}`)
   }
   return options
 }
 
-function selectorFromOptions(options) {
-  return normalizeAlignmentSelector({
-    category: options.category,
-    key: options.key,
-    phase: options.phase || "",
-    policyId: options.policy,
-    zoneIds: options.zoneIds.length > 0 ? options.zoneIds : null,
-  })
+function isHelpArgument(value) {
+  return ["-h", "--help", "help"].includes(value)
 }
 
-const COMMON_OPTIONS = new Set(["format", "state-file"])
-const SELECTOR_OPTIONS = new Set([
-  ...COMMON_OPTIONS,
-  "category",
-  "key",
-  "phase",
-  "policy",
-  "zone-id",
-])
+async function runDashboardCommand(parsed, options) {
+  if (options.dashboardRunner) {
+    return options.dashboardRunner(parsed.argv, options)
+  }
+  const child = spawn("/bin/bash", [path.join(PROJECT_ROOT, "launch.sh"), ...parsed.argv], {
+    env: {
+      ...(options.environment || process.env),
+      CLOUDFLARE_FLEET_COMMAND_NAME: "cloudflare-fleet dashboard",
+    },
+    stdio: "inherit",
+  })
+  const exitCode = await new Promise((resolve, reject) => {
+    child.once("error", reject)
+    child.once("exit", (code, signal) => {
+      if (signal) reject(new Error(`Dashboard launcher exited on ${signal}`))
+      else resolve(code ?? FLEET_CLI_EXIT_CODE.ERROR)
+    })
+  })
+  options.onExitCode?.(exitCode)
+  return { exitCode }
+}
+
+async function readJsonInput(inputPath, options) {
+  let source
+  if (options.inputText !== undefined) {
+    source = options.inputText
+  } else if (inputPath === "-") {
+    const chunks = []
+    for await (const chunk of options.stdin || process.stdin) chunks.push(chunk)
+    source = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")
+  } else {
+    source = await fs.readFile(path.resolve(inputPath), "utf8")
+  }
+  try {
+    return JSON.parse(source)
+  } catch (error) {
+    throw new CliUsageError(
+      `Input is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+function selectorFromOptions(options) {
+  try {
+    return normalizeAlignmentSelector({
+      category: options.category,
+      key: options.key,
+      phase: options.phase || "",
+      policyId: options.policy,
+      zoneIds: options.zoneIds.length > 0 ? options.zoneIds : null,
+    })
+  } catch (error) {
+    throw new CliUsageError(error instanceof Error ? error.message : String(error))
+  }
+}
 
 export function parseFleetArguments(argv) {
   const [resource, action, ...rest] = argv
-  if (!resource || resource === "-h" || resource === "--help" || resource === "help") {
+  if (!resource || resource === "-h" || resource === "--help") {
     return { command: "help" }
+  }
+  if (resource === "help") {
+    if (!action) return { command: "help" }
+    if (rest.length > 0) throw new CliUsageError("help accepts at most one command")
+    if (!Object.hasOwn(HELP_COMMAND_BY_TOPIC, action)) {
+      throw new CliUsageError(`Unknown help topic: ${action}`)
+    }
+    return { command: HELP_COMMAND_BY_TOPIC[action] }
   }
   if (resource === "audit") {
     return { argv: argv.slice(1), command: "audit" }
   }
+  if (resource === "--version" || resource === "-V" || resource === "version") {
+    if (argv.length !== 1) throw new CliUsageError("--version does not take arguments")
+    return { command: "version" }
+  }
+  if (resource === "dashboard") {
+    return { argv: argv.slice(1), command: "dashboard" }
+  }
+  if (resource === "hosted") {
+    if (!action || isHelpArgument(action)) return { command: "hosted-help" }
+    if (action === "configure") {
+      return { argv: rest, command: "hosted-configure" }
+    }
+    if (action === "import-state") {
+      return { argv: rest, command: "hosted-import-state" }
+    }
+    throw new CliUsageError("Hosted command must be configure or import-state")
+  }
   if (resource === "mcp") {
-    const options = parseOptions(
-      argv.slice(1),
-      new Set(["policy-file", "state-file"]),
-    )
-    if (options.help) return { command: "help" }
+    const options = parseOptions(argv.slice(1), [
+      HELP_OPTION,
+      POLICY_FILE_OPTION,
+      STATE_FILE_OPTION,
+    ])
+    if (options.help) return { command: "mcp-help" }
     return {
       command: "mcp",
       policyFile: options.policyfile,
       stateFile: options.statefile,
     }
   }
-  if (resource === "alignment") {
-    if (!["list", "plan", "apply"].includes(action)) {
-      throw new Error("Alignment command must be list, plan, or apply")
+  if (resource === "intent") {
+    if (!action || isHelpArgument(action)) return { command: "intent-help" }
+    if (!["show", "plan", "apply"].includes(action)) {
+      throw new CliUsageError("Intent command must be show, plan, or apply")
     }
-    const allowed = action === "list"
+    const definitions = action === "show"
       ? COMMON_OPTIONS
       : action === "apply"
-        ? new Set([...SELECTOR_OPTIONS, "expect-plan"])
+        ? [...COMMON_OPTIONS, INPUT_OPTION, EXPECT_PLAN_OPTION]
+        : [...COMMON_OPTIONS, INPUT_OPTION]
+    const options = parseOptions(rest, definitions)
+    if (options.help) return { command: "intent-help" }
+    if (action !== "show" && !options.input) {
+      throw new CliUsageError(`intent ${action} requires --input`)
+    }
+    if (action === "apply" && !options.expectplan) {
+      throw new CliUsageError("intent apply requires --expect-plan")
+    }
+    return {
+      command: `intent-${action}`,
+      expectedDigest: options.expectplan || null,
+      format: options.format,
+      input: options.input || null,
+      stateFile: options.statefile,
+    }
+  }
+  if (resource === "change") {
+    if (!action || isHelpArgument(action)) return { command: "change-help" }
+    if (!["plan", "apply"].includes(action)) {
+      throw new CliUsageError("Change command must be plan or apply")
+    }
+    const definitions = action === "apply"
+      ? [
+          ...COMMON_OPTIONS,
+          INPUT_OPTION,
+          EXPECT_PLAN_OPTION,
+          POLICY_FILE_OPTION,
+        ]
+      : [...COMMON_OPTIONS, INPUT_OPTION, POLICY_FILE_OPTION]
+    const options = parseOptions(rest, definitions)
+    if (options.help) return { command: "change-help" }
+    if (!options.input) throw new CliUsageError(`change ${action} requires --input`)
+    if (action === "apply" && !options.expectplan) {
+      throw new CliUsageError("change apply requires --expect-plan")
+    }
+    return {
+      command: `change-${action}`,
+      expectedDigest: options.expectplan || null,
+      format: options.format,
+      input: options.input,
+      policyFile: options.policyfile,
+      stateFile: options.statefile,
+    }
+  }
+  if (resource === "alignment") {
+    if (!action || isHelpArgument(action)) return { command: "alignment-help" }
+    if (!["list", "plan", "apply"].includes(action)) {
+      throw new CliUsageError("Alignment command must be list, plan, or apply")
+    }
+    const definitions = action === "list"
+      ? COMMON_OPTIONS
+      : action === "apply"
+        ? [
+            ...SELECTOR_OPTIONS,
+            EXPECT_PLAN_OPTION,
+          ]
         : SELECTOR_OPTIONS
-    const options = parseOptions(rest, allowed)
-    if (options.help) return { command: "help" }
+    const options = parseOptions(rest, definitions)
+    if (options.help) return { command: "alignment-help" }
     if (action === "list") {
       return {
         command: "alignment-list",
@@ -220,27 +491,65 @@ export function parseFleetArguments(argv) {
     }
     const selector = selectorFromOptions(options)
     if (action === "apply" && !options.expectplan) {
-      throw new Error("alignment apply requires --expect-plan")
+      throw new CliUsageError("alignment apply requires --expect-plan")
     }
     return {
       command: `alignment-${action}`,
-      expectedDigest: options.expectplan,
+      expectedDigest: options.expectplan ?? null,
       format: options.format,
       selector,
       stateFile: options.statefile,
     }
   }
   if (resource === "activity") {
-    if (action !== "list") throw new Error("Activity command must be list")
-    const options = parseOptions(rest, COMMON_OPTIONS)
-    if (options.help) return { command: "help" }
+    if (!action || isHelpArgument(action)) return { command: "activity-help" }
+    if (action === "list") {
+      const options = parseOptions(rest, COMMON_OPTIONS)
+      if (options.help) return { command: "activity-help" }
+      return {
+        command: "activity-list",
+        format: options.format,
+        stateFile: options.statefile,
+      }
+    }
+    if (action !== "undo") {
+      throw new CliUsageError("Activity command must be list or undo")
+    }
+    const [undoAction, ...undoArguments] = rest
+    if (!undoAction || isHelpArgument(undoAction)) {
+      return { command: "activity-help" }
+    }
+    if (!["plan", "apply"].includes(undoAction)) {
+      throw new CliUsageError("Activity undo command must be plan or apply")
+    }
+    const definitions = undoAction === "apply"
+      ? [...COMMON_OPTIONS, { name: "id", value: true }, EXPECT_PLAN_OPTION]
+      : [...COMMON_OPTIONS, { name: "id", value: true }]
+    const options = parseOptions(undoArguments, definitions)
+    if (options.help) return { command: "activity-help" }
+    if (!options.id) throw new CliUsageError(`activity undo ${undoAction} requires --id`)
+    if (undoAction === "apply" && !options.expectplan) {
+      throw new CliUsageError("activity undo apply requires --expect-plan")
+    }
     return {
-      command: "activity-list",
+      activityId: options.id,
+      command: `activity-undo-${undoAction}`,
+      expectedDigest: options.expectplan || null,
       format: options.format,
       stateFile: options.statefile,
     }
   }
-  throw new Error(`Unknown command: ${resource}`)
+  if (resource === "schema") {
+    if (!action || isHelpArgument(action)) return { command: "schema-help" }
+    if (rest.length === 1 && isHelpArgument(rest[0])) {
+      return { command: "schema-help" }
+    }
+    if (!["change", "intent"].includes(action) || rest.length > 0) {
+      throw new CliUsageError("Schema command must be change or intent")
+    }
+    return { command: `schema-${action}` }
+  }
+  throw new CliUsageError(`Unknown command: ${resource}`)
 }
 
 function selectorText(selector) {
@@ -289,7 +598,7 @@ function renderAlignmentPlan(result) {
   for (const operation of result.planSet.preview) {
     lines.push(
       `- ${operation.method} ${operation.path} on ${operation.zoneName}`,
-      `  ${operation.label}: ${JSON.stringify(operation.body)}`,
+      `  ${operation.label}${Object.hasOwn(operation, "body") ? `: ${JSON.stringify(operation.body)}` : ""}`,
     )
   }
   return lines.join("\n")
@@ -329,11 +638,74 @@ function renderActivity(result) {
   return lines.join("\n")
 }
 
+function renderReviewedPlan(result, label) {
+  const lines = [
+    `${label} ${result.status}: ${result.reason}`,
+  ]
+  if (!result.planSet) return lines.join("\n")
+  lines.push(
+    `Plan: ${result.planSet.digest}`,
+    `Validated: ${result.planSet.validatedAt}`,
+  )
+  if (result.planSet.preview.length === 0) return lines.join("\n")
+  lines.push("Operations:")
+  for (const operation of result.planSet.preview) {
+    lines.push(
+      `- ${operation.method} ${operation.path} on ${operation.zoneName}`,
+      `  ${operation.label}${Object.hasOwn(operation, "body") ? `: ${JSON.stringify(operation.body)}` : ""}`,
+    )
+  }
+  return lines.join("\n")
+}
+
+function renderExecution(result, label) {
+  if (!result.execution) return renderReviewedPlan(result, label)
+  const lines = [
+    `${label} ${result.status} for account ${result.accountId}`,
+    `Plan: ${result.planDigest}`,
+    `Execution: ${result.execution.completed}/${result.execution.total}`,
+    `Verification reads: ${result.verification.length}`,
+  ]
+  if (result.error) lines.push(`Error: ${result.error}`)
+  if (result.historyError) lines.push(`Activity warning: ${result.historyError}`)
+  return lines.join("\n")
+}
+
+function renderIntentPlan(result) {
+  const lines = [
+    `Fleet intent ${result.status}: ${result.reason}`,
+    `Plan: ${result.planSet.digest}`,
+  ]
+  for (const [collection, difference] of Object.entries(result.diff)) {
+    if (difference.added.length > 0) {
+      lines.push(`- ${collection} added: ${difference.added.join(", ")}`)
+    }
+    if (difference.changed.length > 0) {
+      lines.push(`- ${collection} changed: ${difference.changed.join(", ")}`)
+    }
+    if (difference.removed.length > 0) {
+      lines.push(`- ${collection} removed: ${difference.removed.join(", ")}`)
+    }
+  }
+  return lines.join("\n")
+}
+
 function renderResult(command, result) {
   if (command === "alignment-list") return renderAlignmentList(result)
   if (command === "alignment-plan") return renderAlignmentPlan(result)
   if (command === "alignment-apply") return renderAlignmentApply(result)
   if (command === "activity-list") return renderActivity(result)
+  if (command === "intent-show") return JSON.stringify(result.document, null, 2)
+  if (command === "intent-plan") return renderIntentPlan(result)
+  if (command === "intent-apply") {
+    return result.applied
+      ? `Fleet intent saved at revision ${result.document.revision}\nPlan: ${result.planDigest}`
+      : renderIntentPlan(result)
+  }
+  if (command === "change-plan") return renderReviewedPlan(result, "Fleet change")
+  if (command === "change-apply") return renderExecution(result, "Fleet change")
+  if (command === "activity-undo-plan") return renderReviewedPlan(result, "Guarded undo")
+  if (command === "activity-undo-apply") return renderExecution(result, "Guarded undo")
   throw new TypeError(`No renderer for ${command}`)
 }
 
@@ -348,16 +720,6 @@ function resultExitCode(result) {
     return FLEET_CLI_EXIT_CODE.VERIFICATION_FAILED
   }
   return FLEET_CLI_EXIT_CODE.SUCCESS
-}
-
-function progressReporter(stderr, topic) {
-  let lastMessage = ""
-  return (progress) => {
-    const message = progress.message || `${progress.stage || "working"} ${progress.completed}/${progress.total}`
-    if (message === lastMessage) return
-    lastMessage = message
-    stderr.write(`[${topic}] ${message}\n`)
-  }
 }
 
 function writeResult(stdout, format, command, result) {
@@ -378,6 +740,34 @@ export async function runFleetCommand(options = {}) {
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return null
   }
+  if (parsed.command === "version") {
+    stdout.write(`${PACKAGE_VERSION}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return PACKAGE_VERSION
+  }
+  if (parsed.command === "dashboard") {
+    return runDashboardCommand(parsed, { ...options, environment, stderr, stdout })
+  }
+  if (parsed.command === "hosted-configure") {
+    const { runHostedConfigurationCommand } = await import("../scripts/configure-hosted.mjs")
+    return runHostedConfigurationCommand({
+      ...options,
+      argv: parsed.argv,
+      environment,
+      stderr,
+      stdout,
+    })
+  }
+  if (parsed.command === "hosted-import-state") {
+    const { runImportHostedStateCommand } = await import("../scripts/import-hosted-state.mjs")
+    return runImportHostedStateCommand({
+      ...options,
+      argv: parsed.argv,
+      environment,
+      stderr,
+      stdout,
+    })
+  }
   if (parsed.command === "audit") {
     return runFleetAuditCommand({
       ...options,
@@ -386,6 +776,53 @@ export async function runFleetCommand(options = {}) {
       stderr,
       stdout,
     })
+  }
+  if (parsed.command === "mcp-help") {
+    stdout.write(`${fleetMcpUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "alignment-help") {
+    stdout.write(`${fleetAlignmentUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "intent-help") {
+    stdout.write(`${fleetIntentUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "change-help") {
+    stdout.write(`${fleetChangeUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "activity-help") {
+    stdout.write(`${fleetActivityUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "hosted-help") {
+    stdout.write(`${fleetHostedUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "schema-help") {
+    stdout.write(`${fleetSchemaUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command.startsWith("schema-")) {
+    const [{ z }, schemas] = await Promise.all([
+      import("zod"),
+      import("./interface-schemas.mjs"),
+    ])
+    const schema = parsed.command === "schema-change"
+      ? schemas.fleetChangeSchema
+      : schemas.fleetIntentDocumentSchema
+    stdout.write(`${JSON.stringify(z.toJSONSchema(schema), null, 2)}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return schema
   }
   if (parsed.command === "mcp") {
     const { runFleetMcpServer } = await import("./mcp.mjs")
@@ -396,13 +833,30 @@ export async function runFleetCommand(options = {}) {
       stderr,
     })
   }
+  let intentDocument
+  let change
+  if (["intent-plan", "intent-apply"].includes(parsed.command)) {
+    const input = await readJsonInput(parsed.input, options)
+    intentDocument = input?.document || input
+  } else if (["change-plan", "change-apply"].includes(parsed.command)) {
+    try {
+      change = normalizeFleetChange(await readJsonInput(parsed.input, options))
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new CliUsageError(error.message)
+      }
+      throw error
+    }
+  }
   const service = options.service || createLocalFleetService({
     environment,
+    policyFile: parsed.policyFile,
     stateFile: parsed.stateFile,
   })
   const commandOptions = {
-    onProgress: progressReporter(stderr, parsed.command),
+    onProgress: createProgressReporter(stderr, `[${parsed.command}]`),
     signal: options.signal,
+    validatedAt: options.validatedAt,
   }
   let result
   if (parsed.command === "alignment-list") {
@@ -417,6 +871,39 @@ export async function runFleetCommand(options = {}) {
     )
   } else if (parsed.command === "activity-list") {
     result = await service.listActivity(commandOptions)
+  } else if (parsed.command === "intent-show") {
+    result = await service.getIntent(commandOptions)
+  } else if (["intent-plan", "intent-apply"].includes(parsed.command)) {
+    try {
+      result = parsed.command === "intent-plan"
+        ? await service.planIntent(intentDocument, commandOptions)
+        : await service.applyIntent(
+            intentDocument,
+            parsed.expectedDigest,
+            commandOptions,
+          )
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new CliUsageError(error.message)
+      }
+      throw error
+    }
+  } else if (["change-plan", "change-apply"].includes(parsed.command)) {
+    result = parsed.command === "change-plan"
+      ? await service.planChange(change, commandOptions)
+      : await service.applyChange(
+          change,
+          parsed.expectedDigest,
+          commandOptions,
+        )
+  } else if (parsed.command === "activity-undo-plan") {
+    result = await service.planActivityUndo(parsed.activityId, commandOptions)
+  } else if (parsed.command === "activity-undo-apply") {
+    result = await service.applyActivityUndo(
+      parsed.activityId,
+      parsed.expectedDigest,
+      commandOptions,
+    )
   } else {
     throw new TypeError(`Unsupported fleet command: ${parsed.command}`)
   }
@@ -430,26 +917,45 @@ function requestedJson(argv) {
   return argv.some((argument, index) => (
     argument === "--format=json"
       || (argument === "--format" && argv[index + 1] === "json")
+      || argument === "-fjson"
       || (argument === "-f" && argv[index + 1] === "json")
   ))
 }
 
 function errorExitCode(error) {
-  return error instanceof AlignmentPlanChangedError
-    ? FLEET_CLI_EXIT_CODE.PLAN_CHANGED
-    : FLEET_CLI_EXIT_CODE.ERROR
+  if (error instanceof AlignmentPlanChangedError) {
+    return FLEET_CLI_EXIT_CODE.PLAN_CHANGED
+  }
+  if (error instanceof CliUsageError
+    || error instanceof FleetConfigurationError) {
+    return FLEET_CLI_EXIT_CODE.USAGE
+  }
+  return FLEET_CLI_EXIT_CODE.ERROR
 }
 
-function errorResult(error) {
+function redactedErrorMessage(error, environment) {
+  const message = error instanceof Error ? error.message : String(error)
+  const secret = environment.CLOUDFLARE_API_TOKEN
+  return typeof secret === "string" && secret.length > 0
+    ? message.replaceAll(secret, "[redacted]")
+    : message
+}
+
+function errorResult(error, environment) {
+  const status = error instanceof AlignmentPlanChangedError
+    ? "plan-changed"
+    : error instanceof FleetConfigurationError
+      ? "configuration-error"
+      : error instanceof CliUsageError
+        ? "usage-error"
+        : "error"
   const result = {
     error: {
-      message: error instanceof Error ? error.message : String(error),
+      message: redactedErrorMessage(error, environment),
       name: error instanceof Error ? error.name : "Error",
     },
     schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
-    status: error instanceof AlignmentPlanChangedError
-      ? "plan-changed"
-      : "error",
+    status,
   }
   if (error instanceof AlignmentPlanChangedError) {
     result.error.actualDigest = error.actualDigest
@@ -460,6 +966,7 @@ function errorResult(error) {
 
 export async function runFleetCli(options = {}) {
   const argv = options.argv || process.argv.slice(2)
+  const environment = options.environment || process.env
   const stdout = options.stdout || process.stdout
   const stderr = options.stderr || process.stderr
   try {
@@ -467,9 +974,9 @@ export async function runFleetCli(options = {}) {
   } catch (error) {
     const exitCode = errorExitCode(error)
     if (requestedJson(argv)) {
-      stdout.write(`${JSON.stringify(errorResult(error), null, 2)}\n`)
+      stdout.write(`${JSON.stringify(errorResult(error, environment), null, 2)}\n`)
     } else {
-      stderr.write(`[fleet] ${error instanceof Error ? error.message : String(error)}\n`)
+      stderr.write(`[fleet] ${redactedErrorMessage(error, environment)}\n`)
     }
     options.onExitCode?.(exitCode)
     return null

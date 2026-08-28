@@ -76,6 +76,7 @@ test("fleet audit exit policy honors severity thresholds", () => {
 
   assert.equal(fleetAuditExitCode(report, null), FLEET_AUDIT_EXIT_CODE.SUCCESS)
   assert.equal(FLEET_AUDIT_EXIT_CODE.ERROR, 1)
+  assert.equal(FLEET_AUDIT_EXIT_CODE.FINDINGS, 4)
   assert.equal(fleetAuditExitCode(report, "critical"), FLEET_AUDIT_EXIT_CODE.SUCCESS)
   assert.equal(fleetAuditExitCode(report, "warning"), FLEET_AUDIT_EXIT_CODE.FINDINGS)
   assert.equal(fleetAuditExitCode(report, "review"), FLEET_AUDIT_EXIT_CODE.FINDINGS)
@@ -135,6 +136,10 @@ test("resolveStateFile still requires CLOUDFLARE_FLEET_STATE_FILE to be absolute
     resolveStateFile(undefined, { CLOUDFLARE_FLEET_STATE_FILE: "/abs/state.json" }),
     path.resolve("/abs/state.json"),
   )
+  assert.equal(
+    resolveStateFile(undefined, { XDG_STATE_HOME: "/state" }),
+    "/state/cloudflare-fleet/state.json",
+  )
 })
 
 test("fleet audit arguments accept a policy file", () => {
@@ -154,6 +159,10 @@ test("resolvePolicyFile accepts an explicit path and requires an absolute env pa
       CLOUDFLARE_FLEET_POLICY_FILE: "config/policy.json",
     }),
     /CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path/,
+  )
+  assert.equal(
+    resolvePolicyFile(undefined, { XDG_CONFIG_HOME: "/config" }),
+    "/config/cloudflare-fleet/fleet-policy.json",
   )
 })
 

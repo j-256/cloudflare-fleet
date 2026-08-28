@@ -41,7 +41,37 @@ test("hosted configuration arguments default to read-only deployment", () => {
 
   assert.equal(parsed.readOnly, true)
   assert.equal(parsed.hostname, "fleet.example.com")
+  assert.equal(parsed.outputFile, path.resolve("wrangler.jsonc"))
   assert.equal(parseHostedConfigurationArguments(["--write"], {}).readOnly, false)
+})
+
+test("hosted configuration defaults fleet policy to the user config directory", () => {
+  const parsed = parseHostedConfigurationArguments([], {
+    XDG_CONFIG_HOME: "/config",
+  })
+
+  assert.equal(
+    parsed.policyFile,
+    "/config/cloudflare-fleet/fleet-policy.json",
+  )
+  assert.throws(
+    () => parseHostedConfigurationArguments([], {
+      CLOUDFLARE_FLEET_POLICY_FILE: "relative/policy.json",
+    }),
+    /must be an absolute path/,
+  )
+  assert.equal(
+    parseHostedConfigurationArguments(["--policy-file", "policy.json"], {
+      CLOUDFLARE_FLEET_POLICY_FILE: "relative/policy.json",
+    }).policyFile,
+    path.resolve("policy.json"),
+  )
+  assert.equal(
+    parseHostedConfigurationArguments(["--help"], {
+      CLOUDFLARE_FLEET_POLICY_FILE: "relative/policy.json",
+    }).help,
+    true,
+  )
 })
 
 test("hosted configuration writes portable Wrangler bindings", async (context) => {

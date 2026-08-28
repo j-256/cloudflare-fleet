@@ -3,6 +3,7 @@ import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import { parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -26,18 +27,15 @@ export function documentationServerUsage() {
 }
 
 export function parseDocumentationServerArguments(argv) {
-  if (argv.length === 0) return { help: false, port: DEFAULT_PORT }
-  if (argv.length === 1 && ["-h", "--help"].includes(argv[0])) {
-    return { help: true, port: DEFAULT_PORT }
-  }
-  if (argv.length !== 2 || !["-p", "--port"].includes(argv[0])) {
-    throw new Error(documentationServerUsage())
-  }
-  const port = Number(argv[1])
+  const options = parseCliOptions(argv, [
+    { default: false, name: "help", short: "h", value: false },
+    { default: String(DEFAULT_PORT), name: "port", short: "p", value: true },
+  ])
+  const port = Number(options.port)
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
     throw new Error("Documentation server port is invalid")
   }
-  return { help: false, port }
+  return { help: options.help, port }
 }
 
 function documentationPath(requestUrl) {

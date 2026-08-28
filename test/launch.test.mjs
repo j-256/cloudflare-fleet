@@ -14,7 +14,18 @@ const launcher = path.join(projectRoot, "launch.sh")
 test("launcher accepts short option aliases", async () => {
   const readOnly = await execFileAsync(
     "/bin/bash",
-    [launcher, "-r", "-f", "-d", "9224", "-h"],
+    [
+      launcher,
+      "-r",
+      "-f",
+      "-d",
+      "9224",
+      "-s",
+      "profiles/state.json",
+      "-p",
+      "profiles/policy.json",
+      "-h",
+    ],
   )
   const readWrite = await execFileAsync(
     "/bin/bash",
@@ -23,8 +34,45 @@ test("launcher accepts short option aliases", async () => {
 
   assert.match(readOnly.stdout, /-r, --read-only/)
   assert.match(readOnly.stdout, /-d, --debug-port PORT/)
+  assert.match(readOnly.stdout, /-s, --state-file PATH/)
+  assert.match(readOnly.stdout, /-p, --policy-file PATH/)
   assert.match(readWrite.stdout, /-w, --write/)
   assert.match(readWrite.stdout, /-c, --clear-cache/)
+})
+
+test("launcher accepts bundled flags, glued values, and long equals", async () => {
+  const bundled = await execFileAsync(
+    "/bin/bash",
+    [launcher, "-rfd9224", "-sprofiles/state.json", "-pprofiles/policy.json", "-h"],
+  )
+  const longEquals = await execFileAsync(
+    "/bin/bash",
+    [
+      launcher,
+      "--debug-port=9224",
+      "--state-file=profiles/state.json",
+      "--policy-file=profiles/policy.json",
+      "--help",
+    ],
+  )
+
+  assert.match(bundled.stdout, /-d, --debug-port PORT/)
+  assert.match(longEquals.stdout, /EXIT STATUS/)
+})
+
+test("launcher presents the canonical dispatcher name when delegated", async () => {
+  const result = await execFileAsync(
+    "/bin/bash",
+    [launcher, "--help"],
+    {
+      env: {
+        ...process.env,
+        CLOUDFLARE_FLEET_COMMAND_NAME: "cloudflare-fleet dashboard",
+      },
+    },
+  )
+
+  assert.match(result.stdout, /cloudflare-fleet dashboard \[-r \| -w\]/)
 })
 
 test("launcher applies short option validation", async () => {

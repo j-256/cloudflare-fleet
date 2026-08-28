@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 
 import { chromium } from "@playwright/test"
 
+import { parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
 import {
   closeDashboardSession,
@@ -30,28 +31,14 @@ export function captureScreenshotsUsage() {
 }
 
 export function parseCaptureScreenshotsArguments(argv) {
-  let outputDirectory = DEFAULT_OUTPUT_DIRECTORY
-  let help = false
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
-    if (argument === "-h" || argument === "--help") {
-      help = true
-      continue
-    }
-    if (argument === "-o" || argument === "--output" || argument.startsWith("--output=")) {
-      const value = argument.startsWith("--output=")
-        ? argument.slice("--output=".length)
-        : argv[index + 1]
-      if (!value || value.startsWith("-")) {
-        throw new Error("--output requires a directory")
-      }
-      outputDirectory = path.resolve(value)
-      if (!argument.startsWith("--output=")) index += 1
-      continue
-    }
-    throw new Error(`Unknown option: ${argument}`)
+  const options = parseCliOptions(argv, [
+    { default: false, name: "help", short: "h", value: false },
+    { default: DEFAULT_OUTPUT_DIRECTORY, key: "outputDirectory", name: "output", short: "o", value: true },
+  ])
+  return {
+    help: options.help,
+    outputDirectory: path.resolve(options.outputDirectory),
   }
-  return { help, outputDirectory }
 }
 
 async function openDashboardPage(context, session, viewport, browserErrors) {

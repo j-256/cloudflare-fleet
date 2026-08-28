@@ -2,7 +2,6 @@
 
 import path from "node:path"
 import process from "node:process"
-import { fileURLToPath } from "node:url"
 
 import { CloudflareApi } from "./api.mjs"
 import { collectDeepAuditFindings } from "./audit-deep.mjs"
@@ -12,9 +11,18 @@ import {
   renderFleetAuditHtml,
   renderFleetAuditMarkdown,
 } from "./audit-report.mjs"
+import {
+  FLEET_CLI_EXIT_CODE,
+  FleetConfigurationError,
+} from "./cli-contract.mjs"
+import { CliUsageError, parseCliOptions } from "./cli-options.mjs"
 import { isMainModule } from "./entrypoint.mjs"
 import { readFleetPolicyConfiguration } from "./fleet-policy-store.mjs"
 import { loadInventory } from "./inventory.mjs"
+import {
+  defaultFleetPolicyFile,
+  defaultFleetStateFile,
+} from "./operator-paths.mjs"
 import { readFleetStateDocument } from "./state-store.mjs"
 
 const AUDIT_FORMAT = Object.freeze({
@@ -23,9 +31,9 @@ const AUDIT_FORMAT = Object.freeze({
   MARKDOWN: "markdown",
 })
 export const FLEET_AUDIT_EXIT_CODE = Object.freeze({
-  ERROR: 1,
-  FINDINGS: 2,
-  SUCCESS: 0,
+  ERROR: FLEET_CLI_EXIT_CODE.ERROR,
+  FINDINGS: FLEET_CLI_EXIT_CODE.ATTENTION,
+  SUCCESS: FLEET_CLI_EXIT_CODE.SUCCESS,
 })
 const FLEET_AUDIT_SEVERITY_ORDER = Object.freeze([
   FLEET_AUDIT_SEVERITY.CRITICAL,
@@ -33,20 +41,17 @@ const FLEET_AUDIT_SEVERITY_ORDER = Object.freeze([
   FLEET_AUDIT_SEVERITY.REVIEW,
   FLEET_AUDIT_SEVERITY.INFO,
 ])
-const DEFAULT_STATE_FILE = fileURLToPath(new URL("../state.json", import.meta.url))
-const DEFAULT_POLICY_FILE = fileURLToPath(new URL("../fleet-policy.json", import.meta.url))
-
 export function fleetAuditUsage() {
   return [
     "NAME",
-    "  cloudflare-fleet-audit - inspect live Cloudflare fleet configuration without writing",
+    "  cloudflare-fleet audit - inspect live Cloudflare fleet configuration without writing",
     "",
     "SYNOPSIS",
-    "  node src/audit.mjs [--deep] [--format markdown|json|html] [--fail-on LEVEL] [--policy-file PATH] [--state-file PATH]",
+    "  cloudflare-fleet audit [--deep] [--format markdown|json|html] [--fail-on LEVEL] [--policy-file PATH] [--state-file PATH]",
     "",
     "OPTIONS",
     "  -d, --deep              Add delegation, Registrar, Pages, storage, endpoint, and Worker dependency checks",
-    "  --fail-on LEVEL         Exit 2 for findings at or above critical, warning, review, or info",
+    "  --fail-on LEVEL         Exit 4 for findings at or above critical, warning, review, or info",
     "  -f, --format FORMAT     Render markdown, JSON, or self-contained HTML (default: markdown)",
     "  -p, --policy-file PATH  Read fleet policy exceptions from PATH",
     "  -s, --state-file PATH   Read fleet intent and coverage expectations from PATH",
@@ -57,72 +62,38 @@ export function fleetAuditUsage() {
     "  CLOUDFLARE_ACCOUNT_ID       Required Cloudflare account identifier",
     "  CLOUDFLARE_FLEET_STATE_FILE Optional absolute fleet-state JSON file",
     "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file",
+    "  XDG_STATE_HOME                Optional absolute base for default fleet state",
+    "  XDG_CONFIG_HOME               Optional absolute base for default fleet policy",
+    "",
+    "FILES",
+    "  State defaults to $XDG_STATE_HOME/cloudflare-fleet/state.json",
+    "  Policy defaults to $XDG_CONFIG_HOME/cloudflare-fleet/fleet-policy.json",
+    "  Standard user state and config directories are used when XDG values are unset",
+    "",
+    "EXIT STATUS",
+    "  0  Audit completed and the requested threshold was clear",
+    "  1  Audit failed",
+    "  2  Command usage was invalid",
+    "  4  Findings met the requested --fail-on threshold",
   ].join("\n")
 }
 
 export function parseFleetAuditArguments(argv) {
-  const options = {
-    deep: false,
-    failOn: null,
-    format: AUDIT_FORMAT.MARKDOWN,
-    help: false,
-    policyFile: null,
-    stateFile: null,
-  }
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
-    if (argument === "-h" || argument === "--help") {
-      options.help = true
-      continue
-    }
-    if (argument === "-d" || argument === "--deep") {
-      options.deep = true
-      continue
-    }
-    if ([
-      "--fail-on",
-      "-f",
-      "--format",
-      "-p",
-      "--policy-file",
-      "-s",
-      "--state-file",
-    ].includes(argument)) {
-      const value = argv[index + 1]
-      if (!value || value.startsWith("-")) {
-        throw new Error(`${argument} requires a value`)
-      }
-      index += 1
-      if (argument === "--fail-on") options.failOn = value
-      else if (argument === "-f" || argument === "--format") options.format = value
-      else if (argument === "-p" || argument === "--policy-file") options.policyFile = value
-      else options.stateFile = value
-      continue
-    }
-    if (argument.startsWith("--fail-on=")) {
-      options.failOn = argument.slice("--fail-on=".length)
-      continue
-    }
-    if (argument.startsWith("--format=")) {
-      options.format = argument.slice("--format=".length)
-      continue
-    }
-    if (argument.startsWith("--state-file=")) {
-      options.stateFile = argument.slice("--state-file=".length)
-      continue
-    }
-    if (argument.startsWith("--policy-file=")) {
-      options.policyFile = argument.slice("--policy-file=".length)
-      continue
-    }
-    throw new Error(`Unknown option: ${argument}`)
-  }
+  const options = parseCliOptions(argv, [
+    { default: false, name: "deep", short: "d", value: false },
+    { key: "failOn", name: "fail-on", value: true },
+    { default: AUDIT_FORMAT.MARKDOWN, name: "format", short: "f", value: true },
+    { default: false, name: "help", short: "h", value: false },
+    { key: "policyFile", name: "policy-file", short: "p", value: true },
+    { key: "stateFile", name: "state-file", short: "s", value: true },
+  ])
+  delete options.positionals
   if (!Object.values(AUDIT_FORMAT).includes(options.format)) {
-    throw new Error(`Unsupported audit format: ${options.format}`)
+    throw new CliUsageError(`Unsupported audit format: ${options.format}`)
   }
   if (options.failOn !== null
     && !FLEET_AUDIT_SEVERITY_ORDER.includes(options.failOn)) {
-    throw new Error(`Unsupported audit fail threshold: ${options.failOn}`)
+    throw new CliUsageError(`Unsupported audit fail threshold: ${options.failOn}`)
   }
   return options
 }
@@ -158,9 +129,11 @@ export function resolveStateFile(argument, environment) {
   // Explicit file arguments accept relative paths while environment values do not
   if (argument) return path.resolve(argument)
   const configured = environment.CLOUDFLARE_FLEET_STATE_FILE
-  if (!configured) return DEFAULT_STATE_FILE
+  if (!configured) return defaultFleetStateFile(environment)
   if (!path.isAbsolute(configured)) {
-    throw new Error("CLOUDFLARE_FLEET_STATE_FILE must be an absolute path")
+    throw new FleetConfigurationError(
+      "CLOUDFLARE_FLEET_STATE_FILE must be an absolute path",
+    )
   }
   return path.resolve(configured)
 }
@@ -168,9 +141,11 @@ export function resolveStateFile(argument, environment) {
 export function resolvePolicyFile(argument, environment) {
   if (argument) return path.resolve(argument)
   const configured = environment.CLOUDFLARE_FLEET_POLICY_FILE
-  if (!configured) return DEFAULT_POLICY_FILE
+  if (!configured) return defaultFleetPolicyFile(environment)
   if (!path.isAbsolute(configured)) {
-    throw new Error("CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path")
+    throw new FleetConfigurationError(
+      "CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path",
+    )
   }
   return path.resolve(configured)
 }
@@ -180,8 +155,12 @@ export async function collectFleetAudit(options = {}) {
   const apiToken = environment.CLOUDFLARE_API_TOKEN
   const accountId = options.accountId || options.api?.accountId
     || environment.CLOUDFLARE_ACCOUNT_ID
-  if (!options.api && !apiToken) throw new Error("CLOUDFLARE_API_TOKEN is required")
-  if (!accountId) throw new Error("CLOUDFLARE_ACCOUNT_ID is required")
+  if (!options.api && !apiToken) {
+    throw new FleetConfigurationError("CLOUDFLARE_API_TOKEN is required")
+  }
+  if (!accountId) {
+    throw new FleetConfigurationError("CLOUDFLARE_ACCOUNT_ID is required")
+  }
   const api = options.api || new CloudflareApi({ accountId, apiToken })
   const stateFile = resolveStateFile(options.stateFile, environment)
   const policyFile = resolvePolicyFile(options.policyFile, environment)
@@ -252,6 +231,9 @@ if (isMainModule(import.meta.url)) {
     },
   }).catch((error) => {
     process.stderr.write(`[audit] ${error instanceof Error ? error.message : String(error)}\n`)
-    process.exitCode = FLEET_AUDIT_EXIT_CODE.ERROR
+    process.exitCode = error instanceof CliUsageError
+      || error instanceof FleetConfigurationError
+      ? FLEET_CLI_EXIT_CODE.USAGE
+      : FLEET_AUDIT_EXIT_CODE.ERROR
   })
 }

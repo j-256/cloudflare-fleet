@@ -70,5 +70,5 @@ test("maintenance help is explicit and side-effect free to parse", () => {
 test("maintenance CLIs reject unsupported short options", () => {
   assert.throws(() => parseCaptureScreenshotsArguments(["-x"]), /Unknown option: -x/)
   assert.throws(() => parseImportHostedStateArguments(["-x"]), /Unknown option: -x/)
-  assert.throws(() => parseDocumentationServerArguments(["-x"]), /Usage:/)
+  assert.throws(() => parseDocumentationServerArguments(["-x"]), /Unknown option: -x/)
 })

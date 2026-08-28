@@ -199,6 +199,28 @@ test("unified CLI returns a structured plan-changed error without leaking creden
   assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.PLAN_CHANGED])
 })
 
+test("unified CLI redacts credentials from runtime diagnostics", async () => {
+  const stdout = outputStream()
+  const secret = "secret-token-value"
+  await runFleetCli({
+    argv: ["activity", "list", "--format=json"],
+    environment: {
+      CLOUDFLARE_ACCOUNT_ID: "account-one",
+      CLOUDFLARE_API_TOKEN: secret,
+    },
+    service: {
+      async listActivity() {
+        throw new Error(`Request failed with ${secret}`)
+      },
+    },
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  assert.match(stdout.value(), /\[redacted\]/)
+  assert.doesNotMatch(stdout.value(), new RegExp(secret))
+})
+
 test("unified CLI preserves the existing audit help entry", async () => {
   const stdout = outputStream()
   await runFleetCommand({
@@ -207,8 +229,36 @@ test("unified CLI preserves the existing audit help entry", async () => {
     stdout: stdout.stream,
   })
 
-  assert.match(stdout.value(), /cloudflare-fleet-audit/)
+  assert.match(stdout.value(), /cloudflare-fleet audit/)
   assert.match(stdout.value(), /without writing/)
+})
+
+test("unified CLI serves namespace and leaf help without requiring operands", async () => {
+  const cases = [
+    [["alignment", "--help"], /cloudflare-fleet alignment/],
+    [["alignment", "plan", "--help"], /SELECTOR/],
+    [["intent", "--help"], /cloudflare-fleet intent/],
+    [["change", "--help"], /cloudflare-fleet change/],
+    [["activity", "--help"], /cloudflare-fleet activity/],
+    [["activity", "undo", "--help"], /guarded undo/],
+    [["hosted", "--help"], /cloudflare-fleet hosted/],
+    [["schema", "--help"], /cloudflare-fleet schema/],
+    [["schema", "change", "--help"], /machine-readable public input schemas/],
+    [["help", "intent"], /cloudflare-fleet intent/],
+  ]
+
+  for (const [argv, pattern] of cases) {
+    const stdout = outputStream()
+    const exits = []
+    await runFleetCommand({
+      argv,
+      onExitCode: (code) => exits.push(code),
+      stderr: outputStream().stream,
+      stdout: stdout.stream,
+    })
+    assert.match(stdout.value(), pattern)
+    assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.SUCCESS])
+  }
 })
 
 test("unified CLI help documents the bounded agent surface", () => {
@@ -217,6 +267,166 @@ test("unified CLI help documents the bounded agent surface", () => {
   assert.match(usage, /--expect-plan DIGEST/)
   assert.match(usage, /activity list/)
   assert.match(usage, /cloudflare-fleet mcp/)
+  assert.match(usage, /cloudflare-fleet change plan/)
+  assert.match(usage, /activity undo plan/)
+})
+
+test("unified CLI parses canonical intent, change, undo, and schema commands", () => {
+  assert.deepEqual(
+    parseFleetArguments(["intent", "plan", "-iintent.json", "-fjson"]),
+    {
+      command: "intent-plan",
+      expectedDigest: null,
+      format: "json",
+      input: "intent.json",
+      stateFile: null,
+    },
+  )
+  assert.deepEqual(
+    parseFleetArguments([
+      "change",
+      "apply",
+      "--input=change.json",
+      "--expect-plan",
+      "sha256:approved",
+    ]),
+    {
+      command: "change-apply",
+      expectedDigest: "sha256:approved",
+      format: "text",
+      input: "change.json",
+      policyFile: null,
+      stateFile: null,
+    },
+  )
+  assert.equal(
+    parseFleetArguments([
+      "activity",
+      "undo",
+      "plan",
+      "--id",
+      "activity-one",
+    ]).command,
+    "activity-undo-plan",
+  )
+  assert.deepEqual(parseFleetArguments(["schema", "change"]), {
+    command: "schema-change",
+  })
+})
+
+test("unified CLI exports intent documents and accepts bounded JSON input", async () => {
+  const intentOutput = outputStream()
+  await runFleetCommand({
+    argv: ["intent", "show"],
+    service: {
+      async getIntent() {
+        return {
+          accountId: "account-one",
+          document: { accountId: "account-one", revision: "intent-one" },
+          schemaVersion: 1,
+          status: "ok",
+        }
+      },
+    },
+    stderr: outputStream().stream,
+    stdout: intentOutput.stream,
+  })
+  assert.deepEqual(JSON.parse(intentOutput.value()), {
+    accountId: "account-one",
+    revision: "intent-one",
+  })
+
+  const changeOutput = outputStream()
+  let requestedChange
+  await runFleetCommand({
+    argv: ["change", "plan", "--input", "-", "--format=json"],
+    inputText: JSON.stringify({
+      desired: "on",
+      kind: "zone-setting-update",
+      settingId: "always_use_https",
+      zoneId: "zone-one",
+    }),
+    service: {
+      async planChange(change) {
+        requestedChange = change
+        return {
+          accountId: "account-one",
+          change,
+          planSet: null,
+          reason: "Already aligned",
+          schemaVersion: 1,
+          status: "aligned",
+          title: "Update zone setting",
+        }
+      },
+    },
+    stderr: outputStream().stream,
+    stdout: changeOutput.stream,
+  })
+  assert.equal(requestedChange.kind, "zone-setting-update")
+  assert.equal(JSON.parse(changeOutput.value()).status, "aligned")
+})
+
+test("unified CLI emits public input schemas without requiring credentials", async () => {
+  const stdout = outputStream()
+  await runFleetCommand({
+    argv: ["schema", "change"],
+    environment: {},
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  const schema = JSON.parse(stdout.value())
+  assert.equal(Array.isArray(schema.oneOf), true)
+  assert.match(stdout.value(), /zone-setting-update/)
+  assert.doesNotMatch(stdout.value(), /"method"/)
+})
+
+test("unified CLI maps invalid structured input to usage exit 2", async () => {
+  const exits = []
+  const stderr = outputStream()
+  await runFleetCli({
+    argv: ["change", "plan", "--input", "-"],
+    environment: {},
+    inputText: "{}",
+    onExitCode: (code) => exits.push(code),
+    stderr: stderr.stream,
+    stdout: outputStream().stream,
+  })
+
+  assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.USAGE])
+  assert.match(stderr.value(), /Fleet change is invalid/)
+})
+
+test("unified CLI maps missing operator configuration to exit 2", async () => {
+  const exits = []
+  const stdout = outputStream()
+  await runFleetCli({
+    argv: ["alignment", "list", "--format=json"],
+    environment: {},
+    onExitCode: (code) => exits.push(code),
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.USAGE])
+  assert.equal(JSON.parse(stdout.value()).status, "configuration-error")
+})
+
+test("unified CLI delegates dashboard arguments through the canonical command", async () => {
+  let arguments_
+  const result = await runFleetCommand({
+    argv: ["dashboard", "-rf", "--debug-port=9224"],
+    dashboardRunner(argv) {
+      arguments_ = argv
+      return "launched"
+    },
+    stderr: outputStream().stream,
+    stdout: outputStream().stream,
+  })
+
+  assert.equal(result, "launched")
+  assert.deepEqual(arguments_, ["-rf", "--debug-port=9224"])
 })
 
 test("unified CLI parses MCP state and policy profiles", () => {
