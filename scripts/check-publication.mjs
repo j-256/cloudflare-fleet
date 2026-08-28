@@ -9,6 +9,8 @@ const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DOCS_ROOT = path.join(PROJECT_ROOT, "docs")
 const REQUIRED_FILES = Object.freeze([
   ".github/workflows/ci.yml",
+  "AGENTS.md",
+  "CLAUDE.md",
   "CONTRIBUTING.md",
   "LICENSE",
   "README.md",
@@ -35,6 +37,9 @@ const PRIVATE_TRACKED_FILES = new Set([
   "fleet-policy.json",
   "wrangler.jsonc",
 ])
+const ALLOWED_SYMBOLIC_LINKS = Object.freeze({
+  "CLAUDE.md": "AGENTS.md",
+})
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 const TEXT_EXTENSIONS = new Set([
   ".css",
@@ -189,7 +194,11 @@ export async function checkPublication() {
     }
     const metadata = await fs.lstat(path.join(PROJECT_ROOT, file))
     if (metadata.isSymbolicLink()) {
-      errors.push(`Symbolic links are not allowed in the publication tree: ${file}`)
+      const expectedTarget = ALLOWED_SYMBOLIC_LINKS[file]
+      const actualTarget = await fs.readlink(path.join(PROJECT_ROOT, file))
+      if (!expectedTarget || actualTarget !== expectedTarget) {
+        errors.push(`Symbolic link is not allowed in the publication tree: ${file} -> ${actualTarget}`)
+      }
     }
   }
   await validateDocumentationLinks(files, errors)

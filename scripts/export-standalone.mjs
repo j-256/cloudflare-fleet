@@ -10,6 +10,9 @@ const PRIVATE_FILES = new Set([
   "fleet-policy.json",
   "wrangler.jsonc",
 ])
+const ALLOWED_SYMBOLIC_LINKS = Object.freeze({
+  "CLAUDE.md": "AGENTS.md",
+})
 
 function isPrivateFile(file) {
   return PRIVATE_FILES.has(file)
@@ -98,6 +101,16 @@ export async function exportStandalone(options) {
     const source = path.join(PROJECT_ROOT, file)
     const destination = path.join(outputDirectory, file)
     const metadata = await fs.lstat(source)
+    if (metadata.isSymbolicLink()) {
+      const expectedTarget = ALLOWED_SYMBOLIC_LINKS[file]
+      const actualTarget = await fs.readlink(source)
+      if (!expectedTarget || actualTarget !== expectedTarget) {
+        throw new Error(`Publication export does not allow symbolic link: ${file} -> ${actualTarget}`)
+      }
+      await fs.mkdir(path.dirname(destination), { recursive: true })
+      await fs.symlink(actualTarget, destination)
+      continue
+    }
     if (!metadata.isFile()) {
       throw new Error(`Publication export supports regular files only: ${file}`)
     }

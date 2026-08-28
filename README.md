@@ -171,7 +171,7 @@ npm run check:publication
 npm run export:standalone -- --output ../cloudflare-fleet-public
 ```
 
-The checker rejects operator files, symlinks, machine-private paths, malformed screenshots, and broken local documentation links. The exporter copies regular tracked files to an empty directory while excluding operator state and deployment configuration. It does not initialize a repository or create a remote, which allows a new public repository to begin from a clean source snapshot instead of private monorepo history.
+The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. The exporter copies regular tracked files and preserves the canonical relative `CLAUDE.md` link to `AGENTS.md` in an empty directory while excluding operator state and deployment configuration. It does not initialize a repository or create a remote, which allows a new public repository to begin from a clean source snapshot instead of private monorepo history.
 
 ## Security
 
