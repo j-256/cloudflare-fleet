@@ -8054,7 +8054,7 @@ function renderIntentManager() {
     : api.usesBackend
       ? auth.hosted
         ? "Intent is persisted in durable hosted state and shared by authorized dashboard windows."
-        : "Intent is persisted as project state and shared by normal dashboard windows."
+        : "Intent is persisted as local operator state and shared by normal dashboard windows."
       : "This debug session can inspect injected intent but cannot persist changes."
   elements.intentSummary.textContent = modeDetail
   elements.intentMetrics.replaceChildren(

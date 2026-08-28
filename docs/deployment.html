@@ -58,8 +58,10 @@
           <span class="step-number">1</span>
           <div>
             <h3>Install the pinned toolchain</h3>
-            <p>The lockfile pins Wrangler, the Access JWT library, and the browser test stack.</p>
-            <pre><code>npm ci</code></pre>
+            <p>The lockfile pins Wrangler, the Access JWT library, and the browser test stack. Install the declared source binary globally so every operator workflow uses the canonical dispatcher.</p>
+            <pre><code>npm ci
+npm install --global .
+cloudflare-fleet --help</code></pre>
           </div>
         </article>
 
@@ -91,7 +93,7 @@ export CLOUDFLARE_FLEET_D1_DATABASE_ID="the-returned-database-id"</code></pre>
 export CLOUDFLARE_ACCESS_AUD="your-access-application-audience"
 export CLOUDFLARE_ACCESS_TEAM_DOMAIN="https://your-team.cloudflareaccess.com"
 
-npm run configure:hosted -- \
+cloudflare-fleet hosted configure \
   --account-id "$CLOUDFLARE_ACCOUNT_ID" \
   --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
   --hostname fleet.example.com \
@@ -127,7 +129,7 @@ npm run deploy -- --secrets-file .dev.vars.production</code></pre>
           <div>
             <h3>Opt into reviewed writes</h3>
             <p>After reviewing the account boundary, Access policy, proxy allowlist, and read-only inventory, regenerate the same ignored file with <code>--write</code> and deploy again.</p>
-            <pre><code>npm run configure:hosted -- \
+            <pre><code>cloudflare-fleet hosted configure \
   --account-id "$CLOUDFLARE_ACCOUNT_ID" \
   --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
   --hostname fleet.example.com \
@@ -143,16 +145,19 @@ npm run deploy</code></pre>
 
     <section class="section prose" aria-labelledby="policy-heading">
       <h2 id="policy-heading">Operator policy exceptions</h2>
-      <p>Fleet ships with no policy exceptions. If one zone intentionally uses an exact Email DNS record that differs from the derived fleet baseline, copy <code>fleet-policy.example.json</code> to ignored <code>fleet-policy.json</code> and edit the relevant fields. Local launches load it directly; <code>configure:hosted</code> validates and embeds the same document into the ignored Wrangler variables.</p>
-      <pre><code>cp fleet-policy.example.json fleet-policy.json
-npm run configure:hosted -- ...</code></pre>
+      <p>Fleet ships with no policy exceptions. If one zone intentionally uses an exact Email DNS record that differs from the derived fleet baseline, copy <code>fleet-policy.example.json</code> to the per-user Fleet configuration directory and edit the relevant fields. Local launches load it directly; <code>cloudflare-fleet hosted configure</code> validates and embeds the same document into the ignored Wrangler variables.</p>
+      <pre><code>umask 077
+fleet_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/cloudflare-fleet"
+mkdir -p "$fleet_config_dir"
+cp fleet-policy.example.json "$fleet_config_dir/fleet-policy.json"
+cloudflare-fleet hosted configure ...</code></pre>
       <p>An Email DNS exception does not hide the matrix difference. It removes only the exact allowed variant from actionable policy drift.</p>
     </section>
 
     <section class="section prose" aria-labelledby="state-import-heading">
       <h2 id="state-import-heading">Import existing local intent and activity</h2>
       <p>When moving an established local fleet to hosted mode, apply the migration first and import the ignored account-scoped state file once.</p>
-      <pre><code>npm run state:import:hosted -- state.json</code></pre>
+      <pre><code>cloudflare-fleet hosted import-state</code></pre>
       <p>The importer reads the D1 identifier from the ignored Wrangler configuration and refuses to replace populated hosted state. Use <code>--force</code> only after reviewing both local and remote data.</p>
     </section>
 
@@ -161,12 +166,12 @@ npm run configure:hosted -- ...</code></pre>
       <p>Hosted deployment does not replace local mode. On macOS, provide the account token and identifier in the shell and launch the ordinary browser workflow. It shares the same UI, policy, intent schema, write planner, activity model, and verification code.</p>
       <pre><code>export CLOUDFLARE_API_TOKEN="your-account-token"
 export CLOUDFLARE_ACCOUNT_ID="your-account-id"
-./launch.sh --read-only</code></pre>
-      <p>Use <code>./launch.sh --write</code> for the full local workflow. Local state defaults to ignored <code>state.json</code>; set <code>CLOUDFLARE_FLEET_STATE_FILE</code> to an absolute path for another profile.</p>
-      <p>The local fleet CLI and stdio MCP server inherit the same credentials and use the same ignored state profile. Start them from the project directory after installing dependencies:</p>
-      <pre><code>npm run fleet -- alignment list --format json
-npm run mcp</code></pre>
-      <p>An MCP client can launch <code>node /absolute/path/to/cloudflare-fleet/src/mcp.mjs</code> directly. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named audit, alignment, and activity tools.</p>
+cloudflare-fleet dashboard --read-only</code></pre>
+      <p>Use <code>cloudflare-fleet dashboard --write</code> for the full local workflow. State defaults to <code>$XDG_STATE_HOME/cloudflare-fleet/state.json</code>, falling back to <code>~/.local/state/cloudflare-fleet/state.json</code>; policy uses the corresponding per-user configuration directory. Select another profile with <code>--state-file</code> or <code>--policy-file</code>. The checkout-local <code>./launch.sh</code> wrapper accepts the same dashboard options.</p>
+      <p>The local fleet CLI and stdio MCP server inherit the same credentials and use the same durable state profile:</p>
+      <pre><code>cloudflare-fleet alignment list --format json
+cloudflare-fleet mcp</code></pre>
+      <p>An MCP client should use <code>cloudflare-fleet</code> as its command and <code>["mcp"]</code> as its arguments. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named audit, intent, alignment, bounded change, activity, and guarded undo tools.</p>
     </section>
 
     <section class="section prose" aria-labelledby="pages-heading">

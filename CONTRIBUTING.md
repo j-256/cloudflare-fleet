@@ -29,6 +29,7 @@ Do not add a real domain, account identifier, D1 identifier, Access audience, te
 
 - Keep browser, local broker, and hosted Worker behavior aligned through the shared transport and persistence contracts.
 - Give a new write path an explicit capability, scoped preflight reads, endpoint-specific planner, reviewed operation shape, durable activity behavior, and authoritative verification mapping.
+- Add equivalent purpose-built CLI and MCP read, plan, apply, confirmation, persistence, verification, activity, and recovery coverage for every operator capability. Do not add a raw Cloudflare request escape hatch.
 - Leave unsupported or schema-unknown resources comparison-only instead of widening a generic adapter.
 - Add focused unit coverage near the domain module and an end-to-end journey when behavior crosses the browser and backend boundary.
 - Keep documentation prose soft-wrapped and use straight ASCII quotes.

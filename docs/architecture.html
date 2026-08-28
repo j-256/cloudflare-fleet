@@ -81,7 +81,7 @@
         <article class="card">
           <p class="card-accent">EXECUTION</p>
           <h3>Plan and verify</h3>
-          <p><code>src/alignment-service.mjs</code> binds fresh reads and deterministic operations into a digest, while <code>src/write-executor.mjs</code> journals, executes in order, and delegates exact authoritative rereads to <code>src/write-verification.mjs</code>.</p>
+          <p><code>src/alignment-service.mjs</code>, <code>src/fleet-change.mjs</code>, and <code>src/intent-plan.mjs</code> bind bounded requests to deterministic digests. <code>src/write-executor.mjs</code> journals Cloudflare changes, executes them in order, and delegates exact authoritative rereads to <code>src/write-verification.mjs</code>.</p>
         </article>
         <article class="card">
           <p class="card-accent">HOSTED BACKEND</p>
@@ -91,7 +91,7 @@
         <article class="card">
           <p class="card-accent">LOCAL BACKEND</p>
           <h3>Isolate each session</h3>
-          <p><code>launch.sh</code> creates the session, <code>src/session-broker.mjs</code> serves and proxies it, and the state, intent, activity, and cache stores validate every persisted document.</p>
+          <p><code>cloudflare-fleet dashboard</code> delegates to the compatible <code>launch.sh</code> session launcher, <code>src/session-broker.mjs</code> serves and proxies it, and the state, intent, activity, and cache stores validate every persisted document.</p>
         </article>
         <article class="card">
           <p class="card-accent">AUDIT</p>
@@ -101,7 +101,7 @@
         <article class="card">
           <p class="card-accent">AGENT INTERFACE</p>
           <h3>Expose bounded operations</h3>
-          <p><code>src/fleet-service.mjs</code> supplies the headless local contract used by <code>src/cli.mjs</code> and <code>src/mcp.mjs</code>. Agents receive structured plans and activity without an arbitrary API passthrough.</p>
+          <p><code>src/fleet-service.mjs</code> supplies the complete headless local contract used by <code>src/cli.mjs</code> and <code>src/mcp.mjs</code>. It covers audit inputs, intent persistence, alignment, bounded direct changes, activity, guarded undo, and verified recovery without an arbitrary API passthrough.</p>
         </article>
       </div>
     </section>
@@ -125,18 +125,18 @@
       <div class="section-heading">
         <p class="eyebrow">Agent interface</p>
         <h2 id="agent-interface-heading">Automation uses the same bounded state machine</h2>
-        <p>The CLI and local stdio MCP server call the shared alignment service instead of duplicating dashboard planning. Both expose policy, row, and cell selectors; structured plan digests; revision-bound pending activity; ordered writes; and exact verification reads.</p>
+        <p>The CLI and local stdio MCP server call the shared fleet service instead of duplicating dashboard planning. Both expose complete revisioned intent, policy, row, and cell alignment selectors, discriminated direct-change requests, structured plan digests, revision-bound pending activity, guarded undo, ordered writes, and exact verification reads.</p>
       </div>
       <div class="mode-grid">
         <article class="mode-card">
           <p class="card-accent">CLI</p>
           <h3>Explicit noninteractive approval</h3>
-          <p>A caller lists candidates, prepares a fresh plan, presents it for review, and supplies that exact digest to apply. Apply replans and exits without mutation if the digest changed.</p>
+          <p>The installed <code>cloudflare-fleet</code> command launches the dashboard, audits, exports or replaces intent, prepares alignment and direct-change plans, inspects activity, and performs guarded undo. A caller presents the complete plan and supplies that exact digest to apply; fresh replanning exits without mutation if it changed.</p>
         </article>
         <article class="mode-card">
           <p class="card-accent">MCP</p>
           <h3>Interactive protocol confirmation</h3>
-          <p>The stdio server exposes named audit, alignment, and activity tools. Batched apply reuses an intent-bound candidate baseline, composes shared live reads once, displays every method, path, zone, label, body, and digest, then elicits one explicit approval through authenticated short-lived request state. It repeats the composed live plan inside the write lock before sequential execution.</p>
+          <p>The stdio server exposes paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every mutation displays its exact request and plan, elicits one explicit approval through authenticated short-lived request state, and enters the same fresh locked apply path. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
         </article>
       </div>
       <div class="callout">
@@ -145,7 +145,7 @@
       </div>
       <div class="callout">
         <strong>No raw control-plane tool</strong>
-        <p>Neither interface accepts arbitrary Cloudflare methods or paths, and neither mutates fleet intent. The direct local process holds the configured token, so its host environment and outputs remain part of the trusted operator boundary.</p>
+        <p>Neither interface accepts arbitrary Cloudflare methods or paths. Complete fleet intent replacement is a separate local persistence operation with account, schema, revision, diff, digest, and lock checks; it cannot smuggle a Cloudflare request. The direct local process holds the configured token, so its host environment and outputs remain part of the trusted operator boundary.</p>
       </div>
     </section>
 
@@ -153,7 +153,7 @@
       <div class="section-heading">
         <p class="eyebrow">Mutation lifecycle</p>
         <h2 id="write-flow-heading">A write is a verified state transition, not a button click</h2>
-        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources.</p>
+        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. Bounded direct changes derive their reads and API operations from a discriminated request type rather than caller-supplied paths. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources. Guarded undo rereads the recorded post-write targets before review and again before sending the inverse.</p>
       </div>
       <div class="diagram-frame">
         <img src="diagrams/write-flow.svg" width="1400" height="640" alt="Reviewed write flow from desired state through live read, plan, confirmation, pending journal, execution, verification, cache patch, and guarded undo.">
