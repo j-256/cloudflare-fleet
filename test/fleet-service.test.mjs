@@ -13,7 +13,16 @@ import {
   FleetIntentChangedError,
   FLEET_SERVICE_STATUS,
 } from "../src/fleet-service.mjs"
-import { OPERATION_ACTIVITY_STATUS } from "../src/operation-history.mjs"
+import {
+  createEmptyFleetIntentDocument,
+  FLEET_INTENT_GROUP_MODE,
+  FLEET_INTENT_GROUP_NAME_SOURCE,
+  replaceFleetIntentGroup,
+} from "../src/fleet-intent.mjs"
+import {
+  createVerificationGuards,
+  OPERATION_ACTIVITY_STATUS,
+} from "../src/operation-history.mjs"
 import { AlignmentPlanChangedError } from "../src/write-executor.mjs"
 
 const SELECTOR = Object.freeze({ policyId: "policy-one" })
@@ -32,6 +41,28 @@ const PLAN_SET = Object.freeze({
       path: "zones/zone-one/settings/always_use_https",
     }],
   }],
+  validatedAt: "2026-08-12T00:00:00.000Z",
+})
+const CHANGE = Object.freeze({
+  desired: "on",
+  kind: "zone-setting-update",
+  settingId: "always_use_https",
+  zoneId: "zone-one",
+})
+const CHANGE_PLAN_SET = Object.freeze({
+  digest: "sha256:approved",
+  plans: [{
+    operations: [{
+      body: { value: "on" },
+      label: "Enable HTTPS",
+      method: "PATCH",
+      path: "zones/zone-one/settings/always_use_https",
+    }],
+    zoneId: "zone-one",
+    zoneName: "one.example",
+  }],
+  preview: [],
+  request: CHANGE,
   validatedAt: "2026-08-12T00:00:00.000Z",
 })
 
@@ -100,7 +131,7 @@ function serviceFixture(overrides = {}) {
     appendActivity: overrides.appendActivity || (async () => ({ entries: [] })),
     executePlanSet: overrides.executePlanSet || (async (options) => {
       events.push("execute")
-      await options.beforeExecute()
+      await options.beforeExecute?.()
       const verificationEntries = await options.verify([{
         kind: "setting",
         settingId: "always_use_https",
@@ -142,6 +173,11 @@ function serviceFixture(overrides = {}) {
       calls.batchBaselineInventories.push(options.baselineInventory)
       return batchPreparation()
     }),
+    ...(overrides.persistIntent ? { persistIntent: overrides.persistIntent } : {}),
+    ...(overrides.prepareChange ? { prepareChange: overrides.prepareChange } : {}),
+    ...(overrides.prepareIntentChange
+      ? { prepareIntentChange: overrides.prepareIntentChange }
+      : {}),
     now: overrides.now,
     readActivity: overrides.readActivity || (async () => ({
       entries: [
@@ -151,6 +187,8 @@ function serviceFixture(overrides = {}) {
       revision: "activity-one",
       updatedAt: "2026-08-12T00:00:00.000Z",
     })),
+    ...(overrides.readIntent ? { readIntent: overrides.readIntent } : {}),
+    ...(overrides.readPolicy ? { readPolicy: overrides.readPolicy } : {}),
     readState: overrides.readState || (async () => {
       stateReads += 1
       return { intent: { revision: currentRevision(stateReads) } }
@@ -343,4 +381,160 @@ test("fleet service returns activity newest first", async () => {
   const result = await service.listActivity()
 
   assert.deepEqual(result.entries.map((entry) => entry.id), ["newer", "older"])
+})
+
+test("fleet service plans and applies bounded direct changes under the write lock", async () => {
+  let preparations = 0
+  const policies = []
+  const { events, service } = serviceFixture({
+    prepareChange: async (_api, _change, options) => {
+      preparations += 1
+      policies.push(await options.readPolicy())
+      return {
+        change: CHANGE,
+        planSet: CHANGE_PLAN_SET,
+        reason: "One bounded write prepared",
+        status: "planned",
+        title: "Update zone setting",
+      }
+    },
+  })
+
+  const plan = await service.planChange(CHANGE)
+  const result = await service.applyChange(CHANGE, "sha256:approved")
+
+  assert.equal(plan.planSet.digest, "sha256:approved")
+  assert.equal(result.status, OPERATION_ACTIVITY_STATUS.VERIFIED)
+  assert.equal(result.applied, true)
+  assert.equal(preparations, 2)
+  assert.deepEqual(policies, [
+    { emailDnsRecordExceptions: [], schemaVersion: 1 },
+    { emailDnsRecordExceptions: [], schemaVersion: 1 },
+  ])
+  assert.deepEqual(events, ["lock", "execute"])
+})
+
+test("fleet service atomically plans and persists complete intent documents", async () => {
+  const current = createEmptyFleetIntentDocument("account-one")
+  const desired = replaceFleetIntentGroup(current, {
+    id: "production",
+    members: [{ zoneId: "zone-one", zoneName: "one.example" }],
+    mode: FLEET_INTENT_GROUP_MODE.MEMBERS,
+    name: "Production",
+    nameSource: FLEET_INTENT_GROUP_NAME_SOURCE.CUSTOM,
+  })
+  const persisted = {
+    ...desired,
+    revision: "b".repeat(64),
+    updatedAt: "2026-08-28T00:00:00.000Z",
+  }
+  const persistenceCalls = []
+  const { events, service } = serviceFixture({
+    persistIntent: async (...arguments_) => {
+      persistenceCalls.push(arguments_)
+      return persisted
+    },
+    readIntent: async () => current,
+  })
+
+  const shown = await service.getIntent()
+  const plan = await service.planIntent(desired)
+  const result = await service.applyIntent(desired, plan.planSet.digest)
+
+  assert.deepEqual(shown.document, current)
+  assert.deepEqual(plan.diff.groups.added, ["production"])
+  assert.equal(result.status, "saved")
+  assert.equal(result.document.revision, "b".repeat(64))
+  assert.equal(persistenceCalls.length, 1)
+  assert.deepEqual(events, ["lock"])
+})
+
+test("fleet service plans and executes guarded undo only while live state matches", async () => {
+  const target = {
+    kind: "setting",
+    settingId: "always_use_https",
+    zoneId: "zone-one",
+  }
+  const liveEntry = {
+    response: { result: { value: "on" }, status: 200 },
+    target,
+  }
+  const entry = {
+    id: "activity-one",
+    inverse: {
+      available: true,
+      plans: [{
+        id: "undo:setting",
+        kind: "operation-undo",
+        operations: [{
+          body: { value: "off" },
+          currentValue: "on",
+          label: "Undo: Enable HTTPS",
+          method: "PATCH",
+          path: "zones/zone-one/settings/always_use_https",
+        }],
+        summary: "Undo Enable HTTPS",
+        zoneId: "zone-one",
+        zoneName: "one.example",
+      }],
+      reason: "Live state must still match",
+    },
+    status: OPERATION_ACTIVITY_STATUS.VERIFIED,
+    title: "Enable HTTPS",
+    verification: createVerificationGuards([liveEntry]),
+  }
+  const { events, service } = serviceFixture({
+    readActivity: async () => ({
+      entries: [entry],
+      revision: "activity-revision",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    }),
+    readVerificationTarget: async () => liveEntry,
+  })
+
+  const plan = await service.planActivityUndo("activity-one")
+  const result = await service.applyActivityUndo(
+    "activity-one",
+    plan.planSet.digest,
+  )
+
+  assert.equal(plan.status, FLEET_SERVICE_STATUS.PLANNED)
+  assert.equal(result.status, OPERATION_ACTIVITY_STATUS.VERIFIED)
+  assert.equal(result.activityId, "activity-one")
+  assert.deepEqual(events, ["lock", "execute"])
+})
+
+test("fleet service blocks guarded undo after live drift", async () => {
+  const target = {
+    kind: "setting",
+    settingId: "always_use_https",
+    zoneId: "zone-one",
+  }
+  const entry = {
+    id: "activity-one",
+    inverse: { available: true, plans: [], reason: "Reversible" },
+    status: OPERATION_ACTIVITY_STATUS.VERIFIED,
+    title: "Enable HTTPS",
+    verification: createVerificationGuards([{
+      response: { result: { value: "on" }, status: 200 },
+      target,
+    }]),
+  }
+  const { service } = serviceFixture({
+    readActivity: async () => ({
+      entries: [entry],
+      revision: "activity-revision",
+      updatedAt: "2026-08-28T00:00:00.000Z",
+    }),
+    readVerificationTarget: async () => ({
+      response: { result: { value: "off" }, status: 200 },
+      target,
+    }),
+  })
+
+  const result = await service.planActivityUndo("activity-one")
+
+  assert.equal(result.status, FLEET_SERVICE_STATUS.BLOCKED)
+  assert.equal(result.planSet, null)
+  assert.equal(result.differences.length, 1)
 })
