@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" role="img" aria-labelledby="title description">
+  <title id="title">Cloudflare Fleet reviewed write flow</title>
+  <desc id="description">A cell, row, policy, or workflow change triggers a scoped live read, normalization, planning, human review, durable pending record, execution, scoped verification, and a matrix and cache patch. No-op plans stop without writing, stale reads return to review, and verified operations may offer a guarded inverse.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#5de1d4"/>
+    </marker>
+    <marker id="arrow-violet" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#bc8cff"/>
+    </marker>
+    <style>
+      .box { fill: #10222f; stroke: #36566a; stroke-width: 2 }
+      .box-review { fill: #181d31; stroke: #bc8cff }
+      .box-write { fill: #122827; stroke: #5de1d4 }
+      .box-stop { fill: #261e13; stroke: #ffb454 }
+      .step { fill: #5de1d4; font: 700 12px ui-monospace, monospace; letter-spacing: 1px }
+      .step-review { fill: #bc8cff }
+      .step-stop { fill: #ffb454 }
+      .label { fill: #eff8f7; font: 700 17px ui-sans-serif, system-ui, sans-serif }
+      .copy { fill: #a7bac6; font: 13px ui-sans-serif, system-ui, sans-serif }
+      .flow { fill: none; stroke: #5de1d4; stroke-width: 3; marker-end: url(#arrow) }
+      .flow-undo { fill: none; stroke: #bc8cff; stroke-width: 3; marker-end: url(#arrow-violet) }
+      .flow-stop { fill: none; stroke: #ffb454; stroke-width: 2; stroke-dasharray: 7 6 }
+    </style>
+  </defs>
+  <rect width="1400" height="640" rx="24" fill="#07121a"/>
+  <text x="42" y="48" fill="#eff8f7" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Every mutation is read, planned, reviewed, recorded, and verified</text>
+
+  <g transform="translate(42 112)">
+    <rect class="box" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">01 REQUEST</text>
+    <text x="18" y="59" class="label">Desired state</text>
+    <text x="18" y="84" class="copy">Cell, row, or policy</text>
+  </g>
+  <g transform="translate(242 112)">
+    <rect class="box" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">02 READ</text>
+    <text x="18" y="59" class="label">Live preflight</text>
+    <text x="18" y="84" class="copy">Smallest fresh scope</text>
+  </g>
+  <g transform="translate(442 112)">
+    <rect class="box" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">03 PLAN</text>
+    <text x="18" y="59" class="label">Safe adapter</text>
+    <text x="18" y="84" class="copy">Exact API operations</text>
+  </g>
+  <g transform="translate(642 112)">
+    <rect class="box box-review" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step step-review">04 REVIEW</text>
+    <text x="18" y="59" class="label">Human confirms</text>
+    <text x="18" y="84" class="copy">Targets, before, after</text>
+  </g>
+  <g transform="translate(842 112)">
+    <rect class="box box-write" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">05 RECORD</text>
+    <text x="18" y="59" class="label">Pending journal</text>
+    <text x="18" y="84" class="copy">Saved before mutation</text>
+  </g>
+  <g transform="translate(1042 112)">
+    <rect class="box box-write" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">06 EXECUTE</text>
+    <text x="18" y="59" class="label">Cloudflare API</text>
+    <text x="18" y="84" class="copy">Ordered request set</text>
+  </g>
+
+  <path class="flow" d="M214 170H242"/>
+  <path class="flow" d="M414 170H442"/>
+  <path class="flow" d="M614 170H642"/>
+  <path class="flow" d="M814 170H842"/>
+  <path class="flow" d="M1014 170H1042"/>
+
+  <g transform="translate(1042 322)">
+    <rect class="box box-write" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">07 VERIFY</text>
+    <text x="18" y="59" class="label">Scoped reread</text>
+    <text x="18" y="84" class="copy">Authoritative result</text>
+  </g>
+  <g transform="translate(842 322)">
+    <rect class="box" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step">08 PATCH</text>
+    <text x="18" y="59" class="label">Matrix + cache</text>
+    <text x="18" y="84" class="copy">One verified update</text>
+  </g>
+  <g transform="translate(642 322)">
+    <rect class="box box-review" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step step-review">09 ACTIVITY</text>
+    <text x="18" y="59" class="label">Guarded undo</text>
+    <text x="18" y="84" class="copy">Only when lossless</text>
+  </g>
+  <path class="flow" d="M1128 228V322"/>
+  <path class="flow" d="M1042 380H1014"/>
+  <path class="flow-undo" d="M842 380H814"/>
+
+  <g transform="translate(242 322)">
+    <rect class="box box-stop" width="172" height="116" rx="14"/>
+    <text x="18" y="28" class="step step-stop">SAFE STOP</text>
+    <text x="18" y="59" class="label">No operation</text>
+    <text x="18" y="84" class="copy">Already aligned</text>
+  </g>
+  <path class="flow-stop" d="M528 228C528 280 328 270 328 322"/>
+  <text x="398" y="272" class="copy" fill="#ffb454">No-op plan</text>
+
+  <g transform="translate(442 492)">
+    <rect class="box box-stop" width="372" height="104" rx="14"/>
+    <text x="18" y="28" class="step step-stop">STALE OR DIVERGENT</text>
+    <text x="18" y="58" class="label">Return to a fresh review</text>
+    <text x="18" y="82" class="copy">A later change is never overwritten by an old confirmation</text>
+  </g>
+  <path class="flow-stop" d="M1128 438C1128 544 814 544 814 544"/>
+  <path class="flow-undo" d="M642 380C590 380 590 492 628 492"/>
+  <text x="922" y="528" class="copy" fill="#ffb454">Verification mismatch</text>
+  <text x="544" y="466" class="copy" fill="#bc8cff">Guard check before inverse</text>
+</svg>

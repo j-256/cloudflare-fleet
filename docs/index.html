@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Cloudflare Fleet is a self-hosted control plane for auditing and aligning Cloudflare zones through reviewed, verified changes.">
+  <meta name="theme-color" content="#071119">
+  <title>Cloudflare Fleet | Self-hosted Cloudflare control plane</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="index.html" aria-label="Cloudflare Fleet documentation home">
+        <span class="brand-mark" aria-hidden="true">CF</span>
+        <span class="brand-name">Cloudflare Fleet</span>
+      </a>
+      <nav class="site-nav" aria-label="Documentation">
+        <a href="index.html" aria-current="page">Overview</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="deployment.html">Deploy</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet">Repository</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="content" id="main">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Self-hosted Cloudflare operations</p>
+        <h1>See the fleet. Define intent. Review every change.</h1>
+        <p class="lede">Cloudflare Fleet turns configuration from many zones into one comparable matrix, then keeps every supported mutation behind a fresh read, an exact plan, human confirmation, and scoped verification.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="deployment.html">Deploy your fleet</a>
+          <a class="button" href="architecture.html">Explore the architecture</a>
+        </div>
+        <div class="signal-row" role="list" aria-label="Core properties">
+          <span class="signal" role="listitem">TOKEN STAYS SERVER-SIDE</span>
+          <span class="signal" role="listitem">READ-ONLY BY DEFAULT</span>
+          <span class="signal" role="listitem">NO THIRD-PARTY CONTROL PLANE</span>
+        </div>
+      </div>
+      <aside class="hero-console" aria-label="Cloudflare Fleet operating model">
+        <div class="console-bar"><span>FLEET / CONTROL PLANE</span><span class="console-status">PROTECTED</span></div>
+        <div class="console-body">
+          <div class="console-metric"><strong>Compare</strong><span>Normalize settings, DNS, DNSSEC, Email Routing, rules, and account surfaces across zones.</span></div>
+          <div class="console-flow"><b>Observed state</b><span aria-hidden="true">to</span><b>Fleet intent</b></div>
+          <div class="console-metric"><strong>Review</strong><span>See targets, current values, endpoints, methods, and request bodies before a write.</span></div>
+          <div class="console-flow"><b>Planned write</b><span aria-hidden="true">to</span><b>Live verification</b></div>
+          <div class="console-metric"><strong>Recover</strong><span>Keep a durable activity journal and offer guarded undo only when the inverse is lossless.</span></div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section" aria-labelledby="dashboard-heading">
+      <div class="section-heading">
+        <p class="eyebrow">One operational workspace</p>
+        <h2 id="dashboard-heading">Start with posture, move into evidence</h2>
+        <p>Fleet opens with a decision-oriented review surface, then lets operators move from differences to expected state and finally to supported change paths.</p>
+      </div>
+      <figure class="screenshot-frame">
+        <img src="screenshots/dashboard-overview.png" width="1440" height="1000" alt="Cloudflare Fleet dashboard showing a synthetic example fleet, fleet intent status, review cards, and automated workflows.">
+        <figcaption class="screenshot-caption">Generated from the deterministic local fixture. Every hostname uses the reserved <code>.example</code> namespace; no live account data is present.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section" aria-labelledby="capabilities-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Designed for careful operators</p>
+        <h2 id="capabilities-heading">Visibility without surrendering control</h2>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <p class="card-accent">01 / COMPARE</p>
+          <h3>Normalize the fleet</h3>
+          <p>Cloudflare resource shapes become stable facets with explicit identity and equality rules, so genuine differences stand apart from server metadata.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">02 / GOVERN</p>
+          <h3>Define expected state</h3>
+          <p>Presence and value intent compose across all zones and fixed scopes. Exact acknowledgements stay tied to one observed value, while supported drift exposes a direct alignment review.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">03 / CHANGE</p>
+          <h3>Plan before execution</h3>
+          <p>Cell, row, policy, and workflow changes reread their dependencies, produce endpoint-specific plans, save a pending journal entry, execute in order, and verify the smallest authoritative surface.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">04 / ASSIST</p>
+          <h3>Give agents bounded tools</h3>
+          <p>A JSON CLI and local stdio MCP server expose audit, intent alignment, and activity through exact plan digests, fresh replanning, and confirmation-gated writes instead of a raw API passthrough.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="alignment-heading">
+      <div class="section-heading">
+        <p class="eyebrow">From intent to action</p>
+        <h2 id="alignment-heading">Review a complete convergence plan</h2>
+        <p>Exact and forbidden intent can produce first-class alignment actions on a policy, matrix row, or individual drifting cell. Supported adapters include zone settings, Email Routing subaddressing and wizard preferences, DNS, DNSSEC, API-managed routes, redirects, and rules. Fleet refreshes the latest intent and the relevant facet across the account, then blocks the whole selected scope if any drift cell is conflicting, ambiguous, or unsupported.</p>
+      </div>
+      <figure class="screenshot-frame">
+        <img src="screenshots/intent-alignment.png" width="1440" height="1000" alt="Cloudflare Fleet intent alignment confirmation for a synthetic zone setting, showing the target zone, live current and desired values, API endpoint, method, and review acknowledgement.">
+        <figcaption class="screenshot-caption">The synthetic fleet's row action enters the same confirmation, verification, activity, and guarded undo flow used by direct edits.</figcaption>
+      </figure>
+      <figure class="screenshot-frame alignment-blocker-frame">
+        <img src="screenshots/alignment-blocked.png" width="1440" height="1000" alt="Cloudflare Fleet matrix showing a disabled intent alignment action with the exact read-only Email Routing status reason visible at row and cell scope.">
+        <figcaption class="screenshot-caption">A disabled control never hides its explanation in a tooltip. The exact blocker remains visible beside the affected action.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section" aria-labelledby="architecture-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Deploy it your way</p>
+        <h2 id="architecture-heading">One interface, two protected transports</h2>
+        <p>The browser application is shared. Run it behind Cloudflare Access and a Worker for durable anywhere access, or launch it through an ephemeral loopback broker on macOS. Credentials stay in the backend either way.</p>
+      </div>
+      <div class="diagram-frame">
+        <img src="diagrams/architecture.svg" width="1280" height="720" alt="Architecture diagram comparing the Access-protected Worker path with the local loopback broker path.">
+      </div>
+      <div class="hero-actions">
+        <a class="button" href="architecture.html">Read the architecture guide</a>
+        <a class="button" href="security.html">Review trust boundaries</a>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="modes-heading">
+      <div class="section-heading">
+        <p class="eyebrow">The complete operating model</p>
+        <h2 id="modes-heading">Hosted continuity, local independence</h2>
+      </div>
+      <div class="mode-grid">
+        <article class="mode-card">
+          <p class="card-accent">CLOUDFLARE WORKER</p>
+          <h3>Access-protected and durable</h3>
+          <ul>
+            <li>Cloudflare Access gates every asset and API request</li>
+            <li>The Worker validates the JWT audience and issuer again</li>
+            <li>D1 stores intent, activity, and inventory snapshots</li>
+            <li>A constrained proxy keeps the API token out of the browser</li>
+          </ul>
+        </article>
+        <article class="mode-card">
+          <p class="card-accent">LOCAL LOOPBACK</p>
+          <h3>Ephemeral and full-featured</h3>
+          <ul>
+            <li>A random session capability protects a loopback-only broker</li>
+            <li>Ignored local files hold fleet state and policy</li>
+            <li>The regular browser profile needs no weakened security flags</li>
+            <li>Local capabilities remain available without hosted infrastructure</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="interfaces-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Desktop depth, mobile reach</p>
+        <h2 id="interfaces-heading">The same controls adapt to the viewport</h2>
+        <p>Intent management remains a focused workspace, while narrow screens expose the complete filter model without shrinking the configuration matrix into an unreadable card list.</p>
+      </div>
+      <div class="image-pair">
+        <figure class="screenshot-frame">
+          <img src="screenshots/fleet-intent.png" width="1440" height="1000" alt="Fleet intent workspace with policies, groups, coverage, acknowledgements, and an evaluation summary.">
+          <figcaption class="screenshot-caption">Saving intent remains descriptive; the separate Review alignment action starts a fresh, confirmable Cloudflare plan.</figcaption>
+        </figure>
+        <figure class="screenshot-frame mobile-frame">
+          <img src="screenshots/mobile-dashboard.png" width="390" height="844" alt="Cloudflare Fleet responsive matrix controls and the first synthetic zone columns on a phone-sized viewport.">
+          <figcaption class="screenshot-caption">Responsive controls retain the full matrix model.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="cta" aria-labelledby="cta-heading">
+      <div>
+        <p class="eyebrow">Start safely</p>
+        <h2 id="cta-heading">Deploy read-only, inspect, then opt into writes.</h2>
+        <p>The generated hosted configuration defaults to read-only and stays ignored by Git.</p>
+      </div>
+      <a class="button button-primary" href="deployment.html">Open the deployment guide</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>Cloudflare Fleet is licensed under AGPL-3.0-only.</span>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="architecture.html">Architecture</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet/blob/main/CONTRIBUTING.md">Contributing</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

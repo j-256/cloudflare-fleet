@@ -1,0 +1,46 @@
+name: Bug report
+description: Report reproducible behavior that is not a security issue
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include live tokens, state files, Wrangler configuration, audit output, traces, or real-account screenshots. Report security issues privately through the Security tab.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Observed outcome
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Deployment mode
+      options:
+        - Hosted Worker
+        - Local loopback broker
+        - Read-only audit CLI
+        - Deterministic test fixture
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest sequence using synthetic data where possible.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release, branch, or revision name without private repository history.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Additional evidence
+      description: Sanitized console output, request shapes, or deterministic fixture details.

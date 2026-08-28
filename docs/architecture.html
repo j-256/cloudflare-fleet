@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Cloudflare Fleet architecture, deployment paths, data flow, and reviewed write lifecycle.">
+  <meta name="theme-color" content="#071119">
+  <title>Architecture | Cloudflare Fleet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="index.html" aria-label="Cloudflare Fleet documentation home">
+        <span class="brand-mark" aria-hidden="true">CF</span>
+        <span class="brand-name">Cloudflare Fleet</span>
+      </a>
+      <nav class="site-nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="architecture.html" aria-current="page">Architecture</a>
+        <a href="deployment.html">Deploy</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet">Repository</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="content" id="main">
+    <header class="page-intro">
+      <p class="eyebrow">Architecture</p>
+      <h1>Shared fleet logic behind narrow operator interfaces</h1>
+      <p class="lede">Fleet keeps comparison and desired-state logic in shared services while browser, CLI, and local MCP interfaces protect credentials, persistence, and Cloudflare API access according to their trust boundaries.</p>
+    </header>
+
+    <section class="section" aria-labelledby="deployment-architecture-heading">
+      <div class="section-heading">
+        <h2 id="deployment-architecture-heading">Deployment architecture</h2>
+        <p>Hosted and local sessions load the same asset graph and expose the same inventory, intent, activity, and Cloudflare transport contracts. Operator-specific state is deliberately outside the published tree.</p>
+      </div>
+      <div class="diagram-frame">
+        <img src="diagrams/architecture.svg" width="1280" height="720" alt="Cloudflare Fleet architecture showing hosted and local transports, D1, private files, and constrained Cloudflare API access.">
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="paths-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Transport boundary</p>
+        <h2 id="paths-heading">Two paths, equivalent application contracts</h2>
+      </div>
+      <div class="mode-grid">
+        <article class="mode-card">
+          <p class="card-accent">HOSTED</p>
+          <h3>Access and Worker</h3>
+          <p>Cloudflare Access authenticates the user at the edge. The Worker independently validates the signed assertion against the configured application audience and team-domain issuer before serving assets or API responses. D1 provides transactional persistence. The Cloudflare API token exists only as an encrypted Worker secret.</p>
+        </article>
+        <article class="mode-card">
+          <p class="card-accent">LOCAL</p>
+          <h3>Launcher and loopback broker</h3>
+          <p>The launcher creates a private temporary runtime and starts a broker on a random loopback port. The browser receives a random session capability, never the account token. The broker persists validated snapshots and state through mode-restricted local files and removes runtime material after the last dashboard connection closes.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="components-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Component map</p>
+        <h2 id="components-heading">Responsibilities stay explicit</h2>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <p class="card-accent">INVENTORY</p>
+          <h3>Read and normalize</h3>
+          <p><code>src/inventory.mjs</code> performs complete and scoped reads. <code>src/matrix.mjs</code> and <code>src/facet-equivalence.mjs</code> turn endpoint-specific data into stable identities, comparison values, and capabilities.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">INTENT</p>
+          <h3>Describe expected state</h3>
+          <p><code>src/fleet-intent.mjs</code> defines scopes, presence constraints, value constraints, acknowledgements, and coverage expectations. <code>src/intent-alignment.mjs</code> turns effective exact and forbidden intent into deterministic adapter targets only when every selected drift cell is supported.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">EXECUTION</p>
+          <h3>Plan and verify</h3>
+          <p><code>src/alignment-service.mjs</code> binds fresh reads and deterministic operations into a digest, while <code>src/write-executor.mjs</code> journals, executes in order, and delegates exact authoritative rereads to <code>src/write-verification.mjs</code>.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">HOSTED BACKEND</p>
+          <h3>Constrain and persist</h3>
+          <p><code>src/hosted/worker.mjs</code> owns routing, <code>src/hosted/access.mjs</code> validates Access, <code>src/hosted/proxy-policy.mjs</code> allowlists requests, and <code>src/hosted/d1-store.mjs</code> supplies transactional state.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">LOCAL BACKEND</p>
+          <h3>Isolate each session</h3>
+          <p><code>launch.sh</code> creates the session, <code>src/session-broker.mjs</code> serves and proxies it, and the state, intent, activity, and cache stores validate every persisted document.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">AUDIT</p>
+          <h3>Report without mutation</h3>
+          <p><code>src/audit.mjs</code> produces Markdown, JSON, or self-contained HTML. Core checks use the same inventory and intent model; deep mode adds bounded DNS, endpoint, account-resource, and dependency evidence.</p>
+        </article>
+        <article class="card">
+          <p class="card-accent">AGENT INTERFACE</p>
+          <h3>Expose bounded operations</h3>
+          <p><code>src/fleet-service.mjs</code> supplies the headless local contract used by <code>src/cli.mjs</code> and <code>src/mcp.mjs</code>. Agents receive structured plans and activity without an arbitrary API passthrough.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="intent-alignment-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Desired-state convergence</p>
+        <h2 id="intent-alignment-heading">Alignment is an explicit, all-or-nothing plan</h2>
+        <p>An operator can start from one drifting cell, an entire matrix row, or one saved policy's effective scope. Fleet composes layered exact expectations, preserves fields outside authored subsets, materializes zone-relative values, and maps forbidden presence to reversible removals where an adapter exists.</p>
+      </div>
+      <div class="diagram-frame">
+        <img src="diagrams/intent-alignment.svg" width="1400" height="720" alt="Intent alignment architecture showing cell, row, and policy scopes combining observed state, layered intent, and endpoint adapters before branching to a blocked safe stop, an already-aligned stop, or a full-account facet read and reviewed write flow.">
+      </div>
+      <div class="callout">
+        <strong>Fresh scope, complete decision</strong>
+        <p>The live preflight reads the relevant facet across every zone in the account, verifies that fleet membership is unchanged, reevaluates the latest saved intent, and refuses the entire row or policy action if any selected drift cell lacks a deterministic adapter. A cell action deliberately narrows only the action scope, not the account-wide membership and read check. Blocked controls render the exact reason in both the matrix and intent manager.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="agent-interface-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Agent interface</p>
+        <h2 id="agent-interface-heading">Automation uses the same bounded state machine</h2>
+        <p>The CLI and local stdio MCP server call the shared alignment service instead of duplicating dashboard planning. Both expose policy, row, and cell selectors; structured plan digests; revision-bound pending activity; ordered writes; and exact verification reads.</p>
+      </div>
+      <div class="mode-grid">
+        <article class="mode-card">
+          <p class="card-accent">CLI</p>
+          <h3>Explicit noninteractive approval</h3>
+          <p>A caller lists candidates, prepares a fresh plan, presents it for review, and supplies that exact digest to apply. Apply replans and exits without mutation if the digest changed.</p>
+        </article>
+        <article class="mode-card">
+          <p class="card-accent">MCP</p>
+          <h3>Interactive protocol confirmation</h3>
+          <p>The stdio server exposes named audit, alignment, and activity tools. Batched apply reuses an intent-bound candidate baseline, composes shared live reads once, displays every method, path, zone, label, body, and digest, then elicits one explicit approval through authenticated short-lived request state. It repeats the composed live plan inside the write lock before sequential execution.</p>
+        </article>
+      </div>
+      <div class="callout">
+        <strong>Throttle-aware reads</strong>
+        <p>Cloudflare GET requests honor Retry-After after HTTP 429 responses. An exhausted throttle aborts inventory collection instead of becoming an ordinary coverage gap, while mutation requests are never automatically retried.</p>
+      </div>
+      <div class="callout">
+        <strong>No raw control-plane tool</strong>
+        <p>Neither interface accepts arbitrary Cloudflare methods or paths, and neither mutates fleet intent. The direct local process holds the configured token, so its host environment and outputs remain part of the trusted operator boundary.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="write-flow-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Mutation lifecycle</p>
+        <h2 id="write-flow-heading">A write is a verified state transition, not a button click</h2>
+        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources.</p>
+      </div>
+      <div class="diagram-frame">
+        <img src="diagrams/write-flow.svg" width="1400" height="640" alt="Reviewed write flow from desired state through live read, plan, confirmation, pending journal, execution, verification, cache patch, and guarded undo.">
+      </div>
+      <div class="callout">
+        <strong>No silent widening</strong>
+        <p>If a planner cannot identify an exact writable endpoint, required dependency, or authoritative verification read, that path remains comparison-only. Fleet does not fall back to a generic write.</p>
+      </div>
+    </section>
+
+    <section class="section prose prose-wide" aria-labelledby="state-heading">
+      <div class="section-heading">
+        <p class="eyebrow">State model</p>
+        <h2 id="state-heading">Durable documents have separate jobs</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Document</th><th>Purpose</th><th>Hosted</th><th>Local</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Fleet intent</td><td>Zone scopes, desired-state policies, acknowledgements, and expected coverage</td><td>D1 with revision checks</td><td>Ignored state file with serialized atomic updates</td></tr>
+            <tr><td>Operation activity</td><td>Reviewed plans, pending and terminal results, verification evidence, and eligible inverse plans</td><td>Transactional append and finalize operations</td><td>Independent state section under the same file lock</td></tr>
+            <tr><td>Inventory snapshot</td><td>Last complete fleet reading plus newer scoped verification patches</td><td>D1 cache record</td><td>User cache directory</td></tr>
+            <tr><td>Fleet policy</td><td>Typed operator exceptions that stay visible but do not become actionable drift</td><td>Validated Worker variable generated from an ignored file</td><td>Ignored JSON loaded into the session runtime</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="cta" aria-labelledby="architecture-cta-heading">
+      <div>
+        <p class="eyebrow">Next step</p>
+        <h2 id="architecture-cta-heading">Choose the hosted or local path.</h2>
+        <p>The deployment guide starts hosted mode read-only and keeps local mode available.</p>
+      </div>
+      <a class="button button-primary" href="deployment.html">Open deployment</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>Cloudflare Fleet is licensed under AGPL-3.0-only.</span>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Overview</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet/blob/main/CONTRIBUTING.md">Contributing</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

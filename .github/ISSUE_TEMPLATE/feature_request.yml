@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose an inventory, intent, audit, or reviewed-write capability
+title: "Feature: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: operator_need
+    attributes:
+      label: Operator need
+      description: What fleet decision or workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_outcome
+    attributes:
+      label: Proposed outcome
+      description: Describe the observable result without assuming a particular implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: resources
+    attributes:
+      label: Cloudflare resources and permissions
+      description: Identify relevant products, API paths, scopes, and whether the feature should remain comparison-only or support writes.
+  - type: textarea
+    id: safety
+    attributes:
+      label: Read, review, and verification model
+      description: For a write capability, describe fresh dependencies, confirmation evidence, and authoritative verification.

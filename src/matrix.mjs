@@ -1,0 +1,1359 @@
+import {
+  displayJson,
+  groupBy,
+  materializeValue,
+  normalizeText,
+  normalizeValue,
+  relativeName,
+  shortDisplay,
+  stableString,
+} from "./normalize.mjs"
+import {
+  EMAIL_ROUTING_ACTION_KIND,
+  EMAIL_ROUTING_RULE_IDENTIFIER,
+  FLEET_ACTION_KIND,
+  HOLE_RESOLUTION_KIND,
+  MATRIX_CATEGORY,
+  RULESET_ACTION_KIND,
+  RULESET_KIND,
+} from "./constants.mjs"
+import { DNS_MATRIX_CATEGORIES } from "./matrix-filter.mjs"
+import {
+  dnsRecordCopyCapability,
+  dnsRecordEditCapability,
+  editableEmailRoutingRulePayload,
+  emailDnsRecordAssociationKey,
+  emailRoutingRuleEditCapability,
+  ruleCopyCapability,
+} from "./policies.mjs"
+import { rulePhaseLabel } from "./rule-presentation.mjs"
+import {
+  presentRedirect,
+  redirectSemanticIdentity,
+} from "./redirect-presentation.mjs"
+import { dnssecRequestedStatus } from "./dnssec.mjs"
+import {
+  orderedTxtRecordPurposes,
+  TXT_RECORD_PURPOSE_PRESENTATION,
+  txtRecordContent,
+  txtRecordIdentity,
+  txtRecordPurposeCounts,
+} from "./dns-record-purpose.mjs"
+import {
+  redirectIntentComparisonValue,
+  ruleExactComparisonValue,
+} from "./facet-equivalence.mjs"
+
+const EDITABLE_RULESET_KINDS = new Set([
+  RULESET_KIND.CUSTOM,
+  RULESET_KIND.ZONE,
+])
+const DNS_MATRIX_CATEGORY_SET = new Set(DNS_MATRIX_CATEGORIES)
+const EMAIL_ROUTING_MX_DRIFT_DESCRIPTION = "Cloudflare-assigned MX priorities are ignored for drift; live priorities remain inspectable and editable"
+const EXECUTE_RULE_ACTION = "execute"
+const MATRIX_MISSING_CANONICAL = "__missing__"
+const MX_RECORD_TYPE = "MX"
+const UNCONDITIONAL_RULE_EXPRESSION = "true"
+const TXT_RECORD_TYPE = "TXT"
+const NON_CONSENSUS_VARIANT_COLOR_COUNT = 5
+const RULE_MATRIX_CATEGORY_SET = new Set([
+  MATRIX_CATEGORY.REDIRECTS,
+  MATRIX_CATEGORY.RULESET_RULES,
+])
+
+function surfaceResult(zone, surfaceId) {
+  const surface = zone.surfaces[surfaceId]
+  return surface?.ok ? surface.result : undefined
+}
+
+function rowId(category, key) {
+  return `${category}\u0000${key}`
+}
+
+function compareCanonical(left, right) {
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+
+function comparisonMetadata(canonicalValues) {
+  const counts = new Map()
+  for (const canonical of canonicalValues) {
+    if (canonical === MATRIX_MISSING_CANONICAL) continue
+    counts.set(canonical, (counts.get(canonical) || 0) + 1)
+  }
+
+  const ranked = [...counts.entries()].sort(
+    ([leftCanonical, leftCount], [rightCanonical, rightCount]) =>
+      rightCount - leftCount || compareCanonical(leftCanonical, rightCanonical),
+  )
+  const leadingCount = ranked[0]?.[1] || 0
+  const hasUniqueConsensus = leadingCount > (ranked[1]?.[1] || 0)
+  const consensusCanonical = hasUniqueConsensus ? ranked[0][0] : null
+  const variantIndexes = new Map()
+  if (consensusCanonical !== null) variantIndexes.set(consensusCanonical, 0)
+  const nonConsensusVariants = [...counts.keys()]
+    .filter((canonical) => canonical !== consensusCanonical)
+    .sort(compareCanonical)
+  for (const [index, canonical] of nonConsensusVariants.entries()) {
+    variantIndexes.set(
+      canonical,
+      (index % NON_CONSENSUS_VARIANT_COLOR_COUNT) + 1,
+    )
+  }
+
+  return {
+    consensusCanonical,
+    consensusCount: hasUniqueConsensus ? leadingCount : 0,
+    variantCount: counts.size,
+    variantIndexes,
+  }
+}
+
+function inspectionValue(value) {
+  const serialized = JSON.stringify(value)
+  return serialized === undefined ? null : JSON.parse(serialized)
+}
+
+function addCell(rows, category, key, label, zone, value, options = {}) {
+  const id = rowId(category, key)
+  if (!rows.has(id)) {
+    rows.set(id, {
+      category,
+      descriptions: new Set(),
+      key,
+      label,
+      labelSources: new Set(),
+      cells: new Map(),
+      duplicateZoneNames: new Set(),
+      phase: options.phase || "",
+      resolutionKind: options.resolutionKind || null,
+    })
+  }
+  const row = rows.get(id)
+  if (options.description) row.descriptions.add(options.description)
+  row.labelSources.add(options.labelSource || "Facet definition")
+  if (options.phase) {
+    if (row.phase && row.phase !== options.phase) {
+      throw new Error(`Conflicting phases for ${category}: ${label}`)
+    }
+    row.phase = options.phase
+  }
+  if (options.resolutionKind) {
+    if (row.resolutionKind && row.resolutionKind !== options.resolutionKind) {
+      throw new Error(`Conflicting resolution kinds for ${category}: ${label}`)
+    }
+    row.resolutionKind = options.resolutionKind
+  }
+  if (value === undefined) return
+
+  if (row.cells.has(zone.meta.name)) row.duplicateZoneNames.add(zone.meta.name)
+  const normalized = options.normalized ?? normalizeValue(value, zone.meta.name, options)
+  const inspected = Object.prototype.hasOwnProperty.call(options, "inspectionValue")
+    ? options.inspectionValue
+    : normalized
+  const resolutionValue = Object.prototype.hasOwnProperty.call(options, "resolutionValue")
+    ? options.resolutionValue
+    : normalized
+  const hasIntentValue = Object.prototype.hasOwnProperty.call(options, "intentValue")
+  const intentValue = hasIntentValue
+    ? options.intentValue
+    : normalized
+  const cell = {
+    action: options.action || null,
+    canonical: stableString(normalized),
+    capability: options.capability || null,
+    display: options.display ?? shortDisplay(normalized),
+    full: options.full ?? displayJson(normalized),
+    inspectionValue: inspectionValue(inspected),
+    intentCanonical: stableString(intentValue),
+    uniquenessCanonical: stableString(materializeValue(intentValue, zone.meta.name)),
+    presentation: options.presentation || null,
+    parentAction: options.parentAction || null,
+    resolutionCanonical: stableString(resolutionValue),
+    resolutionSource: options.resolutionSource || null,
+    search: options.search || "",
+    secondaryAction: options.secondaryAction || null,
+    txtPurposeCounts: options.txtPurposeCounts || {},
+    txtPurposes: options.txtPurposes || [],
+  }
+  if (hasIntentValue) cell.intentValue = inspectionValue(intentValue)
+  if (Object.prototype.hasOwnProperty.call(options, "intentDisplay")) {
+    cell.intentDisplay = options.intentDisplay
+  }
+  row.cells.set(zone.meta.name, cell)
+}
+
+function addScalar(rows, inventory, category, key, label, getter, options = {}) {
+  for (const zone of inventory.zones) {
+    const value = getter(zone)
+    if (value !== undefined) {
+      addCell(rows, category, key, label, zone, value, {
+        labelSource: "Inventory field",
+        ...options,
+      })
+    }
+  }
+}
+
+function addZoneRows(rows, inventory) {
+  addScalar(rows, inventory, "Zone", "status", "Status", (zone) => zone.meta.status)
+  addScalar(rows, inventory, "Zone", "paused", "Paused", (zone) => zone.meta.paused)
+  addScalar(rows, inventory, "Zone", "type", "Zone type", (zone) => zone.meta.type)
+  addScalar(rows, inventory, "Zone", "plan", "Plan", (zone) => zone.meta.plan?.name)
+  addScalar(rows, inventory, "Zone", "development_mode", "Development mode", (zone) => zone.meta.development_mode)
+  addScalar(rows, inventory, "Zone", "setup_step", "Setup step", (zone) => zone.meta.meta?.step)
+  addScalar(rows, inventory, "Zone", "phishing_detected", "Phishing detected", (zone) => zone.meta.meta?.phishing_detected)
+  addScalar(rows, inventory, "Zone", "page_rule_quota", "Page rule quota", (zone) => zone.meta.meta?.page_rule_quota)
+}
+
+function addSettingRows(rows, inventory) {
+  const settingNames = new Set()
+  for (const zone of inventory.zones) {
+    for (const setting of surfaceResult(zone, "settings") || []) settingNames.add(setting.id)
+  }
+
+  for (const settingName of [...settingNames].sort()) {
+    for (const zone of inventory.zones) {
+      const setting = (surfaceResult(zone, "settings") || []).find((entry) => entry.id === settingName)
+      if (!setting) continue
+      addCell(
+        rows,
+        "Zone settings",
+        settingName,
+        settingName,
+        zone,
+        {
+          editable: setting.editable,
+          value: setting.value,
+        },
+        {
+          action: setting.editable
+            ? {
+                settingId: settingName,
+                type: "zone-setting",
+                value: setting.value,
+                zoneId: zone.meta.id,
+              }
+            : null,
+          capability: setting.editable
+            ? {
+                kind: "direct-edit",
+                label: "Direct setting edit",
+                reason: "Cloudflare reports editable=true for this zone setting",
+              }
+            : {
+                kind: "not-directly-editable",
+                label: "No direct setting edit",
+                reason: "Cloudflare reports editable=false for this zone setting; another product API may still configure equivalent behavior",
+              },
+          display: shortDisplay(setting.value),
+          full: displayJson({
+            directly_editable: setting.editable,
+            source: "Zone Settings API",
+            value: normalizeValue(setting.value, zone.meta.name),
+          }),
+          inspectionValue: normalizeValue(setting.value, zone.meta.name),
+          intentValue: normalizeValue(setting.value, zone.meta.name),
+          labelSource: "Setting ID",
+        },
+      )
+    }
+  }
+}
+
+function addDnssecRows(rows, inventory) {
+  for (const zone of inventory.zones) {
+    const dnssec = surfaceResult(zone, "dnssec")
+    if (!dnssec) continue
+    const normalized = normalizeValue(dnssec, zone.meta.name, {
+      omit: ["digest", "dnskey", "ds", "key_tag", "public_key"],
+    })
+    const requestedStatus = dnssecRequestedStatus(normalized.status)
+    const intentValue = typeof normalized.status === "string"
+      ? { status: requestedStatus ?? normalized.status }
+      : normalized
+    addCell(
+      rows,
+      "DNSSEC",
+      "configuration",
+      "DNSSEC configuration",
+      zone,
+      normalized,
+      {
+        intentDisplay: typeof normalized.status === "string"
+          ? requestedStatus ?? normalized.status
+          : shortDisplay(normalized),
+        intentValue,
+        labelSource: "Facet type",
+        resolutionValue: intentValue,
+      },
+    )
+  }
+}
+
+function emailRoutingRuleCellOptions(rule, zone, options = {}) {
+  const capability = emailRoutingRuleEditCapability(rule, options)
+  return {
+    action: capability.editable
+      ? {
+          catchAll: Boolean(options.catchAll),
+          ruleId: rule.id || "",
+          ruleIdentifier: options.catchAll
+            ? EMAIL_ROUTING_RULE_IDENTIFIER.CATCH_ALL
+            : rule.id,
+          type: EMAIL_ROUTING_ACTION_KIND.RULE_EDIT,
+          zoneId: zone.meta.id,
+        }
+      : null,
+    capability: capability.editable
+      ? null
+      : {
+          kind: "not-directly-editable",
+          label: "No direct route edit",
+          reason: capability.reason,
+        },
+  }
+}
+
+function emailRoutingComparisonValue(rule, zoneName, options = {}) {
+  const writable = editableEmailRoutingRulePayload(rule, options)
+  if (!options.catchAll) delete writable.priority
+  return normalizeValue(writable, zoneName)
+}
+
+function emailDnsMatrixRecord(record) {
+  return {
+    content: record.content,
+    priority: record.priority,
+    ttl: record.ttl,
+  }
+}
+
+function dnsMatrixRecord(record) {
+  return {
+    comment: record.comment,
+    content: record.content,
+    data: record.data,
+    priority: record.priority,
+    proxied: record.proxied,
+    settings: record.settings,
+    tags: record.tags,
+    ttl: record.ttl,
+  }
+}
+
+function normalizedDnsMatrixRecords(
+  records,
+  zoneName,
+  project,
+  ignoredPriorityIndexes = new Set(),
+) {
+  return normalizeValue(
+    records.map((record, index) => {
+      const value = project(record)
+      if (ignoredPriorityIndexes.has(index)) delete value.priority
+      return value
+    }),
+    zoneName,
+  )
+}
+
+function dnsTxtPurposeOptions(records) {
+  const txtPurposeCounts = txtRecordPurposeCounts(records)
+  const txtPurposes = orderedTxtRecordPurposes(Object.keys(txtPurposeCounts))
+  return {
+    search: txtPurposes.flatMap((purpose) => [
+      purpose,
+      TXT_RECORD_PURPOSE_PRESENTATION[purpose].label,
+    ]).join(" "),
+    txtPurposeCounts,
+    txtPurposes,
+  }
+}
+
+function dnsRecordBaseKey(record, zoneName) {
+  return `${String(record.type || "").toUpperCase()} ${relativeName(record.name, zoneName)}`
+}
+
+function splitTxtRecordBaseKeys(inventory) {
+  const splitKeys = new Set()
+  for (const zone of inventory.zones) {
+    const counts = new Map()
+    for (const record of surfaceResult(zone, "dns") || []) {
+      if (String(record.type || "").toUpperCase() !== TXT_RECORD_TYPE) continue
+      const key = dnsRecordBaseKey(record, zone.meta.name)
+      counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    for (const [key, count] of counts) {
+      if (count > 1) splitKeys.add(key)
+    }
+  }
+  return splitKeys
+}
+
+function dnsRecordSortKey(record, zoneName) {
+  const normalized = stableString(normalizeValue({
+    content: txtRecordContent(record),
+    data: record.data,
+    name: relativeName(record.name, zoneName),
+    type: String(record.type || "").toUpperCase(),
+  }, zoneName))
+  return `${normalized} | ${String(record.id || "")}`
+}
+
+function dnsRecordMatrixGroups(inventory) {
+  const splitTxtKeys = splitTxtRecordBaseKeys(inventory)
+  const definitions = new Map()
+  const groupsByZoneId = new Map()
+
+  for (const zone of inventory.zones) {
+    const groups = new Map()
+    const identityOccurrences = new Map()
+    const records = [...(surfaceResult(zone, "dns") || [])].sort(
+      (left, right) => dnsRecordSortKey(left, zone.meta.name)
+        .localeCompare(dnsRecordSortKey(right, zone.meta.name)),
+    )
+    for (const record of records) {
+      const baseKey = dnsRecordBaseKey(record, zone.meta.name)
+      const splitTxt = splitTxtKeys.has(baseKey)
+        && String(record.type || "").toUpperCase() === TXT_RECORD_TYPE
+      if (!splitTxt) {
+        if (!groups.has(baseKey)) groups.set(baseKey, [])
+        groups.get(baseKey).push(record)
+        if (!definitions.has(baseKey)) {
+          definitions.set(baseKey, {
+            key: baseKey,
+            label: baseKey,
+            splitTxt: false,
+          })
+        }
+        continue
+      }
+
+      const identity = txtRecordIdentity(record, zone.meta.name)
+      const identityKey = `${baseKey} | ${identity.key}`
+      const occurrence = (identityOccurrences.get(identityKey) || 0) + 1
+      identityOccurrences.set(identityKey, occurrence)
+      const occurrenceSuffix = occurrence === 1 ? "" : ` #${occurrence}`
+      const key = `${identityKey}${occurrenceSuffix}`
+      groups.set(key, [record])
+      if (!definitions.has(key)) {
+        definitions.set(key, {
+          key,
+          label: `${baseKey} | ${identity.label}${occurrenceSuffix}`,
+          splitTxt: true,
+        })
+      }
+    }
+    groupsByZoneId.set(zone.meta.id, groups)
+  }
+
+  return { definitions, groupsByZoneId }
+}
+
+function emailRoutingMxIndexes(records, zone) {
+  const requiredCounts = new Map()
+  for (const record of surfaceResult(zone, "email-dns") || []) {
+    if (String(record.type || "").toUpperCase() !== MX_RECORD_TYPE) continue
+    const key = emailDnsRecordAssociationKey(record, zone.meta.name)
+    requiredCounts.set(key, (requiredCounts.get(key) || 0) + 1)
+  }
+
+  const indexes = new Set()
+  records.forEach((record, index) => {
+    if (String(record.type || "").toUpperCase() !== MX_RECORD_TYPE) return
+    const key = emailDnsRecordAssociationKey(record, zone.meta.name)
+    const remaining = requiredCounts.get(key) || 0
+    if (remaining === 0) return
+    indexes.add(index)
+    requiredCounts.set(key, remaining - 1)
+  })
+  return indexes
+}
+
+function addEmailRows(rows, inventory) {
+  for (const zone of inventory.zones) {
+    const settings = surfaceResult(zone, "email")
+    if (settings) {
+      for (const key of ["enabled", "status", "skip_wizard", "support_subaddress"]) {
+        addCell(rows, "Email", `settings:${key}`, key, zone, settings[key], {
+          labelSource: "Setting field",
+          resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
+        })
+      }
+    }
+
+    const catchAll = surfaceResult(zone, "email-catch-all")
+    if (catchAll) {
+      const comparedCatchAll = emailRoutingComparisonValue(
+        catchAll,
+        zone.meta.name,
+        { catchAll: true },
+      )
+      addCell(
+        rows,
+        "Email",
+        "catch-all",
+        "Catch-all rule",
+        zone,
+        comparedCatchAll,
+        {
+          ...emailRoutingRuleCellOptions(catchAll, zone, {
+            catchAll: true,
+          }),
+          full: displayJson(normalizeValue(catchAll, zone.meta.name)),
+          inspectionValue: catchAll,
+          labelSource: "Facet type",
+          normalized: comparedCatchAll,
+          resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
+        },
+      )
+    }
+
+    for (const rule of surfaceResult(zone, "email-rules") || []) {
+      if (rule.matchers?.some((matcher) => matcher.type === "all")) continue
+      const matcher = rule.matchers
+        ?.map((entry) => normalizeValue(entry, zone.meta.name))
+        .map(stableString)
+        .join(" + ") || "unnamed"
+      const comparedRule = emailRoutingComparisonValue(rule, zone.meta.name)
+      addCell(
+        rows,
+        "Email routes",
+        `routing:${matcher}`,
+        rule.name || matcher,
+        zone,
+        comparedRule,
+        {
+          ...emailRoutingRuleCellOptions(rule, zone),
+          full: displayJson(normalizeValue(rule, zone.meta.name)),
+          inspectionValue: rule,
+          labelSource: rule.name ? "Route name" : "Normalized matcher",
+          normalized: comparedRule,
+        },
+      )
+    }
+
+    const requiredRecords = surfaceResult(zone, "email-dns")
+    if (Array.isArray(requiredRecords)) {
+      const actualRecords = surfaceResult(zone, "dns") || []
+      const grouped = groupBy(requiredRecords, (record) => `${record.type} ${relativeName(record.name, zone.meta.name)}`)
+      for (const [key, records] of grouped) {
+        const requiredCounts = new Map()
+        for (const record of records) {
+          const associationKey = emailDnsRecordAssociationKey(record, zone.meta.name)
+          requiredCounts.set(associationKey, (requiredCounts.get(associationKey) || 0) + 1)
+        }
+        const matchingRecords = []
+        for (const record of actualRecords) {
+          const associationKey = emailDnsRecordAssociationKey(record, zone.meta.name)
+          const remaining = requiredCounts.get(associationKey) || 0
+          if (remaining === 0) continue
+          matchingRecords.push(record)
+          requiredCounts.set(associationKey, remaining - 1)
+        }
+        const unmatchedCount = [...requiredCounts.values()].reduce(
+          (sum, count) => sum + count,
+          0,
+        )
+        const editOptions = dnsRecordEditOptions(matchingRecords, zone)
+        if (unmatchedCount > 0) {
+          editOptions.capability.reason = [
+            editOptions.capability.reason,
+            `${unmatchedCount} expected record${unmatchedCount === 1 ? "" : "s"} has no matching live DNS record; use Email alignment to create it`,
+          ].filter(Boolean).join("; ")
+        }
+        const ignoredPriorityIndexes = new Set(
+          records.flatMap((record, index) => (
+            String(record.type || "").toUpperCase() === MX_RECORD_TYPE
+              ? [index]
+              : []
+          )),
+        )
+        const inspectionRecords = normalizedDnsMatrixRecords(
+          records,
+          zone.meta.name,
+          emailDnsMatrixRecord,
+        )
+        const comparisonRecords = normalizedDnsMatrixRecords(
+          records,
+          zone.meta.name,
+          emailDnsMatrixRecord,
+          ignoredPriorityIndexes,
+        )
+        addCell(
+          rows,
+          "Email DNS specification",
+          key,
+          key,
+          zone,
+          inspectionRecords,
+          {
+            ...editOptions,
+            ...dnsTxtPurposeOptions(records),
+            description: ignoredPriorityIndexes.size > 0
+              ? EMAIL_ROUTING_MX_DRIFT_DESCRIPTION
+              : "",
+            display: shortDisplay(comparisonRecords),
+            full: displayJson(inspectionRecords),
+            inspectionValue: inspectionRecords,
+            labelSource: "Record type + owner",
+            normalized: comparisonRecords,
+            resolutionKind: HOLE_RESOLUTION_KIND.EMAIL_POLICY,
+          },
+        )
+      }
+    }
+  }
+}
+
+function dnsRecordEditOptions(records, zone) {
+  const capabilities = new Map(
+    records.map((record) => [record, dnsRecordEditCapability(record)]),
+  )
+  const editableRecords = records.filter(
+    (record) => capabilities.get(record).editable,
+  )
+  const blockedReasons = records
+    .filter((record) => !capabilities.get(record).editable)
+    .map((record) => capabilities.get(record).reason)
+  return {
+    action: editableRecords.length > 0
+      ? {
+          recordIds: editableRecords.map((record) => record.id),
+          type: "dns-records",
+          zoneId: zone.meta.id,
+        }
+      : null,
+    capability: editableRecords.length > 0
+      ? {
+          kind: "direct-edit",
+          label: "Direct DNS edit",
+          reason: blockedReasons.length === 0
+            ? "Every matching record has a type-aware DNS Records API adapter"
+            : `${editableRecords.length} record${editableRecords.length === 1 ? "" : "s"} can be edited; ${blockedReasons.join("; ")}`,
+        }
+      : {
+          kind: "not-directly-editable",
+          label: "No direct DNS edit",
+          reason: [...new Set(blockedReasons)].join("; "),
+        },
+  }
+}
+
+function addDnsRows(rows, inventory) {
+  const { definitions, groupsByZoneId } = dnsRecordMatrixGroups(inventory)
+  for (const definition of [...definitions.values()].sort(
+    (left, right) => left.key.localeCompare(right.key),
+  )) {
+    for (const zone of inventory.zones) {
+      const records = groupsByZoneId.get(zone.meta.id)?.get(definition.key) || []
+      if (records.length === 0) continue
+      const copyCapabilities = new Map(
+        records.map((record) => [record, dnsRecordCopyCapability(record)]),
+      )
+      const copyable = records.every(
+        (record) => copyCapabilities.get(record).copyable,
+      )
+      const ignoredPriorityIndexes = emailRoutingMxIndexes(records, zone)
+      const inspectionRecords = normalizedDnsMatrixRecords(
+        records,
+        zone.meta.name,
+        dnsMatrixRecord,
+      )
+      const comparisonRecords = normalizedDnsMatrixRecords(
+        records,
+        zone.meta.name,
+        dnsMatrixRecord,
+        ignoredPriorityIndexes,
+      )
+      addCell(
+        rows,
+        "DNS records",
+        definition.key,
+        definition.label,
+        zone,
+        inspectionRecords,
+        {
+          ...dnsRecordEditOptions(records, zone),
+          ...dnsTxtPurposeOptions(records),
+          description: ignoredPriorityIndexes.size > 0
+            ? EMAIL_ROUTING_MX_DRIFT_DESCRIPTION
+            : "",
+          display: records.length === 1
+            && String(records[0].type || "").toUpperCase() === TXT_RECORD_TYPE
+            ? txtRecordContent(records[0])
+            : shortDisplay(comparisonRecords),
+          full: displayJson(inspectionRecords),
+          inspectionValue: inspectionRecords,
+          labelSource: definition.splitTxt
+            ? "Record type + owner + TXT identity"
+            : "Record type + owner",
+          normalized: comparisonRecords,
+          resolutionKind: HOLE_RESOLUTION_KIND.DNS_RECORDS,
+          resolutionValue: inspectionRecords,
+          resolutionSource: copyable
+            ? {
+                recordIds: records.map((record) => record.id),
+                sourceZoneId: zone.meta.id,
+                type: HOLE_RESOLUTION_KIND.DNS_RECORDS,
+              }
+            : null,
+        },
+      )
+    }
+  }
+}
+
+function executeTargetRuleset(zone, rule) {
+  if (rule.action !== EXECUTE_RULE_ACTION) return null
+  const targetId = rule.action_parameters?.id
+  if (!targetId) return null
+  return (surfaceResult(zone, "rulesets") || []).find(
+    (ruleset) => ruleset.id === targetId,
+  ) || null
+}
+
+function referencedRulesetKindLabel(ruleset) {
+  if (ruleset.kind === RULESET_KIND.MANAGED) return "Managed ruleset"
+  if (ruleset.kind === RULESET_KIND.CUSTOM) return "Custom ruleset"
+  return "Referenced ruleset"
+}
+
+function executeRuleDescription(ruleset, rule, zoneName) {
+  const expression = normalizeText(rule.expression || "", zoneName).trim()
+  const condition = !expression || expression === UNCONDITIONAL_RULE_EXPRESSION
+    ? "Every request"
+    : `When ${expression}`
+  return `${referencedRulesetKindLabel(ruleset)} | ${condition}`
+}
+
+function addRuleRows(rows, inventory) {
+  for (const zone of inventory.zones) {
+    for (const detail of zone.ruleDetails.filter((entry) => entry.ok)) {
+      const ruleset = detail.result
+      const phase = ruleset.phase
+      const rulesetLabel = ruleset.kind === RULESET_KIND.ZONE
+        ? `${rulePhaseLabel(phase)} ruleset`
+        : ruleset.name || "Unnamed ruleset"
+      const workspaceAction = {
+        kind: ruleset.kind,
+        name: ruleset.name,
+        phase,
+        rulesetId: ruleset.id,
+        type: RULESET_ACTION_KIND.OPEN,
+        zoneId: zone.meta.id,
+      }
+
+      const ruleIdentityOccurrences = new Map()
+      for (const [index, rule] of (ruleset.rules || []).entries()) {
+        const observedRule = normalizeValue(rule, zone.meta.name, {
+          omit: ["last_updated", "ref", "version"],
+          preserveOrder: true,
+        })
+        const comparedRule = ruleExactComparisonValue(rule, zone.meta.name)
+        const redirectIntentValue = redirectIntentComparisonValue(
+          rule,
+          zone.meta.name,
+        )
+        const capability = ruleCopyCapability(ruleset, rule)
+        const stableRef = rule.ref && rule.ref !== rule.id ? rule.ref : ""
+        const executeTarget = executeTargetRuleset(zone, rule)
+        const executeTargetName = String(executeTarget?.name || "").trim()
+        const label = normalizeText(
+          rule.description
+            || stableRef
+            || executeTargetName
+            || `${rule.action || "rule"} rule ${index + 1} | ${(rule.expression || "").slice(0, 80)}`,
+          zone.meta.name,
+        )
+        const redirect = presentRedirect(observedRule, {
+          position: index + 1,
+        })
+        let identity = label
+        if (redirect) {
+          const baseIdentity = redirectSemanticIdentity(observedRule, index)
+          const occurrence = ruleIdentityOccurrences.get(baseIdentity) || 0
+          ruleIdentityOccurrences.set(baseIdentity, occurrence + 1)
+          identity = occurrence === 0
+            ? baseIdentity
+            : `${baseIdentity} #${occurrence + 1}`
+        }
+        const category = redirect
+          ? MATRIX_CATEGORY.REDIRECTS
+          : MATRIX_CATEGORY.RULESET_RULES
+        const description = redirect
+          ? `When ${redirect.match || "every request"}`
+          : executeTarget
+            ? executeRuleDescription(executeTarget, rule, zone.meta.name)
+            : `Action: ${rule.action || "unknown"}`
+        const labelSource = rule.description
+          ? "Rule description"
+          : stableRef
+            ? "Rule reference"
+            : executeTargetName
+              ? `${referencedRulesetKindLabel(executeTarget)} name`
+              : "Generated fallback"
+        addCell(
+          rows,
+          category,
+          `${phase}:${identity}`,
+          label,
+          zone,
+          comparedRule,
+          {
+            action: EDITABLE_RULESET_KINDS.has(ruleset.kind)
+              ? {
+                  phase,
+                  ruleId: rule.id,
+                  rulesetId: ruleset.id,
+                  type: "ruleset-rule",
+                  zoneId: zone.meta.id,
+                }
+              : null,
+            capability: {
+              kind: capability.copyable ? "copy-to-zones" : "not-copyable",
+              label: capability.copyable ? "Copy to selected zones" : "Copy unavailable",
+              reason: capability.reason,
+            },
+            description,
+            display: redirect?.target || (rule.enabled === false ? "Disabled" : "Enabled"),
+            full: displayJson({
+              copy_capability: capability.copyable ? "copy to selected zones" : capability.reason,
+              ...(redirect ? { position: redirect.position } : {}),
+              rule: observedRule,
+            }),
+            labelSource,
+            normalized: redirect
+              ? {
+                  position: redirect.position,
+                  rule: comparedRule,
+                }
+              : comparedRule,
+            phase,
+            presentation: {
+              kind: "rule",
+              phase,
+              redirect,
+              rule: observedRule,
+            },
+            inspectionValue: rule,
+            ...(redirect ? {
+              intentDisplay: redirect.target || "Redirect",
+              intentValue: redirectIntentValue,
+            } : {}),
+            resolutionValue: comparedRule,
+            parentAction: workspaceAction,
+            secondaryAction: capability.copyable
+              ? {
+                  phase,
+                  ruleId: rule.id,
+                  rulesetId: ruleset.id,
+                  sourceZoneId: zone.meta.id,
+                  type: "ruleset-rule-copy",
+                }
+              : null,
+            resolutionKind: HOLE_RESOLUTION_KIND.RULESET_RULE,
+            resolutionSource: capability.copyable
+              ? {
+                  phase,
+                  ruleId: rule.id,
+                  rulesetId: ruleset.id,
+                  sourceZoneId: zone.meta.id,
+                  type: HOLE_RESOLUTION_KIND.RULESET_RULE,
+                }
+              : null,
+            search: [
+              rulesetLabel,
+              executeTarget?.description,
+              executeTargetName,
+              rulePhaseLabel(phase),
+              phase,
+              `${rulePhaseLabel(phase)} entrypoint`,
+              ...(redirect
+                ? [
+                  redirect.targetKindLabel,
+                  redirect.responseLabel,
+                  redirect.queryLabel,
+                  redirect.enabledLabel,
+                  redirect.match,
+                  `Order ${redirect.position}`,
+                  redirect.target,
+                  ]
+                : []),
+            ].join(" "),
+          },
+        )
+      }
+    }
+  }
+}
+
+function addRouteAndLegacyRows(rows, inventory) {
+  for (const zone of inventory.zones) {
+    for (const route of surfaceResult(zone, "workers-routes") || []) {
+      const pattern = normalizeText(route.pattern, zone.meta.name)
+      addCell(rows, "Workers routes", pattern, pattern, zone, normalizeValue(route, zone.meta.name), {
+        display: route.script || route.script_name || "No script",
+        labelSource: "Route pattern",
+      })
+    }
+
+    for (const rule of surfaceResult(zone, "firewall-rules") || []) {
+      const identity = normalizeText(rule.description || rule.ref || rule.id || "unnamed", zone.meta.name)
+      addCell(
+        rows,
+        MATRIX_CATEGORY.LEGACY_FIREWALL_VIEW,
+        identity,
+        identity,
+        zone,
+        normalizeValue({
+          action: rule.action,
+          description: rule.description,
+          filter: rule.filter?.expression,
+          paused: rule.paused,
+          priority: rule.priority,
+        }, zone.meta.name),
+        {
+          display: `${rule.paused ? "Paused" : "Enabled"} | ${rule.action}`,
+          labelSource: rule.description
+            ? "Rule description"
+            : rule.ref
+              ? "Rule reference"
+              : rule.id
+                ? "Rule ID"
+                : "Generated fallback",
+        },
+      )
+    }
+  }
+}
+
+function addAdditionalRows(rows, inventory) {
+  const collections = [
+    ["IP access rules", "access-rules", (item) => item.notes || `${item.configuration?.target || "rule"}:${item.configuration?.value || item.id}`],
+    ["Health checks", "healthchecks", (item) => item.name || item.address || item.id],
+    ["Load balancers", "load-balancers", (item) => item.name || item.hostname || item.id],
+    ["Logpush jobs", "logpush", (item) => item.name || item.destination_conf || item.id],
+    ["Waiting rooms", "waiting-rooms", (item) => item.name || item.host || item.id],
+    ["Web3 hostnames", "web3", (item) => item.name || item.hostname || item.id],
+  ]
+  for (const [category, surfaceId, identityFor] of collections) {
+    for (const zone of inventory.zones) {
+      for (const [index, item] of (surfaceResult(zone, surfaceId) || []).entries()) {
+        const identity = normalizeText(String(identityFor(item) || `${surfaceId}-${index + 1}`), zone.meta.name)
+        addCell(rows, category, identity, identity, zone, normalizeValue(item, zone.meta.name), {
+          labelSource: "Object name or fallback identity",
+        })
+      }
+    }
+  }
+
+  const scalars = [
+    ["Performance", "argo-tiered", "Tiered caching"],
+    ["Performance", "smart-tiered", "Smart tiered caching"],
+    ["Security", "bot-management", "Bot management"],
+    ["TLS", "universal-ssl", "Universal SSL"],
+    ["TLS", "origin-pq", "Origin post-quantum encryption"],
+    ["Snippets", "snippets", "Snippets"],
+  ]
+  for (const [category, surfaceId, label] of scalars) {
+    for (const zone of inventory.zones) {
+      const value = surfaceResult(zone, surfaceId)
+      if (value === undefined) continue
+      addCell(rows, category, surfaceId, label, zone, normalizeValue(value, zone.meta.name), {
+        labelSource: "Facet type",
+      })
+    }
+  }
+
+  for (const zone of inventory.zones) {
+    const packs = (surfaceResult(zone, "certificate-packs") || []).map((pack) => normalizeValue({
+      certificate_authority: pack.certificate_authority,
+      hosts: pack.hosts,
+      status: pack.status,
+      type: pack.type,
+      validation_method: pack.validation_method,
+      validity_days: pack.validity_days,
+    }, zone.meta.name))
+    addCell(rows, "TLS inventory", "certificate-packs", "Certificate packs", zone, packs, {
+      labelSource: "Facet type",
+    })
+  }
+}
+
+function resolutionCandidates(row, inventory) {
+  const grouped = new Map()
+  for (const zone of inventory.zones) {
+    const cell = row.cells.get(zone.meta.name)
+    if (!cell) continue
+    if (!grouped.has(cell.resolutionCanonical)) {
+      grouped.set(cell.resolutionCanonical, {
+        canonical: cell.resolutionCanonical,
+        count: 0,
+        display: cell.display,
+        full: cell.full,
+        inspectionValue: cell.inspectionValue,
+        presentation: cell.presentation,
+        sources: [],
+      })
+    }
+    const variant = grouped.get(cell.resolutionCanonical)
+    variant.count += 1
+    if (cell.resolutionSource) {
+      variant.sources.push({
+        action: cell.resolutionSource,
+        zoneId: zone.meta.id,
+        zoneName: zone.meta.name,
+      })
+    }
+  }
+
+  return [...grouped.values()]
+    .filter((variant) => variant.sources.length > 0)
+    .map((variant) => ({
+      canonical: variant.canonical,
+      count: variant.count,
+      display: variant.display,
+      full: variant.full,
+      inspectionValue: variant.inspectionValue,
+      presentation: variant.presentation,
+      sourceAction: variant.sources[0].action,
+      sourceZoneId: variant.sources[0].zoneId,
+      sourceZoneName: variant.sources[0].zoneName,
+    }))
+    .sort(
+      (left, right) => right.count - left.count
+        || left.sourceZoneName.localeCompare(right.sourceZoneName),
+    )
+    .map((candidate, index) => ({
+      ...candidate,
+      id: `variant-${index + 1}`,
+    }))
+}
+
+function emailResolutionCoverage(zone, inventory) {
+  const required = [
+    "dns",
+    "email",
+    "email-dns",
+    "email-catch-all",
+  ]
+  if (!inventory.account.emailAddresses?.ok) {
+    return "Verified account email addresses were not readable"
+  }
+  const failed = required.find((surfaceId) => !zone.surfaces[surfaceId]?.ok)
+  return failed ? `${failed} was not readable for this zone` : ""
+}
+
+function rulesetResolutionCoverage(zone, candidates) {
+  if (!zone.surfaces.rulesets?.ok) return "Rulesets were not readable for this zone"
+  const phases = new Set(candidates.map((candidate) => candidate.sourceAction.phase))
+  for (const phase of phases) {
+    const summaries = (zone.surfaces.rulesets.result || []).filter(
+      (ruleset) => ruleset.phase === phase
+        && (ruleset.kind === "zone" || ruleset.kind === "custom"),
+    )
+    if (summaries.length === 0) continue
+    const details = zone.ruleDetails.filter((detail) => detail.phase === phase)
+    if (details.length < summaries.length || details.some((detail) => !detail.ok)) {
+      return `${phase} rule details were not readable for this zone`
+    }
+  }
+  return ""
+}
+
+function missingResolution(row, zone, inventory, candidates) {
+  if (!row.resolutionKind) {
+    return {
+      available: false,
+      reason: "No fill adapter is registered for this surface",
+    }
+  }
+  if (row.resolutionKind === HOLE_RESOLUTION_KIND.EMAIL_POLICY) {
+    const reason = emailResolutionCoverage(zone, inventory)
+    return reason
+      ? { available: false, reason }
+      : {
+          available: true,
+          candidates: [],
+          kind: row.resolutionKind,
+          recommendedCandidateId: null,
+          targetZoneId: zone.meta.id,
+          targetZoneName: zone.meta.name,
+        }
+  }
+
+  const surfaceId = row.resolutionKind === HOLE_RESOLUTION_KIND.DNS_RECORDS
+    ? "dns"
+    : "rulesets"
+  if (!zone.surfaces[surfaceId]?.ok) {
+    return {
+      available: false,
+      reason: `${surfaceId} was not readable for this zone`,
+    }
+  }
+  if (candidates.length === 0) {
+    return {
+      available: false,
+      reason: "No existing fleet variant is portable through this surface's write adapter",
+    }
+  }
+  if (row.resolutionKind === HOLE_RESOLUTION_KIND.RULESET_RULE) {
+    const reason = rulesetResolutionCoverage(zone, candidates)
+    if (reason) return { available: false, reason }
+  }
+  const recommended = candidates.length === 1
+    || candidates[0].count > candidates[1].count
+    ? candidates[0]
+    : null
+  return {
+    available: true,
+    candidates,
+    kind: row.resolutionKind,
+    recommendedCandidateId: recommended?.id || null,
+    targetZoneId: zone.meta.id,
+    targetZoneName: zone.meta.name,
+  }
+}
+
+function fleetRuleRenameCapability(row, inventory, duplicateZoneNames) {
+  if (!RULE_MATRIX_CATEGORY_SET.has(row.category) || row.cells.size === 0) {
+    return {
+      action: null,
+      reason: "",
+    }
+  }
+  if (duplicateZoneNames.size > 0) {
+    return {
+      action: null,
+      reason: `Duplicate rule identities on ${[...duplicateZoneNames].sort().join(", ")} require individual review`,
+    }
+  }
+  const rules = []
+  for (const zone of inventory.zones) {
+    const cell = row.cells.get(zone.meta.name)
+    if (!cell) continue
+    if (cell.action?.type !== "ruleset-rule") {
+      return {
+        action: null,
+        reason: `At least one present instance of ${row.label} is not directly editable`,
+      }
+    }
+    rules.push({
+      phase: cell.action.phase,
+      ruleId: cell.action.ruleId,
+      rulesetId: cell.action.rulesetId,
+      zoneId: cell.action.zoneId,
+    })
+  }
+  return {
+    action: {
+      currentName: row.label,
+      missingZoneCount: inventory.zones.length - rules.length,
+      rules,
+      type: FLEET_ACTION_KIND.RULE_RENAME,
+    },
+    reason: "",
+  }
+}
+
+export function dnsTargetFillBatch(row, inventory, selectedZoneIds) {
+  const selected = selectedZoneIds instanceof Set
+    ? selectedZoneIds
+    : new Set(selectedZoneIds || [])
+  const targetZones = inventory.zones.filter(
+    (zone) => selected.has(zone.meta.id) && !row.cells.has(zone.meta.name),
+  )
+  const unavailable = (reason) => ({
+    available: false,
+    candidate: null,
+    reason,
+    targetZoneIds: targetZones.map((zone) => zone.meta.id),
+    targetZoneNames: targetZones.map((zone) => zone.meta.name),
+  })
+  if (row.resolutionKind !== HOLE_RESOLUTION_KIND.DNS_RECORDS) {
+    return unavailable("This facet is not backed by the DNS record copy adapter")
+  }
+  if (targetZones.length === 0) {
+    return unavailable("No selected target zone is missing this facet")
+  }
+
+  let candidate = null
+  for (const zone of targetZones) {
+    const resolution = row.missingResolutions.get(zone.meta.name)
+    if (!resolution?.available) {
+      return unavailable(
+        resolution?.reason || `${zone.meta.name} cannot be filled automatically`,
+      )
+    }
+    const recommended = resolution.candidates.find(
+      (entry) => entry.id === resolution.recommendedCandidateId,
+    )
+    if (!recommended) {
+      return unavailable("Multiple fleet variants are tied; choose a source in each missing cell")
+    }
+    if (candidate && candidate.canonical !== recommended.canonical) {
+      return unavailable("Selected targets do not resolve to one fleet DNS value")
+    }
+    candidate = recommended
+  }
+
+  return {
+    available: true,
+    candidate,
+    reason: "",
+    targetZoneIds: targetZones.map((zone) => zone.meta.id),
+    targetZoneNames: targetZones.map((zone) => zone.meta.name),
+  }
+}
+
+export function buildMatrix(inventory) {
+  const rows = new Map()
+
+  addZoneRows(rows, inventory)
+  addSettingRows(rows, inventory)
+  addDnssecRows(rows, inventory)
+  addEmailRows(rows, inventory)
+  addDnsRows(rows, inventory)
+  addRuleRows(rows, inventory)
+  addRouteAndLegacyRows(rows, inventory)
+  addAdditionalRows(rows, inventory)
+
+  const rendered = [...rows.values()].map((row) => {
+    const {
+      descriptions,
+      duplicateZoneNames,
+      labelSources,
+      ...rowDefinition
+    } = row
+    const description = [...descriptions].sort().join(" / ")
+    const labelSource = [...labelSources].sort().join(" / ")
+    const canonicalValues = inventory.zones.map(
+      (zone) => row.cells.get(zone.meta.name)?.canonical ?? MATRIX_MISSING_CANONICAL,
+    )
+    const variants = [...new Set(canonicalValues)]
+    const comparison = comparisonMetadata(canonicalValues)
+    const candidates = resolutionCandidates(rowDefinition, inventory)
+    const fleetRename = fleetRuleRenameCapability(
+      rowDefinition,
+      inventory,
+      duplicateZoneNames,
+    )
+    const missingResolutions = new Map()
+    for (const zone of inventory.zones) {
+      if (row.cells.has(zone.meta.name)) continue
+      missingResolutions.set(
+        zone.meta.name,
+        missingResolution(rowDefinition, zone, inventory, candidates),
+      )
+    }
+    const recordType = DNS_MATRIX_CATEGORY_SET.has(row.category)
+      ? row.key.split(" ", 1)[0].toUpperCase()
+      : ""
+    const txtPurposes = orderedTxtRecordPurposes(new Set(
+      [...row.cells.values()].flatMap((cell) => cell.txtPurposes),
+    ))
+    const redirectTypes = [...new Set(
+      [...row.cells.values()]
+        .map((cell) => cell.presentation?.redirect?.targetKind)
+        .filter(Boolean),
+    )].sort(compareCanonical)
+    const missingZoneIds = inventory.zones
+      .filter((zone) => !row.cells.has(zone.meta.name))
+      .map((zone) => zone.meta.id)
+    return {
+      ...rowDefinition,
+      ...comparison,
+      description,
+      different: variants.length > 1,
+      fleetAction: fleetRename.action,
+      fleetActionReason: fleetRename.reason,
+      labelSource,
+      missingResolutions,
+      missingCount: canonicalValues.filter(
+        (value) => value === MATRIX_MISSING_CANONICAL,
+      ).length,
+      missingZoneIds,
+      presentCount: row.cells.size,
+      recordType,
+      redirectTypes,
+      txtPurposes,
+      search: [
+        row.category,
+        row.label,
+        labelSource,
+        description,
+        ...row.cells.keys(),
+        ...[...row.cells.values()].map((cell) => cell.full),
+        ...[...row.cells.values()].map((cell) => cell.search),
+      ].join(" ").toLowerCase(),
+    }
+  })
+
+  rendered.sort((left, right) => {
+    return left.category.localeCompare(right.category)
+      || left.label.localeCompare(right.label)
+      || left.key.localeCompare(right.key)
+  })
+
+  return {
+    categories: [...new Set(rendered.map((row) => row.category))],
+    rows: rendered,
+    summary: {
+      differences: rendered.filter((row) => row.different).length,
+      facets: rendered.length,
+      missingCells: rendered.reduce((sum, row) => sum + row.missingCount, 0),
+      zones: inventory.zones.length,
+    },
+  }
+}
+
+export function matrixRenderKey(inventory, matrix) {
+  return stableString({
+    rows: matrix.rows.map((row) => ({
+      category: row.category,
+      cells: inventory.zones.map((zone) => {
+        const cell = row.cells.get(zone.meta.name)
+        if (!cell) return null
+        return {
+          action: cell.action,
+          canonical: cell.canonical,
+          capability: cell.capability,
+          display: cell.display,
+          full: cell.full,
+          intentCanonical: cell.intentCanonical,
+          intentDisplay: cell.intentDisplay,
+          intentValue: cell.intentValue,
+          uniquenessCanonical: cell.uniquenessCanonical,
+          resolutionCanonical: cell.resolutionCanonical,
+          resolutionSource: cell.resolutionSource,
+          secondaryAction: cell.secondaryAction,
+          parentAction: cell.parentAction,
+        }
+      }),
+      description: row.description,
+      different: row.different,
+      fleetAction: row.fleetAction,
+      fleetActionReason: row.fleetActionReason,
+      key: row.key,
+      label: row.label,
+      labelSource: row.labelSource,
+      missingCount: row.missingCount,
+      missingZoneIds: row.missingZoneIds,
+      missingResolutions: inventory.zones.map(
+        (zone) => row.missingResolutions.get(zone.meta.name) || null,
+      ),
+      phase: row.phase,
+      presentCount: row.presentCount,
+      recordType: row.recordType,
+      redirectTypes: row.redirectTypes,
+    })),
+    zones: inventory.zones.map((zone) => ({
+      createdOn: zone.meta.created_on,
+      id: zone.meta.id,
+      name: zone.meta.name,
+    })),
+  })
+}

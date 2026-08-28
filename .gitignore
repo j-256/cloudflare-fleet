@@ -1,0 +1,15 @@
+.DS_Store
+.dev.vars*
+.env*
+.worker-assets/
+.wrangler/
+auth.js
+chrome-profile/
+fleet-policy.json
+node_modules/
+playwright-report/
+state*.json
+state*.json.lock*
+state*.json.*.tmp
+test-results/
+wrangler.jsonc
