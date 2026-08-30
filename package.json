@@ -11,6 +11,7 @@
   "bugs": {
     "url": "https://github.com/j-256/cloudflare-fleet/issues"
   },
+  "homepage": "https://j-256.github.io/cloudflare-fleet/",
   "keywords": [
     "cloudflare",
     "cloudflare-workers",

@@ -18,6 +18,7 @@
       </a>
       <nav class="site-nav" aria-label="Documentation">
         <a href="index.html">Overview</a>
+        <a href="getting-started.html">Get started</a>
         <a href="architecture.html">Architecture</a>
         <a href="deployment.html" aria-current="page">Deploy</a>
         <a href="security.html">Security</a>
@@ -39,7 +40,7 @@
         <li>Node.js 22 or newer and npm</li>
         <li>A Cloudflare account with an active zone for the Fleet hostname</li>
         <li>Permission to create Workers, a D1 database, a custom domain, and a Cloudflare Access application</li>
-        <li>An account API token scoped to the resources Fleet should inspect and, if enabled, change</li>
+        <li>An account API token scoped to the resources Fleet should inspect and, if enabled, change; see the <a href="getting-started.html#permissions-heading">least-privilege starting point</a></li>
         <li>A configured Cloudflare Zero Trust team domain and identity provider</li>
       </ul>
       <div class="callout callout-warning">
@@ -58,9 +59,9 @@
           <span class="step-number">1</span>
           <div>
             <h3>Install the pinned toolchain</h3>
-            <p>The lockfile pins Wrangler, the Access JWT library, and the browser test stack. Install the declared source binary globally so every operator workflow uses the canonical dispatcher.</p>
-            <pre><code>npm ci
-npm install --global .
+            <p>The lockfile pins Wrangler, the Access JWT library, and the browser test stack. Keep the source checkout for deployment, but install the tagged GitHub package for a durable operator command that does not link back to the checkout.</p>
+            <pre><code>npm install --global "github:j-256/cloudflare-fleet#v0.1.0"
+npm ci
 cloudflare-fleet --help</code></pre>
           </div>
         </article>
@@ -166,18 +167,18 @@ cloudflare-fleet hosted configure ...</code></pre>
       <p>Hosted deployment does not replace local mode. On macOS, provide the account token and identifier in the shell and launch the ordinary browser workflow. It shares the same UI, policy, intent schema, write planner, activity model, and verification code.</p>
       <pre><code>export CLOUDFLARE_API_TOKEN="your-account-token"
 export CLOUDFLARE_ACCOUNT_ID="your-account-id"
-cloudflare-fleet dashboard --read-only</code></pre>
+cloudflare-fleet dashboard</code></pre>
       <p>Use <code>cloudflare-fleet dashboard --write</code> for the full local workflow. State defaults to <code>$XDG_STATE_HOME/cloudflare-fleet/state.json</code>, falling back to <code>~/.local/state/cloudflare-fleet/state.json</code>; policy uses the corresponding per-user configuration directory. Select another profile with <code>--state-file</code> or <code>--policy-file</code>. The checkout-local <code>./launch.sh</code> wrapper accepts the same dashboard options.</p>
       <p>The local fleet CLI and stdio MCP server inherit the same credentials and use the same durable state profile:</p>
       <pre><code>cloudflare-fleet alignment list --format json
 cloudflare-fleet mcp</code></pre>
-      <p>An MCP client should use <code>cloudflare-fleet</code> as its command and <code>["mcp"]</code> as its arguments. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named audit, intent, alignment, bounded change, activity, and guarded undo tools.</p>
+      <p>An MCP client should use <code>cloudflare-fleet</code> as its command and <code>["mcp"]</code> as its arguments. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named diagnostic, audit, intent, alignment, bounded change, activity, and guarded undo tools. The <a href="getting-started.html#mcp-heading">MCP setup guide</a> includes copyable Codex and Claude Code configuration.</p>
     </section>
 
     <section class="section prose" aria-labelledby="pages-heading">
       <h2 id="pages-heading">Publish these docs with GitHub Pages</h2>
-      <p>The site is dependency-free and uses relative links, so it works beneath a project path. After the standalone repository exists, open repository Settings, choose Pages, select <strong>Deploy from a branch</strong>, choose the default branch and <code>/docs</code>, then save. GitHub documents this branch-source option in <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site">Configuring a publishing source</a>.</p>
-      <p>Run <code>npm run docs:serve</code> to preview the same files at <code>http://127.0.0.1:4173/</code>. The publication check validates every local documentation link and rejects symbolic links so the branch-source Pages build remains compatible.</p>
+      <p>The site is dependency-free and uses relative links, so it works beneath a project path. A least-privilege workflow checks the publication tree, uploads only <code>docs/</code>, and deploys it through GitHub's official Pages actions. A repository administrator must select <strong>GitHub Actions</strong> as the Pages source once. GitHub documents the workflow model in <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages">Using custom workflows with GitHub Pages</a>.</p>
+      <p>Run <code>npm run docs:serve</code> to preview the same files at <code>http://127.0.0.1:4173/</code>. The publication check validates every local documentation link and rejects unexpected symbolic links before deployment.</p>
     </section>
 
     <section class="section prose" aria-labelledby="publication-heading">

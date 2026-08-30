@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Install Cloudflare Fleet, configure a least-privilege token, verify local readiness, connect MCP clients, and establish a safe daily workflow.">
+  <meta name="theme-color" content="#071119">
+  <title>Get started | Cloudflare Fleet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="index.html" aria-label="Cloudflare Fleet documentation home">
+        <span class="brand-mark" aria-hidden="true">CF</span>
+        <span class="brand-name">Cloudflare Fleet</span>
+      </a>
+      <nav class="site-nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="getting-started.html" aria-current="page">Get started</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="deployment.html">Deploy</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet">Repository</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="content" id="main">
+    <header class="page-intro">
+      <p class="eyebrow">Getting started</p>
+      <h1>Install once. Begin read-only. Keep your data.</h1>
+      <p class="lede">The CLI, local dashboard launcher, and stdio MCP server ship as one versioned package. Operator state and policy live outside that package, so normal updates cannot replace them.</p>
+    </header>
+
+    <section class="section" aria-labelledby="first-run-heading">
+      <div class="section-heading">
+        <p class="eyebrow">First run</p>
+        <h2 id="first-run-heading">Reach a verified read-only audit</h2>
+      </div>
+      <div class="steps">
+        <article class="step">
+          <span class="step-number">1</span>
+          <div>
+            <h3>Install a tagged source package</h3>
+            <p>Node.js 22 or newer is required. Choose a tag from <a href="https://github.com/j-256/cloudflare-fleet/releases">GitHub Releases</a>; npm copies the package into its global prefix so the command does not depend on a checkout.</p>
+            <pre><code>npm install --global "github:j-256/cloudflare-fleet#v0.1.0"
+cloudflare-fleet --version</code></pre>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">2</span>
+          <div>
+            <h3>Export the account credentials</h3>
+            <p>Load the values through your normal shell secret workflow or secret manager. Keep literal values out of repositories and shared MCP configuration.</p>
+            <pre><code>export CLOUDFLARE_API_TOKEN="your-account-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"</code></pre>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">3</span>
+          <div>
+            <h3>Verify local and live readiness</h3>
+            <p>The doctor reports effective paths, credential presence, permissions, dependencies, and one bounded zone-list request without printing either credential value.</p>
+            <pre><code>cloudflare-fleet config show
+cloudflare-fleet doctor --live</code></pre>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">4</span>
+          <div>
+            <h3>Run the first read-only audit</h3>
+            <p>The audit keeps progress on stderr and emits its report on stdout. Permission-denied optional surfaces remain visible in coverage instead of appearing absent.</p>
+            <pre><code>cloudflare-fleet audit
+cloudflare-fleet audit --format html &gt; audit.html</code></pre>
+          </div>
+        </article>
+
+        <article class="step">
+          <span class="step-number">5</span>
+          <div>
+            <h3>Open the local dashboard when wanted</h3>
+            <p>On macOS, the default launch is read-only. The doctor identifies any missing local dependency before the launcher opens a normal browser tab through its loopback broker.</p>
+            <pre><code>cloudflare-fleet dashboard</code></pre>
+          </div>
+        </article>
+      </div>
+      <div class="callout callout-warning">
+        <strong>A local checkout is not an installation</strong>
+        <p>Avoid <code>npm install --global .</code> for daily use because npm normally links the executable back to that checkout. Moving or deleting it then breaks the command. Use a tagged GitHub source package for the durable install.</p>
+      </div>
+    </section>
+
+    <section class="section prose prose-wide" aria-labelledby="permissions-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Least privilege</p>
+        <h2 id="permissions-heading">Give the token only the coverage you intend</h2>
+        <p>Scope the token to the intended account and zones. Cloudflare's <a href="https://developers.cloudflare.com/fundamentals/api/reference/permissions/">API token permission groups</a> are authoritative; Fleet's coverage report shows how the chosen token behaves against the actual account.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Workflow</th><th>Typical permission groups</th><th>Guidance</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>First connection</td><td><code>Zone Read</code></td><td>Supports account-scoped zone discovery and the bounded live doctor request.</td></tr>
+            <tr><td>Common inventory</td><td><code>Zone Settings Read</code>, <code>DNS Read</code>, <code>Email Routing Rules Read</code>, <code>Zone WAF Read</code>, and the matching groups for other products in use</td><td>Add surface access deliberately. Missing optional access is reported as coverage evidence.</td></tr>
+            <tr><td>Reviewed writes</td><td>The corresponding <code>Zone Settings Write</code>, <code>DNS Write</code>, <code>Email Routing Rules Edit</code>, or <code>Zone WAF Write</code></td><td>Do not add write permission until the matching operator outcome is required.</td></tr>
+            <tr><td>Deep account audit</td><td>Product-specific account read groups for Workers, Pages, D1, KV, R2, Queues, Workflows, and Registrar</td><td>These expand evidence only for the selected deep audit and are not a baseline requirement.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section prose" aria-labelledby="profiles-heading">
+      <h2 id="profiles-heading">Know where operator data lives</h2>
+      <p>No config file is required for a first run. State defaults to <code>$XDG_STATE_HOME/cloudflare-fleet/state.json</code> or <code>~/.local/state/cloudflare-fleet/state.json</code>. Policy defaults to <code>$XDG_CONFIG_HOME/cloudflare-fleet/fleet-policy.json</code> or <code>~/.config/cloudflare-fleet/fleet-policy.json</code>. Files Fleet creates are mode <code>0600</code>, and the doctor warns about unsafe existing files or symbolic links.</p>
+      <p>Selection precedence is an explicit command flag, a Fleet environment variable, an XDG environment variable, then the per-user default. Fleet-specific environment paths must be absolute.</p>
+      <pre><code>export CLOUDFLARE_FLEET_STATE_FILE="$HOME/.local/state/cloudflare-fleet/production.json"
+export CLOUDFLARE_FLEET_POLICY_FILE="$HOME/.config/cloudflare-fleet/production-policy.json"
+cloudflare-fleet config show</code></pre>
+      <p>Use <code>--state-file</code> and <code>--policy-file</code> instead when a profile should apply to only one command. State contains inventory snapshots, intent, and activity. Policy contains typed operator exceptions. Neither contains the API token, but both can reveal sensitive fleet configuration and should stay private and backed up.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="daily-heading">
+      <h2 id="daily-heading">Use a simple daily operating loop</h2>
+      <pre><code>cloudflare-fleet doctor --live
+cloudflare-fleet audit --fail-on warning
+cloudflare-fleet dashboard</code></pre>
+      <p>The dashboard is read-only until launched with <code>--write</code>. Use <code>--fresh</code> when a launch should bypass cached inventory. After a reviewed mutation, inspect durable evidence with <code>cloudflare-fleet activity list</code>; begin recovery only with <code>cloudflare-fleet activity undo plan --id ACTIVITY_ID</code>, which blocks if live state no longer matches the verified operation.</p>
+      <p>The noninteractive CLI follows the same plan and apply split. Generate a JSON plan, present it for approval, and pass its exact digest to the corresponding apply command. A changed digest exits distinctly before mutation.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="mcp-heading">
+      <h2 id="mcp-heading">Connect a trusted MCP client</h2>
+      <p>The installed <code>cloudflare-fleet mcp</code> command is a stdio server with no network listener and no arbitrary Cloudflare API passthrough. Its first diagnostic tool, <code>get_runtime_status</code>, can explain missing setup before an agent attempts fleet work.</p>
+
+      <h3>Codex</h3>
+      <p>Add the server to <code>~/.codex/config.toml</code> and explicitly forward the credential variables from the environment that launches Codex.</p>
+      <pre><code>[mcp_servers.cloudflare_fleet]
+command = "cloudflare-fleet"
+args = ["mcp"]
+env_vars = ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]</code></pre>
+      <p>Run <code>codex mcp list</code>, then inspect <code>/mcp</code> in a session and ask Fleet for <code>get_runtime_status</code>. See the official <a href="https://developers.openai.com/codex/mcp">Codex MCP guide</a> for configuration semantics.</p>
+
+      <h3>Claude Code</h3>
+      <p>Register the command at user scope, then launch Claude Code from the shell that exports the credentials.</p>
+      <pre><code>claude mcp add --transport stdio --scope user cloudflare-fleet -- cloudflare-fleet mcp
+claude mcp list</code></pre>
+      <p>Inspect <code>/mcp</code> in a session and ask Fleet for <code>get_runtime_status</code>. The registration stores only the command and arguments. See the official <a href="https://code.claude.com/docs/en/mcp">Claude Code MCP guide</a> for scopes and environment handling.</p>
+
+      <h3>Other clients</h3>
+      <pre><code>{
+  "mcpServers": {
+    "cloudflare-fleet": {
+      "command": "cloudflare-fleet",
+      "args": ["mcp"]
+    }
+  }
+}</code></pre>
+      <p>Arrange for the client process to inherit the two credentials. Append absolute <code>--state-file</code> and <code>--policy-file</code> arguments when the server should use an explicit profile. Read and plan tools work without interactive approval; apply tools require a client that supports MCP input elicitation. Use the CLI or dashboard for review and apply if the client does not present that elicitation.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="update-heading">
+      <h2 id="update-heading">Update or uninstall without losing state</h2>
+      <p>Choose the desired release tag, install it over the existing package, and rerun the live doctor.</p>
+      <pre><code>npm install --global "github:j-256/cloudflare-fleet#v0.1.0"
+cloudflare-fleet --version
+cloudflare-fleet doctor --live</code></pre>
+      <p>Run <code>npm uninstall --global cloudflare-fleet</code> to remove only the program. npm does not remove the state and policy paths shown by <code>cloudflare-fleet config show</code>.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="source-heading">
+      <h2 id="source-heading">Work from a source checkout</h2>
+      <p>A checkout is for development and hosted deployment. Its wrappers enter the same implementation without replacing the durable global install.</p>
+      <pre><code>git clone https://github.com/j-256/cloudflare-fleet.git
+cd cloudflare-fleet
+npm ci
+npm run fleet -- doctor
+./launch.sh</code></pre>
+      <p>The checkout-local launcher is also read-only by default. Run the test and publication commands in <a href="https://github.com/j-256/cloudflare-fleet/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> before proposing a change.</p>
+    </section>
+
+    <section class="cta" aria-labelledby="hosted-cta-heading">
+      <div>
+        <p class="eyebrow">Hosted access</p>
+        <h2 id="hosted-cta-heading">Keep the safe defaults when you deploy.</h2>
+        <p>The hosted generator starts read-only and keeps live deployment values outside Git.</p>
+      </div>
+      <a class="button button-primary" href="deployment.html">Open deployment</a>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>Cloudflare Fleet is licensed under AGPL-3.0-only.</span>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="index.html">Overview</a>
+        <a href="security.html">Security</a>
+        <a href="https://github.com/j-256/cloudflare-fleet/blob/main/CONTRIBUTING.md">Contributing</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

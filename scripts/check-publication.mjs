@@ -23,6 +23,7 @@ const REQUIRED_FILES = Object.freeze([
   "docs/diagrams/architecture.svg",
   "docs/diagrams/intent-alignment.svg",
   "docs/diagrams/write-flow.svg",
+  "docs/getting-started.html",
   "docs/index.html",
   "docs/screenshots/alignment-blocked.png",
   "docs/screenshots/cover.png",
@@ -239,6 +240,9 @@ export async function checkPublication() {
   )
   if (packageMetadata.license !== "AGPL-3.0-only") {
     errors.push("package.json must declare AGPL-3.0-only")
+  }
+  if (packageMetadata.homepage !== "https://j-256.github.io/cloudflare-fleet/") {
+    errors.push("package.json must link to the public documentation site")
   }
   if (!packageMetadata.private) {
     errors.push("package.json must prevent accidental npm publication")

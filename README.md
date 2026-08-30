@@ -22,27 +22,90 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Saves pending activity before mutation, verifies authoritative resources afterward, and offers guarded undo only when the inverse is lossless
 - Keeps the hosted Cloudflare proxy inside explicit read and write allowlists
 
-The [documentation site](docs/index.html) includes the complete [architecture](docs/architecture.html), [deployment guide](docs/deployment.html), [security model](docs/security.html), and accessible visual diagrams.
+The [documentation site](docs/index.html) includes a copyable [getting-started guide](docs/getting-started.html), the complete [architecture](docs/architecture.html), [deployment guide](docs/deployment.html), [security model](docs/security.html), screenshots, and accessible visual diagrams.
 
-## Install from source
+## Quick start
 
-The package is intentionally private to prevent accidental registry publication, but its declared binary and package allowlist support a conventional source install:
+Node.js 22 or newer is required. Install a tagged GitHub source package so the command is copied into npm's global prefix and remains usable if a checkout is moved or deleted. Choose the tag from [GitHub Releases](https://github.com/j-256/cloudflare-fleet/releases).
 
 ```sh
-git clone https://github.com/j-256/cloudflare-fleet.git
-cd cloudflare-fleet
-npm ci
-npm install --global .
-cloudflare-fleet --help
+npm install --global "github:j-256/cloudflare-fleet#v0.1.0"
+
+export CLOUDFLARE_API_TOKEN="your-account-token"
+export CLOUDFLARE_ACCOUNT_ID="your-account-id"
+
+cloudflare-fleet doctor --live
+cloudflare-fleet audit
 ```
 
-`cloudflare-fleet` is the canonical operator command. The npm scripts and `./launch.sh` remain source-checkout compatibility wrappers and enter the same implementations. Durable state defaults to `$XDG_STATE_HOME/cloudflare-fleet/state.json`, falling back to `~/.local/state/cloudflare-fleet/state.json`; policy defaults to the corresponding `cloudflare-fleet/fleet-policy.json` below `$XDG_CONFIG_HOME` or `~/.config`. Explicit profile flags and `CLOUDFLARE_FLEET_STATE_FILE` or `CLOUDFLARE_FLEET_POLICY_FILE` override those paths.
+The first command installs the canonical `cloudflare-fleet` CLI, the macOS dashboard launcher, and the stdio MCP server as one versioned package. Fleet remains private on the npm registry to prevent accidental publication; tagged GitHub source is the supported distribution channel.
 
-## Hosted quick start
+Do not use `npm install --global .` for a durable installation. npm normally links that command back to the current checkout, so moving or deleting the clone breaks the global executable. Contributors can use the checkout-local npm scripts and `./launch.sh`, or install a tagged GitHub source package alongside the checkout.
 
-Hosted Fleet needs a Cloudflare zone, D1 database, self-hosted Access application, custom-domain Worker, and account API token. Node.js 22 or newer is required for the toolchain.
+## Credentials and permissions
+
+Fleet reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the launching environment. Put them in your shell's secret-loading workflow or secret manager, not in this repository, an MCP file with literal values, or a committed dotenv file.
+
+Create a token scoped to only the intended account and zones. `Zone Read` is the baseline for `doctor --live` and zone discovery. Complete inventory calls product-specific surfaces, so add the matching groups for the products you use, commonly `Zone Settings Read`, `DNS Read`, `Email Routing Rules Read`, `Zone WAF Read`, `Workers Routes Read`, `Firewall Services Read`, `Health Checks`, and `Load Balancers`. Missing optional access remains visible as coverage evidence instead of being treated as trustworthy absence.
+
+Keep the token read-only unless you plan to use reviewed writes. Supported mutations commonly require the corresponding `Zone Settings Write`, `DNS Write`, `Email Routing Rules Edit`, or `Zone WAF Write` group. Deep audit account surfaces can require additional account-level read groups for Workers, Pages, D1, KV, R2, Queues, Workflows, and Registrar. Cloudflare maintains the authoritative [API token permission groups](https://developers.cloudflare.com/fundamentals/api/reference/permissions/); rerun the audit after changing a token so its actual coverage is explicit.
+
+## Configuration and profiles
+
+No configuration file is required for a first run. These commands explain the effective paths, credential presence, local dependencies, and file safety without printing either credential value:
 
 ```sh
+cloudflare-fleet config show
+cloudflare-fleet doctor
+cloudflare-fleet doctor --live
+```
+
+State and policy are operator data, not package data. They survive installation, updates, and uninstallation. State defaults to `$XDG_STATE_HOME/cloudflare-fleet/state.json` or `~/.local/state/cloudflare-fleet/state.json`; policy defaults to `$XDG_CONFIG_HOME/cloudflare-fleet/fleet-policy.json` or `~/.config/cloudflare-fleet/fleet-policy.json`. Files Fleet creates use mode `0600`, and `doctor` warns about unsafe existing permissions or symbolic links.
+
+Path precedence is command flag, Fleet environment variable, XDG environment variable, then per-user default. Fleet-specific environment paths must be absolute:
+
+```sh
+export CLOUDFLARE_FLEET_STATE_FILE="$HOME/.local/state/cloudflare-fleet/production.json"
+export CLOUDFLARE_FLEET_POLICY_FILE="$HOME/.config/cloudflare-fleet/production-policy.json"
+cloudflare-fleet config show
+```
+
+Use `--state-file` and `--policy-file` for a one-command profile instead. The example policy is [`fleet-policy.example.json`](fleet-policy.example.json); copy it to the path reported by `config show` only when an operator exception is needed. Live state, policy, deployment configuration, and secrets stay untracked.
+
+## Local dashboard
+
+The local dashboard requires macOS, `jq`, `curl`, a Chromium-compatible browser, and the normal account credentials. It starts read-only when no mode flag is supplied:
+
+```sh
+cloudflare-fleet dashboard
+```
+
+Use `cloudflare-fleet dashboard --write` only when you intend to review and apply supported changes. The launcher opens a normal browser tab through a random loopback broker, persists intent and activity to the selected state file, and removes its private runtime after the last dashboard connection closes. `./launch.sh` accepts the same options from a source checkout and also defaults to read-only.
+
+Use `cloudflare-fleet dashboard --fresh` to bypass the inventory cache for one launch. Debug mode is intentionally separate: `cloudflare-fleet dashboard --debug-port 9224` creates an isolated browser profile with direct Cloudflare transport for development and browser automation; it cannot persist intent or activity through the broker.
+
+## Read-only audit
+
+The CLI reads live Cloudflare inventory and configured Fleet state without sending mutations. Progress goes to stderr so stdout remains pipeable.
+
+```sh
+cloudflare-fleet audit
+cloudflare-fleet audit --format json
+cloudflare-fleet audit --format html > audit.html
+cloudflare-fleet audit --deep --fail-on warning
+```
+
+Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
+
+`--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit is a point-in-time review of every proxied exact hostname; it does not schedule probes or retain endpoint state.
+
+## Hosted deployment
+
+Hosted Fleet needs a source checkout, Cloudflare zone, D1 database, self-hosted Access application, custom-domain Worker, and account API token.
+
+```sh
+git clone --branch v0.1.0 --depth 1 https://github.com/j-256/cloudflare-fleet.git
+cd cloudflare-fleet
 npm ci
 npx wrangler d1 create cloudflare-fleet
 
@@ -62,35 +125,6 @@ npm run deploy -- --secrets-file .dev.vars.production
 The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. See the [deployment guide](docs/deployment.html) for Access setup, secret handling, verification, optional state import, and the deliberate `--write` opt-in.
 
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
-
-## Local launch
-
-The local launcher requires macOS, Node.js 22 or newer, `jq`, a Chromium-compatible browser, and account credentials in the shell.
-
-```sh
-export CLOUDFLARE_API_TOKEN="your-account-token"
-export CLOUDFLARE_ACCOUNT_ID="your-account-id"
-cloudflare-fleet dashboard --read-only
-```
-
-Use `cloudflare-fleet dashboard --write` for the full reviewed-write workflow. The launcher opens a normal browser tab through a random loopback broker, persists intent and activity to the durable per-user state file, and removes its private runtime after the last dashboard connection closes. `--state-file` and `--policy-file` select explicit profiles; their environment-variable equivalents require absolute paths. `./launch.sh` accepts the same options for checkout-local compatibility.
-
-Debug mode is intentionally separate. `cloudflare-fleet dashboard --debug-port 9224` creates an isolated browser profile with direct Cloudflare transport for development and browser automation; it cannot persist intent or activity through the broker.
-
-## Read-only audit
-
-The CLI reads live Cloudflare inventory and configured Fleet state without sending mutations. Progress goes to stderr so stdout remains pipeable.
-
-```sh
-cloudflare-fleet audit
-cloudflare-fleet audit --format json
-cloudflare-fleet audit --format html > audit.html
-cloudflare-fleet audit --deep --fail-on warning
-```
-
-Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
-
-`--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit is a point-in-time review of every proxied exact hostname; it does not schedule probes or retain endpoint state.
 
 ## Operator CLI and MCP
 
@@ -125,13 +159,41 @@ Every Cloudflare apply repeats fresh scoped planning inside the exclusive write 
 
 The stable exit contract is documented by `cloudflare-fleet --help`: success is `0`, runtime failure is `1`, invalid usage is `2`, a missing dependency is `3`, blocked or attention-required outcomes are `4`, a changed plan is `5`, a write failure is `6`, and a verification failure is `7`.
 
-The local stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy:
+The local stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy. It is part of the same installed package:
 
 ```sh
 cloudflare-fleet mcp
 ```
 
-Configure clients with the installed executable and a subcommand, which is the standard MCP stdio command-plus-arguments shape:
+Start with `get_runtime_status` after connecting. It returns the same redacted path, credential-presence, dependency, and optional live-access diagnosis as `cloudflare-fleet doctor`, so an agent can explain missing setup before attempting fleet work.
+
+### Codex
+
+Add the server to `~/.codex/config.toml` and explicitly forward the two credential variables from the environment that launches Codex:
+
+```toml
+[mcp_servers.cloudflare_fleet]
+command = "cloudflare-fleet"
+args = ["mcp"]
+env_vars = ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]
+```
+
+Run `codex mcp list` to inspect the configured server, then use `/mcp` in a Codex session and ask Fleet for `get_runtime_status`. Codex documents the stdio fields in its [MCP configuration guide](https://developers.openai.com/codex/mcp).
+
+### Claude Code
+
+Register the command at user scope so it is available across projects, then launch Claude Code from the shell that exports the credentials:
+
+```sh
+claude mcp add --transport stdio --scope user cloudflare-fleet -- cloudflare-fleet mcp
+claude mcp list
+```
+
+Use `/mcp` in a Claude Code session to inspect the connection and ask Fleet for `get_runtime_status`. The registration stores the command and arguments, not literal credential values. Claude Code documents scopes, stdio registration, and environment expansion in its [MCP guide](https://code.claude.com/docs/en/mcp).
+
+### Other MCP clients
+
+Use the standard stdio command-plus-arguments shape and arrange for the client process to inherit the credentials:
 
 ```json
 {
@@ -144,17 +206,48 @@ Configure clients with the installed executable and a subcommand, which is the s
 }
 ```
 
-The server registers read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Mutation tools display the exact request, digest, and operations through MCP input elicitation, require explicit approval, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
+For an explicit profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command.
 
+The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Mutation tools display the exact request, digest, and operations through MCP input elicitation, require explicit approval, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
+
+- Diagnose: `get_runtime_status`
 - Read: `audit_fleet`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
 - Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_change`, and `plan_activity_undo`
 - Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_change`, and `apply_activity_undo`
+
+Read and plan tools work without interactive approval. Apply tools additionally require an MCP client that supports input elicitation; if the client does not present the elicitation, use the CLI or dashboard to review and apply the same bounded plan.
 
 A short-lived, intent-revision-bound baseline avoids repeating the complete alignment candidate inventory, but fresh membership and selected surfaces are still reread. Protocol messages use stdout and diagnostics use stderr. The package version is reported consistently by the CLI, package metadata, and MCP server identity.
 
 Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried.
 
-The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Durable per-user state and policy paths are independent of the npm installation, so reinstalling the binary cannot replace operator data. Pass `--state-file PATH` and `--policy-file PATH` to `cloudflare-fleet mcp` when using explicit profiles; the same profile options are available where the corresponding CLI workflow needs them. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
+The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Durable per-user state and policy paths are independent of the npm installation, so reinstalling the binary cannot replace operator data. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
+
+## Daily operating loop
+
+Use diagnostics and an audit before opening a write-capable surface, especially after changing credentials, profiles, or versions:
+
+```sh
+cloudflare-fleet doctor --live
+cloudflare-fleet audit --fail-on warning
+cloudflare-fleet dashboard
+```
+
+The dashboard command is read-only by default. When a supported correction is needed, either relaunch with `--write` and use the visual confirmation or use a CLI/MCP plan followed by its digest-bound apply command. Inspect the durable result and guarded recovery options with `cloudflare-fleet activity list` and `cloudflare-fleet activity undo plan --id ACTIVITY_ID`.
+
+Use `cloudflare-fleet config show` whenever profile selection is unclear, `cloudflare-fleet dashboard --fresh` when the next browser session must bypass cached inventory, and `cloudflare-fleet audit --deep` for a broader point-in-time account and endpoint review.
+
+## Update or uninstall
+
+Choose a newer tag from [GitHub Releases](https://github.com/j-256/cloudflare-fleet/releases), install it over the existing package, and rerun the live doctor:
+
+```sh
+npm install --global "github:j-256/cloudflare-fleet#v0.1.0"
+cloudflare-fleet --version
+cloudflare-fleet doctor --live
+```
+
+Remove only the installed program with `npm uninstall --global cloudflare-fleet`. npm does not remove the state and policy paths reported by `cloudflare-fleet config show`, so an uninstall or reinstall cannot silently discard fleet intent or activity.
 
 ## Fleet intent and writes
 
@@ -172,7 +265,7 @@ Clearing or bypassing the inventory cache never removes intent or activity. Host
 
 ## Documentation and screenshots
 
-The dependency-free site under [`docs/`](docs/) is ready for GitHub Pages branch publishing from `/docs`. Preview it locally with:
+The dependency-free site under [`docs/`](docs/) is published by the repository's least-privilege GitHub Pages workflow. Preview it locally with:
 
 ```sh
 npm run docs:serve
@@ -205,6 +298,7 @@ npm run test:e2e:ergonomics
 shellcheck launch.sh
 npm run build:hosted
 npx wrangler deploy --dry-run --config wrangler.example.jsonc
+npm run check:install
 npm run check:publication
 ```
 
@@ -220,7 +314,7 @@ Run the publication gate before proposing a public change:
 npm run check:publication
 ```
 
-The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. It also requires the public documentation, security guidance, CI workflow, and synthetic product screenshots that make the repository independently useful.
+The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. It also requires the public documentation, security guidance, CI, Pages, release workflows, install smoke test, and synthetic product screenshots that make the repository independently useful.
 
 ## Security
 

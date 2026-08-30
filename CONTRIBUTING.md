@@ -45,6 +45,7 @@ npm run test:e2e:ergonomics
 shellcheck launch.sh
 npm run build:hosted
 npx wrangler deploy --dry-run --config wrangler.example.jsonc
+npm run check:install
 npm run check:publication
 ```
 
@@ -55,6 +56,16 @@ The opt-in live read-only test is useful for changes to inventory coverage, but 
 The GitHub Pages site lives under `docs/` and uses only relative, dependency-free assets. Preview it with `npm run docs:serve`.
 
 When visible dashboard behavior changes, regenerate the public screenshots with `npm run screenshots`. The capture must continue using only the deterministic fixture. Inspect each image for synthetic `.example` data before committing it. Do not replace these images with live-account captures.
+
+## Releases
+
+Update `package.json` and `package-lock.json` to the intended version, complete the full verification surface, and merge the release-ready source before creating its annotated tag. The tag must exactly equal `v` followed by the package version. Pushing that tag runs the complete release gate again, packs the allowlisted source package, and attaches it to a generated GitHub Release. The workflow refuses a mismatched tag, and the package remains private to prevent npm registry publication.
+
+```sh
+release_version="$(node -p 'require("./package.json").version')"
+git tag -a "v$release_version" -m "Cloudflare Fleet v$release_version"
+git push origin "v$release_version"
+```
 
 ## Pull requests
 
