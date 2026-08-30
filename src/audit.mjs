@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import path from "node:path"
 import process from "node:process"
 
 import { CloudflareApi } from "./api.mjs"
@@ -20,8 +19,8 @@ import { isMainModule } from "./entrypoint.mjs"
 import { readFleetPolicyConfiguration } from "./fleet-policy-store.mjs"
 import { loadInventory } from "./inventory.mjs"
 import {
-  defaultFleetPolicyFile,
-  defaultFleetStateFile,
+  fleetPolicyFileSelection,
+  fleetStateFileSelection,
 } from "./operator-paths.mjs"
 import { readFleetStateDocument } from "./state-store.mjs"
 
@@ -126,28 +125,11 @@ function progressReporter(stderr) {
 }
 
 export function resolveStateFile(argument, environment) {
-  // Explicit file arguments accept relative paths while environment values do not
-  if (argument) return path.resolve(argument)
-  const configured = environment.CLOUDFLARE_FLEET_STATE_FILE
-  if (!configured) return defaultFleetStateFile(environment)
-  if (!path.isAbsolute(configured)) {
-    throw new FleetConfigurationError(
-      "CLOUDFLARE_FLEET_STATE_FILE must be an absolute path",
-    )
-  }
-  return path.resolve(configured)
+  return fleetStateFileSelection(argument, environment).path
 }
 
 export function resolvePolicyFile(argument, environment) {
-  if (argument) return path.resolve(argument)
-  const configured = environment.CLOUDFLARE_FLEET_POLICY_FILE
-  if (!configured) return defaultFleetPolicyFile(environment)
-  if (!path.isAbsolute(configured)) {
-    throw new FleetConfigurationError(
-      "CLOUDFLARE_FLEET_POLICY_FILE must be an absolute path",
-    )
-  }
-  return path.resolve(configured)
+  return fleetPolicyFileSelection(argument, environment).path
 }
 
 export async function collectFleetAudit(options = {}) {

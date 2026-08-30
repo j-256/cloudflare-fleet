@@ -34,11 +34,14 @@ import {
   fleetChangeSchema,
   fleetIntentDocumentSchema,
   identifierSchema,
+  runtimeStatusInputSchema,
+  runtimeStatusOutputSchema,
 } from "./interface-schemas.mjs"
 import { stableString } from "./normalize.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
 import { createProgressReporter } from "./progress.mjs"
+import { diagnoseFleetRuntime } from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 
 const MCP_SERVER_NAME = "cloudflare-fleet"
@@ -267,6 +270,10 @@ const intentOutputSchema = z.union([
   accountOutputSchema.extend({
     document: fleetIntentDocumentSchema,
   }),
+  errorOutputSchema,
+])
+const runtimeOutputSchema = z.union([
+  runtimeStatusOutputSchema,
   errorOutputSchema,
 ])
 
@@ -595,14 +602,25 @@ function resultIsExecutionError(result) {
   ].includes(result.status)
 }
 
+function lazyLocalFleetService(options) {
+  let service
+  return new Proxy({}, {
+    get(_target, property) {
+      service ||= createLocalFleetService(options)
+      return service[property]
+    },
+  })
+}
+
 export function createFleetMcpServer(options = {}) {
   const environment = options.environment || process.env
   const stderr = options.stderr || process.stderr
-  const service = options.service || createLocalFleetService({
+  const service = options.service || lazyLocalFleetService({
     environment,
     policyFile: options.policyFile,
     stateFile: options.stateFile,
   })
+  const inspectRuntime = options.diagnoseRuntime || diagnoseFleetRuntime
   const auditFleet = options.auditFleet || ((auditOptions) => collectFleetAudit({
     deep: auditOptions.deep,
     environment,
@@ -624,7 +642,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Use read and plan tools before mutations. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -741,6 +759,30 @@ export function createFleetMcpServer(options = {}) {
       })
     }, secrets)
   }
+
+  server.registerTool(
+    "get_runtime_status",
+    {
+      annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description: "Inspect effective local paths, credential presence, private file modes, runtime and dashboard prerequisites, with an optional bounded live zone-list probe. Secret values are never returned.",
+      inputSchema: runtimeStatusInputSchema,
+      outputSchema: runtimeOutputSchema,
+      title: "Diagnose Cloudflare Fleet runtime",
+    },
+    safeToolHandler(async ({ live }, context) => {
+      const result = await inspectRuntime({
+        environment,
+        live,
+        policyFile: options.policyFile,
+        signal: context.mcpReq.signal,
+        stateFile: options.stateFile,
+      })
+      const summary = result.status === "ready"
+        ? `Cloudflare Fleet is ready: ${result.summary.pass} checks passed`
+        : `Cloudflare Fleet needs attention: ${result.summary.fail} failed and ${result.summary.warning} warned`
+      return toolResult(result, summary)
+    }, secrets),
+  )
 
   server.registerTool(
     "audit_fleet",

@@ -54,12 +54,12 @@ CACHE_MODE_CLEAR="clear"
 CHROME_BINARY="${CLOUDFLARE_FLEET_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 CHROME_APP="${CLOUDFLARE_FLEET_CHROME_APP:-}"
 NODE_BINARY=""
-READ_ONLY=false
+READ_ONLY=true
 USE_CACHE=true
 CLEAR_CACHE=false
 DEBUG_PORT=""
-SESSION_MODE="read/write"
-SESSION_TITLE="Cloudflare Fleet | Read/write"
+SESSION_MODE="read-only"
+SESSION_TITLE="Cloudflare Fleet | Read-only"
 MODE_OPTION=""
 MAX_DEBUG_PORT=65535
 READY_ATTEMPTS=100
@@ -102,8 +102,8 @@ show_help() {
     echo "SYNOPSIS"
     echo "  $SCRIPT_COMMAND [-r | -w] [-f | -c] [-d PORT] [-s PATH] [-p PATH]"
     echo "OPTIONS"
-    echo "  -r, --read-only        Disable every write control"
-    echo "  -w, --write            Enable previewed and confirmed write controls (default)"
+    echo "  -r, --read-only        Disable every write control (default)"
+    echo "  -w, --write            Enable previewed and confirmed write controls"
     echo "  -f, --fresh            Bypass the cached snapshot for this launch"
     echo "  -c, --clear-cache      Clear cached snapshots before loading live"
     echo "  -d, --debug-port PORT  Open an isolated direct-client session with Chrome DevTools"

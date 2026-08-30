@@ -25,6 +25,11 @@ import {
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
 import { createProgressReporter } from "./progress.mjs"
+import {
+  diagnoseFleetRuntime,
+  FLEET_RUNTIME_STATUS,
+  inspectFleetRuntimeConfiguration,
+} from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 
 const CLI_FORMAT = Object.freeze({
@@ -70,6 +75,11 @@ const EXPECT_PLAN_OPTION = Object.freeze({
   short: "e",
   value: true,
 })
+const LIVE_OPTION = Object.freeze({
+  default: false,
+  name: "live",
+  value: false,
+})
 const COMMON_OPTIONS = Object.freeze([
   FORMAT_OPTION,
   HELP_OPTION,
@@ -87,6 +97,8 @@ const HELP_COMMAND_BY_TOPIC = Object.freeze({
   activity: "activity-help",
   alignment: "alignment-help",
   change: "change-help",
+  config: "config-help",
+  doctor: "doctor-help",
   hosted: "hosted-help",
   intent: "intent-help",
   mcp: "mcp-help",
@@ -101,6 +113,8 @@ export function fleetUsage() {
     "SYNOPSIS",
     "  cloudflare-fleet dashboard [DASHBOARD_OPTIONS]",
     "  cloudflare-fleet audit [AUDIT_OPTIONS]",
+    "  cloudflare-fleet config show [--format text|json] [--policy-file PATH] [--state-file PATH]",
+    "  cloudflare-fleet doctor [--live] [--format text|json] [--policy-file PATH] [--state-file PATH]",
     "  cloudflare-fleet alignment list [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment plan SELECTOR_OPTIONS [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
@@ -169,6 +183,48 @@ export function fleetIntentUsage() {
     "  intent show emits an editable document in text mode",
     "  plan validates every collection and reports additions, changes, and removals",
     "  apply replans under the shared write lock and persists only an exact digest match",
+  ].join("\n")
+}
+
+export function fleetConfigUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet config - explain effective local operator configuration",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet config show [--format text|json] [--policy-file PATH] [--state-file PATH]",
+    "",
+    "OPTIONS",
+    "  -f, --format text|json Select operator text or structured JSON output",
+    "  -p, --policy-file PATH Explain an explicit fleet policy profile",
+    "  -s, --state-file PATH  Explain an explicit fleet state profile",
+    "  -h, --help             Show this help",
+    "",
+    "OUTPUT",
+    "  Reports path precedence, file state, credential presence, runtime, and dashboard support",
+    "  Never prints the Cloudflare account identifier or API token value",
+  ].join("\n")
+}
+
+export function fleetDoctorUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet doctor - check local readiness and explain remedies",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet doctor [--live] [--format text|json] [--policy-file PATH] [--state-file PATH]",
+    "",
+    "OPTIONS",
+    "  --live                 Make one bounded account-scoped zone-list request",
+    "  -f, --format text|json Select operator text or structured JSON output",
+    "  -p, --policy-file PATH Check an explicit fleet policy profile",
+    "  -s, --state-file PATH  Check an explicit fleet state profile",
+    "  -h, --help             Show this help",
+    "",
+    "EXIT STATUS",
+    "  0  Every required check passed; unsupported optional surfaces may be skipped",
+    "  2  Command usage or configured path syntax was invalid",
+    "  4  One or more checks need operator attention",
   ].join("\n")
 }
 
@@ -389,6 +445,42 @@ export function parseFleetArguments(argv) {
   }
   if (resource === "dashboard") {
     return { argv: argv.slice(1), command: "dashboard" }
+  }
+  if (resource === "config") {
+    if (!action || isHelpArgument(action)) return { command: "config-help" }
+    if (action !== "show") {
+      throw new CliUsageError("Config command must be show")
+    }
+    const options = parseOptions(rest, [
+      FORMAT_OPTION,
+      HELP_OPTION,
+      POLICY_FILE_OPTION,
+      STATE_FILE_OPTION,
+    ])
+    if (options.help) return { command: "config-help" }
+    return {
+      command: "config-show",
+      format: options.format,
+      policyFile: options.policyfile,
+      stateFile: options.statefile,
+    }
+  }
+  if (resource === "doctor") {
+    const options = parseOptions(argv.slice(1), [
+      FORMAT_OPTION,
+      HELP_OPTION,
+      LIVE_OPTION,
+      POLICY_FILE_OPTION,
+      STATE_FILE_OPTION,
+    ])
+    if (options.help) return { command: "doctor-help" }
+    return {
+      command: "doctor",
+      format: options.format,
+      live: options.live,
+      policyFile: options.policyfile,
+      stateFile: options.statefile,
+    }
   }
   if (resource === "hosted") {
     if (!action || isHelpArgument(action)) return { command: "hosted-help" }
@@ -690,7 +782,50 @@ function renderIntentPlan(result) {
   return lines.join("\n")
 }
 
+function operatorFileSummary(file) {
+  if (!file.exists) {
+    return `missing; nearest existing parent ${file.parent.existingPath || "unavailable"} is ${file.parent.writable ? "writable" : "not writable"}`
+  }
+  const link = file.symbolicLink ? ", symbolic link" : ""
+  const mode = file.mode ? `, mode ${file.mode}` : ""
+  return `${file.kind}${link}${mode}, ${file.accessible ? "accessible" : "not accessible"}`
+}
+
+function renderRuntimeConfiguration(result) {
+  return [
+    "Cloudflare Fleet configuration",
+    `Package: ${result.runtime.packageVersion}`,
+    `Runtime: Node.js ${result.runtime.node.version} on ${result.runtime.platform}-${result.runtime.architecture}`,
+    "Credentials:",
+    `- ${result.credentials.accountId.environmentName}: ${result.credentials.accountId.present ? "set" : "unset"}`,
+    `- ${result.credentials.apiToken.environmentName}: ${result.credentials.apiToken.present ? "set" : "unset"}`,
+    "Operator files:",
+    `- State: ${result.paths.state.path}`,
+    `  Source: ${result.paths.state.sourceName}; ${operatorFileSummary(result.paths.state)}`,
+    `- Policy: ${result.paths.policy.path}`,
+    `  Source: ${result.paths.policy.sourceName}; ${operatorFileSummary(result.paths.policy)}`,
+    `Dashboard: ${result.dashboard.status} - ${result.dashboard.reason}`,
+    "Secret values are not displayed",
+  ].join("\n")
+}
+
+function renderRuntimeDoctor(result) {
+  const lines = [
+    `Cloudflare Fleet doctor: ${result.status.toUpperCase()}`,
+  ]
+  for (const entry of result.checks) {
+    lines.push(`[${entry.status.toUpperCase()}] ${entry.label}: ${entry.detail}`)
+    if (entry.remedy) lines.push(`  Remedy: ${entry.remedy}`)
+  }
+  lines.push(
+    `Summary: ${result.summary.pass} passed, ${result.summary.warning} warnings, ${result.summary.fail} failed, ${result.summary.skip} skipped`,
+  )
+  return lines.join("\n")
+}
+
 function renderResult(command, result) {
+  if (command === "config-show") return renderRuntimeConfiguration(result)
+  if (command === "doctor") return renderRuntimeDoctor(result)
   if (command === "alignment-list") return renderAlignmentList(result)
   if (command === "alignment-plan") return renderAlignmentPlan(result)
   if (command === "alignment-apply") return renderAlignmentApply(result)
@@ -710,6 +845,9 @@ function renderResult(command, result) {
 }
 
 function resultExitCode(result) {
+  if (result.status === FLEET_RUNTIME_STATUS.ATTENTION) {
+    return FLEET_CLI_EXIT_CODE.ATTENTION
+  }
   if (result.status === ALIGNMENT_PREPARATION_STATUS.BLOCKED) {
     return FLEET_CLI_EXIT_CODE.BLOCKED
   }
@@ -748,6 +886,43 @@ export async function runFleetCommand(options = {}) {
   if (parsed.command === "dashboard") {
     return runDashboardCommand(parsed, { ...options, environment, stderr, stdout })
   }
+  if (parsed.command === "config-show") {
+    const inspectConfiguration = options.inspectRuntimeConfiguration
+      || inspectFleetRuntimeConfiguration
+    const result = await inspectConfiguration({
+      environment,
+      homeDirectory: options.homeDirectory,
+      now: options.now,
+      platform: options.platform,
+      policyFile: parsed.policyFile,
+      stateFile: parsed.stateFile,
+      workingDirectory: options.workingDirectory,
+    })
+    writeResult(stdout, parsed.format, parsed.command, result)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return result
+  }
+  if (parsed.command === "doctor") {
+    const diagnoseRuntime = options.diagnoseRuntime || diagnoseFleetRuntime
+    const result = await diagnoseRuntime({
+      api: options.api,
+      environment,
+      homeDirectory: options.homeDirectory,
+      live: parsed.live,
+      liveProbe: options.liveProbe,
+      liveProbeTimeoutMs: options.liveProbeTimeoutMs,
+      now: options.now,
+      platform: options.platform,
+      policyFile: parsed.policyFile,
+      signal: options.signal,
+      stateFile: parsed.stateFile,
+      workingDirectory: options.workingDirectory,
+    })
+    writeResult(stdout, parsed.format, parsed.command, result)
+    const exitCode = resultExitCode(result)
+    options.onExitCode?.(exitCode)
+    return result
+  }
   if (parsed.command === "hosted-configure") {
     const { runHostedConfigurationCommand } = await import("../scripts/configure-hosted.mjs")
     return runHostedConfigurationCommand({
@@ -784,6 +959,16 @@ export async function runFleetCommand(options = {}) {
   }
   if (parsed.command === "alignment-help") {
     stdout.write(`${fleetAlignmentUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "config-help") {
+    stdout.write(`${fleetConfigUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "doctor-help") {
+    stdout.write(`${fleetDoctorUsage()}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return null
   }

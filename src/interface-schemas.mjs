@@ -278,3 +278,70 @@ export const fleetIntentDocumentSchema = z.strictObject({
 export const activityUndoInputSchema = z.strictObject({
   activityId: identifierSchema,
 })
+
+export const runtimeStatusInputSchema = z.strictObject({
+  live: z.boolean().default(false)
+    .describe("Make one bounded account-scoped Cloudflare zone-list request"),
+})
+
+const runtimeCredentialSchema = z.strictObject({
+  environmentName: z.string(),
+  present: z.boolean(),
+})
+const runtimeOperatorPathSchema = z.looseObject({
+  accessible: z.boolean(),
+  exists: z.boolean(),
+  kind: z.string(),
+  mode: z.string().nullable(),
+  path: z.string(),
+  source: z.string(),
+  sourceName: z.string(),
+  symbolicLink: z.boolean(),
+})
+const runtimeCheckSchema = z.strictObject({
+  detail: z.string(),
+  id: z.string(),
+  label: z.string(),
+  remedy: z.string().optional(),
+  status: z.enum(["fail", "pass", "skip", "warning"]),
+})
+
+export const runtimeStatusOutputSchema = z.looseObject({
+  checkedAt: z.string(),
+  checks: z.array(runtimeCheckSchema),
+  credentials: z.strictObject({
+    accountId: runtimeCredentialSchema,
+    apiToken: runtimeCredentialSchema,
+  }),
+  dashboard: z.looseObject({
+    available: z.boolean(),
+    reason: z.string(),
+    status: z.string(),
+  }),
+  live: z.looseObject({
+    requested: z.boolean(),
+    status: z.enum(["failed", "ready", "skipped"]),
+  }),
+  paths: z.strictObject({
+    policy: runtimeOperatorPathSchema,
+    state: runtimeOperatorPathSchema,
+  }),
+  runtime: z.looseObject({
+    architecture: z.string(),
+    node: z.looseObject({
+      minimumMajor: z.number().int(),
+      supported: z.boolean(),
+      version: z.string(),
+    }),
+    packageVersion: z.string(),
+    platform: z.string(),
+  }),
+  schemaVersion: z.literal(1),
+  status: z.enum(["attention", "ready"]),
+  summary: z.strictObject({
+    fail: z.number().int().nonnegative(),
+    pass: z.number().int().nonnegative(),
+    skip: z.number().int().nonnegative(),
+    warning: z.number().int().nonnegative(),
+  }),
+})

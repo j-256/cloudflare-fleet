@@ -46,6 +46,7 @@ const CHANGE = Object.freeze({
   zoneId: "zone-one",
 })
 const TOOL_NAMES = Object.freeze([
+  "get_runtime_status",
   "audit_fleet",
   "get_fleet_intent",
   "plan_fleet_intent",
@@ -416,6 +417,60 @@ function auditReport() {
   }
 }
 
+function runtimeStatus() {
+  return {
+    checkedAt: "2026-08-30T00:00:00.000Z",
+    checks: [{
+      detail: "Node.js is supported",
+      id: "runtime.node",
+      label: "Node.js runtime",
+      status: "pass",
+    }],
+    credentials: {
+      accountId: { environmentName: "CLOUDFLARE_ACCOUNT_ID", present: true },
+      apiToken: { environmentName: "CLOUDFLARE_API_TOKEN", present: true },
+    },
+    dashboard: {
+      available: false,
+      dependencies: [],
+      reason: "CLI and MCP workflows remain available",
+      status: "unsupported",
+    },
+    live: { requested: false, status: "skipped" },
+    paths: {
+      policy: {
+        accessible: false,
+        exists: false,
+        kind: "missing",
+        mode: null,
+        path: "/profiles/policy.json",
+        source: "default",
+        sourceName: "per-user default",
+        symbolicLink: false,
+      },
+      state: {
+        accessible: true,
+        exists: true,
+        kind: "file",
+        mode: "0600",
+        path: "/profiles/state.json",
+        source: "argument",
+        sourceName: "--state-file",
+        symbolicLink: false,
+      },
+    },
+    runtime: {
+      architecture: "arm64",
+      node: { minimumMajor: 22, supported: true, version: "22.0.0" },
+      packageVersion: "0.1.0",
+      platform: "darwin",
+    },
+    schemaVersion: 1,
+    status: "ready",
+    summary: { fail: 0, pass: 1, skip: 0, warning: 0 },
+  }
+}
+
 async function connectedFixture(context, options = {}) {
   const serviceData = serviceFixture(options.serviceOverrides)
   const auditCalls = []
@@ -425,6 +480,7 @@ async function connectedFixture(context, options = {}) {
       return auditReport()
     }),
     environment: { CLOUDFLARE_API_TOKEN: SECRET },
+    diagnoseRuntime: options.diagnoseRuntime || (async () => runtimeStatus()),
     requestStateKey: new Uint8Array(32).fill(7),
     service: serviceData.service,
     stderr: { write() {} },
@@ -493,6 +549,9 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   assert.match(JSON.stringify(change.outputSchema), /"operations"/)
   const intentApply = result.tools.find((entry) => entry.name === "apply_fleet_intent")
   assert.equal(intentApply.annotations.openWorldHint, false)
+  const runtime = result.tools.find((entry) => entry.name === "get_runtime_status")
+  assert.equal(runtime.annotations.readOnlyHint, true)
+  assert.match(JSON.stringify(runtime.outputSchema), /"checks"/)
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
 })
 
@@ -508,6 +567,7 @@ test("MCP read tools return structured service and audit results", async (contex
     changePlan,
     activity,
     undoPlan,
+    runtime,
   ] = await Promise.all([
     client.callTool({
       arguments: { deep: true },
@@ -541,6 +601,10 @@ test("MCP read tools return structured service and audit results", async (contex
       arguments: { activityId: "activity-one" },
       name: "plan_activity_undo",
     }),
+    client.callTool({
+      arguments: { live: false },
+      name: "get_runtime_status",
+    }),
   ])
 
   assert.equal(audit.structuredContent.report.summary.findings, 0)
@@ -553,6 +617,8 @@ test("MCP read tools return structured service and audit results", async (contex
   assert.equal(activity.structuredContent.status, "ok")
   assert.equal(changePlan.structuredContent.planSet.digest, DIGEST)
   assert.equal(undoPlan.structuredContent.activityId, "activity-one")
+  assert.equal(runtime.structuredContent.status, "ready")
+  assert.match(runtime.content[0].text, /is ready/)
   assert.deepEqual(
     JSON.parse(plan.content[1].text),
     plan.structuredContent,
@@ -564,6 +630,37 @@ test("MCP read tools return structured service and audit results", async (contex
   assert.deepEqual(calls.planChange, [CHANGE])
   assert.deepEqual(calls.planIntent, [INTENT_DOCUMENT])
   assert.deepEqual(calls.planUndo, ["activity-one"])
+})
+
+test("MCP runtime diagnostics remain available before Cloudflare credentials are configured", async (context) => {
+  const server = createFleetMcpServer({
+    diagnoseRuntime: async ({ live }) => ({
+      ...runtimeStatus(),
+      live: { requested: live, status: "skipped" },
+    }),
+    environment: {},
+    stderr: { write() {} },
+  })
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+  const client = new Client(
+    { name: "cloudflare-fleet-runtime-test", version: "1.0.0" },
+    { capabilities: {} },
+  )
+  await client.connect(clientTransport)
+  context.after(async () => {
+    await client.close()
+    await server.close()
+  })
+
+  const tools = await client.listTools()
+  const result = await client.callTool({
+    arguments: {},
+    name: "get_runtime_status",
+  })
+
+  assert.equal(tools.tools[0].name, "get_runtime_status")
+  assert.equal(result.structuredContent.status, "ready")
 })
 
 test("MCP apply elicits one explicit plan approval before invoking the write service", async (context) => {

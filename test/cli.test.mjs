@@ -239,12 +239,16 @@ test("unified CLI serves namespace and leaf help without requiring operands", as
     [["alignment", "plan", "--help"], /SELECTOR/],
     [["intent", "--help"], /cloudflare-fleet intent/],
     [["change", "--help"], /cloudflare-fleet change/],
+    [["config", "--help"], /cloudflare-fleet config/],
+    [["config", "show", "--help"], /credential presence/],
+    [["doctor", "--help"], /cloudflare-fleet doctor/],
     [["activity", "--help"], /cloudflare-fleet activity/],
     [["activity", "undo", "--help"], /guarded undo/],
     [["hosted", "--help"], /cloudflare-fleet hosted/],
     [["schema", "--help"], /cloudflare-fleet schema/],
     [["schema", "change", "--help"], /machine-readable public input schemas/],
     [["help", "intent"], /cloudflare-fleet intent/],
+    [["help", "doctor"], /check local readiness/],
   ]
 
   for (const [argv, pattern] of cases) {
@@ -269,6 +273,114 @@ test("unified CLI help documents the bounded agent surface", () => {
   assert.match(usage, /cloudflare-fleet mcp/)
   assert.match(usage, /cloudflare-fleet change plan/)
   assert.match(usage, /activity undo plan/)
+  assert.match(usage, /config show/)
+  assert.match(usage, /cloudflare-fleet doctor/)
+})
+
+test("unified CLI parses configuration and doctor diagnostics", () => {
+  assert.deepEqual(
+    parseFleetArguments([
+      "config",
+      "show",
+      "--format=json",
+      "--state-file",
+      "profiles/state.json",
+      "--policy-file=profiles/policy.json",
+    ]),
+    {
+      command: "config-show",
+      format: "json",
+      policyFile: "profiles/policy.json",
+      stateFile: "profiles/state.json",
+    },
+  )
+  assert.deepEqual(
+    parseFleetArguments(["doctor", "--live", "-fjson"]),
+    {
+      command: "doctor",
+      format: "json",
+      live: true,
+      policyFile: null,
+      stateFile: null,
+    },
+  )
+})
+
+test("configuration output explains resolved sources without requiring credentials", async () => {
+  const stdout = outputStream()
+  const exits = []
+  await runFleetCommand({
+    argv: ["config", "show"],
+    inspectRuntimeConfiguration: async () => ({
+      credentials: {
+        accountId: { environmentName: "CLOUDFLARE_ACCOUNT_ID", present: false },
+        apiToken: { environmentName: "CLOUDFLARE_API_TOKEN", present: false },
+      },
+      dashboard: { reason: "CLI remains available", status: "unsupported" },
+      paths: {
+        policy: {
+          accessible: false,
+          exists: false,
+          parent: { existingPath: "/profiles", writable: true },
+          path: "/profiles/policy.json",
+          sourceName: "CLOUDFLARE_FLEET_POLICY_FILE",
+        },
+        state: {
+          accessible: true,
+          exists: true,
+          kind: "file",
+          mode: "0600",
+          path: "/profiles/state.json",
+          sourceName: "--state-file",
+          symbolicLink: false,
+        },
+      },
+      runtime: {
+        architecture: "arm64",
+        node: { version: "22.0.0" },
+        packageVersion: "0.1.0",
+        platform: "darwin",
+      },
+      schemaVersion: 1,
+      status: "ok",
+    }),
+    onExitCode: (code) => exits.push(code),
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  assert.match(stdout.value(), /State: \/profiles\/state.json/)
+  assert.match(stdout.value(), /Source: --state-file/)
+  assert.match(stdout.value(), /CLOUDFLARE_API_TOKEN: unset/)
+  assert.match(stdout.value(), /Secret values are not displayed/)
+  assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.SUCCESS])
+})
+
+test("doctor emits structured attention results with exit 4", async () => {
+  const stdout = outputStream()
+  const exits = []
+  const result = {
+    checks: [{
+      detail: "CLOUDFLARE_API_TOKEN is unset",
+      id: "credentials.api-token",
+      label: "Cloudflare API token",
+      remedy: "Export CLOUDFLARE_API_TOKEN",
+      status: "fail",
+    }],
+    schemaVersion: 1,
+    status: "attention",
+    summary: { fail: 1, pass: 0, skip: 0, warning: 0 },
+  }
+  await runFleetCommand({
+    argv: ["doctor", "--format", "json"],
+    diagnoseRuntime: async () => result,
+    onExitCode: (code) => exits.push(code),
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  assert.deepEqual(JSON.parse(stdout.value()), result)
+  assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.ATTENTION])
 })
 
 test("unified CLI parses canonical intent, change, undo, and schema commands", () => {

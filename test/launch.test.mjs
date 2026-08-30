@@ -75,6 +75,19 @@ test("launcher presents the canonical dispatcher name when delegated", async () 
   assert.match(result.stdout, /cloudflare-fleet dashboard \[-r \| -w\]/)
 })
 
+test("launcher defaults to a read-only session and documents write mode as opt-in", async () => {
+  const result = await execFileAsync(
+    "/bin/bash",
+    ["-x", launcher, "--help"],
+  )
+
+  assert.match(result.stdout, /--read-only\s+Disable every write control \(default\)/)
+  assert.doesNotMatch(result.stdout, /--write.*\(default\)/)
+  assert.match(result.stderr, /\+ READ_ONLY=true/)
+  assert.match(result.stderr, /\+ SESSION_MODE=read-only/)
+  assert.match(result.stderr, /\+ SESSION_TITLE='Cloudflare Fleet \| Read-only'/)
+})
+
 test("launcher applies short option validation", async () => {
   await assert.rejects(
     execFileAsync("/bin/bash", [launcher, "-r", "-w"]),
