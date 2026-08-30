@@ -1,21 +1,20 @@
-name: CI
+name: Release
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    tags:
+      - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Verify public source and product
+  release:
+    name: Verify and publish source artifact
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -27,6 +26,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Verify release tag
+        run: npm run check:release-tag -- "$GITHUB_REF_NAME"
 
       - name: Install dependencies
         run: npm ci
@@ -58,13 +60,16 @@ jobs:
       - name: Check publication safety
         run: npm run check:publication
 
-      - name: Upload browser evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: browser-evidence
-          path: |
-            test-results/
-            playwright-report/
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Pack source artifact
+        id: artifact
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}/cloudflare-fleet-release
+        run: |
+          mkdir -p "$ARTIFACT_DIRECTORY"
+          artifact_name="$(npm pack --pack-destination "$ARTIFACT_DIRECTORY")"
+          echo "path=$ARTIFACT_DIRECTORY/$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.artifact.outputs.path }}" --generate-notes --title "$GITHUB_REF_NAME" --verify-tag

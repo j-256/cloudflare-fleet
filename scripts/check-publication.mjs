@@ -9,6 +9,8 @@ const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DOCS_ROOT = path.join(PROJECT_ROOT, "docs")
 const REQUIRED_FILES = Object.freeze([
   ".github/workflows/ci.yml",
+  ".github/workflows/pages.yml",
+  ".github/workflows/release.yml",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
@@ -32,6 +34,8 @@ const REQUIRED_FILES = Object.freeze([
   "docs/security.html",
   "docs/styles.css",
   "fleet-policy.example.json",
+  "scripts/check-install.mjs",
+  "scripts/check-release-tag.mjs",
   "wrangler.example.jsonc",
 ])
 const PRIVATE_TRACKED_FILES = new Set([
@@ -241,6 +245,12 @@ export async function checkPublication() {
   }
   if (packageMetadata.bin?.[packageMetadata.name] !== "src/cli.mjs") {
     errors.push("package.json must expose src/cli.mjs as the cloudflare-fleet binary")
+  }
+  if (packageMetadata.scripts?.["check:install"] !== "node scripts/check-install.mjs") {
+    errors.push("package.json must retain the packed-install verification command")
+  }
+  if (packageMetadata.scripts?.["check:release-tag"] !== "node scripts/check-release-tag.mjs") {
+    errors.push("package.json must retain the release-tag verification command")
   }
   const artifactFiles = packedFiles()
   for (const required of [

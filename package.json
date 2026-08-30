@@ -43,7 +43,9 @@
   "scripts": {
     "audit": "node src/cli.mjs audit",
     "build:hosted": "node scripts/build-worker-assets.mjs",
+    "check:install": "node scripts/check-install.mjs",
     "check:publication": "node scripts/check-publication.mjs",
+    "check:release-tag": "node scripts/check-release-tag.mjs",
     "configure:hosted": "node src/cli.mjs hosted configure",
     "dashboard": "node src/cli.mjs dashboard",
     "db:migrate:local": "wrangler d1 migrations apply cloudflare-fleet --local",
