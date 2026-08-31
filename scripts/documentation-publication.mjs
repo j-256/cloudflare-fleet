@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { promises as fs } from "node:fs"
+import { constants as fsConstants, promises as fs } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -36,6 +36,9 @@ export const DOCUMENTATION_SOURCE_PATHS = Object.freeze([
 const DOCUMENTATION_MANIFEST_BYTE_LIMIT = 1024 * 1024
 const DOCUMENTATION_OUTPUT_BYTE_LIMIT = 25 * 1024 * 1024
 const DOCUMENTATION_REQUEST_TIMEOUT_MS = 15_000
+const DOCUMENTATION_SOURCE_OPEN_FLAGS = typeof fsConstants.O_NOFOLLOW === "number"
+  ? fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+  : "r"
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u
 
 function invariant(condition, message) {
@@ -161,6 +164,34 @@ function localPath(root, relative) {
   return path.join(root, ...relative.split("/"))
 }
 
+async function readDocumentationSource(sourcePath, file) {
+  let handle
+  try {
+    handle = await fs.open(sourcePath, DOCUMENTATION_SOURCE_OPEN_FLAGS)
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ELOOP") {
+      throw new Error(`Documentation source has an unsupported entry: ${file}`)
+    }
+    throw error
+  }
+  try {
+    const handleMetadata = await handle.stat()
+    const source = await handle.readFile()
+    const pathMetadata = await fs.lstat(sourcePath)
+    invariant(
+      handleMetadata.isFile()
+        && pathMetadata.isFile()
+        && !pathMetadata.isSymbolicLink()
+        && handleMetadata.dev === pathMetadata.dev
+        && handleMetadata.ino === pathMetadata.ino,
+      `Documentation source has an unsupported entry: ${file}`,
+    )
+    return source
+  } finally {
+    await handle.close()
+  }
+}
+
 export async function buildDocumentationArtifact(options = {}) {
   const projectRoot = options.projectRoot || PROJECT_ROOT
   const sourceRoot = options.sourceRoot || path.join(projectRoot, "docs")
@@ -191,12 +222,7 @@ export async function buildDocumentationArtifact(options = {}) {
     const outputs = []
     for (const file of files) {
       const sourcePath = localPath(sourceRoot, file)
-      const metadata = await fs.lstat(sourcePath)
-      invariant(
-        metadata.isFile() && !metadata.isSymbolicLink(),
-        `Documentation source has an unsupported entry: ${file}`,
-      )
-      const source = await fs.readFile(sourcePath)
+      const source = await readDocumentationSource(sourcePath, file)
       const destination = localPath(stagingRoot, file)
       await fs.mkdir(path.dirname(destination), { recursive: true })
       await fs.writeFile(destination, source)
