@@ -23,7 +23,7 @@ The command prints a loopback URL backed by synthetic `.example` zones. Stop it 
 
 Never commit or attach `state.json`, `fleet-policy.json`, `wrangler.jsonc`, `.dev.vars*`, `.env*`, live audit output, browser traces, or screenshots from a real account. Use the committed example files and deterministic fixture data in tests, docs, issues, and pull requests.
 
-Do not add a real domain, account identifier, D1 identifier, Access audience, team name, email address, API token, or machine-local absolute path to tracked content. Run `npm run check:publication` before proposing a change.
+Do not add an operator domain, account identifier, D1 identifier, Access audience, team name, email address, API token, or machine-local absolute path to tracked content. The canonical public documentation hostname is the only tracked deployment domain. Run `npm run check:publication` before proposing a change.
 
 ## Making changes
 
@@ -45,6 +45,8 @@ npm run test:e2e:ergonomics
 shellcheck launch.sh
 npm run build:hosted
 npx wrangler deploy --dry-run --config wrangler.example.jsonc
+npm run build:docs
+npm run deploy:docs:dry-run
 npm run check:install
 npm run check:publication
 ```
@@ -53,7 +55,7 @@ The opt-in live read-only test is useful for changes to inventory coverage, but 
 
 ## Documentation and screenshots
 
-The GitHub Pages site lives under `docs/` and uses only relative, dependency-free assets. Preview it with `npm run docs:serve`.
+The Workers Static Assets site lives under `docs/` and uses only relative, dependency-free assets. Preview it with `npm run docs:serve`; reproduce the exact deployment artifact with `npm run build:docs`.
 
 When visible dashboard behavior changes, regenerate the public screenshots with `npm run screenshots`. The capture must continue using only the deterministic fixture. Inspect each image for synthetic `.example` data before committing it. Do not replace these images with live-account captures.
 

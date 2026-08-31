@@ -11,7 +11,7 @@
   "bugs": {
     "url": "https://github.com/j-256/cloudflare-fleet/issues"
   },
-  "homepage": "https://j-256.github.io/cloudflare-fleet/",
+  "homepage": "https://docs.cloudflare-fleet.lasers.app",
   "keywords": [
     "cloudflare",
     "cloudflare-workers",
@@ -28,11 +28,15 @@
     "index.html",
     "launch.sh",
     "migrations/",
+    "scripts/build-documentation.mjs",
     "scripts/build-worker-assets.mjs",
+    "scripts/check-public-documentation.mjs",
     "scripts/configure-hosted.mjs",
+    "scripts/documentation-publication.mjs",
     "scripts/import-hosted-state.mjs",
     "src/",
     "styles.css",
+    "wrangler.docs.jsonc",
     "wrangler.example.jsonc"
   ],
   "bin": {
@@ -43,7 +47,9 @@
   },
   "scripts": {
     "audit": "node src/cli.mjs audit",
+    "build:docs": "node scripts/build-documentation.mjs",
     "build:hosted": "node scripts/build-worker-assets.mjs",
+    "check:docs:public": "node scripts/check-public-documentation.mjs",
     "check:install": "node scripts/check-install.mjs",
     "check:publication": "node scripts/check-publication.mjs",
     "check:release-tag": "node scripts/check-release-tag.mjs",
@@ -52,6 +58,8 @@
     "db:migrate:local": "wrangler d1 migrations apply cloudflare-fleet --local",
     "db:migrate:remote": "wrangler d1 migrations apply cloudflare-fleet --remote",
     "deploy": "wrangler deploy",
+    "deploy:docs": "wrangler deploy --config wrangler.docs.jsonc",
+    "deploy:docs:dry-run": "wrangler deploy --dry-run --config wrangler.docs.jsonc --outdir .wrangler/docs-dry-run",
     "docs:serve": "node scripts/serve-docs.mjs",
     "dev:hosted": "wrangler dev",
     "fleet": "node src/cli.mjs",

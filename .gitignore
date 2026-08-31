@@ -5,6 +5,7 @@
 .wrangler/
 auth.js
 chrome-profile/
+documentation-dist/
 fleet-policy.json
 node_modules/
 playwright-report/
