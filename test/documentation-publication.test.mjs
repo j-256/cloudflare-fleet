@@ -181,6 +181,7 @@ test("documentation maintenance CLIs expose equivalent option forms", () => {
     "-ja2",
     "-d5",
     "-mmanifest.json",
+    "-uhttps://docs.example",
   ])
   const long = parsePublicDocumentationCheckArguments([
     "--json",
@@ -189,12 +190,28 @@ test("documentation maintenance CLIs expose equivalent option forms", () => {
     "5",
     "--manifest",
     "manifest.json",
+    "--url",
+    "https://docs.example",
   ])
   assert.deepEqual(short, long)
   assert.match(documentationBuildUsage(), /Exit status: 0/u)
   assert.match(publicDocumentationCheckUsage(), /-m, --manifest/u)
+  assert.match(publicDocumentationCheckUsage(), /-u, --url/u)
+  assert.equal(
+    parsePublicDocumentationCheckArguments([], {
+      CLOUDFLARE_FLEET_DOCUMENTATION_URL: "https://configured.example",
+    }).baseUrl,
+    "https://configured.example",
+  )
   assert.throws(
-    () => parsePublicDocumentationCheckArguments(["--attempts", "13"]),
+    () => parsePublicDocumentationCheckArguments([], {}),
+    /CLOUDFLARE_FLEET_DOCUMENTATION_URL is required/u,
+  )
+  assert.throws(
+    () => parsePublicDocumentationCheckArguments(
+      ["--attempts", "13"],
+      { CLOUDFLARE_FLEET_DOCUMENTATION_URL: "https://docs.example" },
+    ),
     /between 1 and 12/,
   )
   assert.throws(
@@ -233,7 +250,13 @@ test("documentation CLI help and failure streams use documented statuses", async
   )
   const runtimeFailure = spawnSync(
     process.execPath,
-    ["scripts/check-public-documentation.mjs", "--manifest", missingManifest],
+    [
+      "scripts/check-public-documentation.mjs",
+      "--manifest",
+      missingManifest,
+      "--url",
+      "https://docs.example",
+    ],
     { cwd: PROJECT_ROOT, encoding: "utf8" },
   )
   assert.equal(runtimeFailure.status, 1)
@@ -244,6 +267,19 @@ test("documentation CLI help and failure streams use documented statuses", async
 test("canonical documentation JSON ignores object key order but preserves arrays", () => {
   assert.equal(canonicalJson({ b: 2, a: 1 }), canonicalJson({ a: 1, b: 2 }))
   assert.notEqual(canonicalJson(["b", "a"]), canonicalJson(["a", "b"]))
+})
+
+test("public verification requires an explicit deployment origin", async () => {
+  await assert.rejects(
+    verifyPublicDocumentation({
+      expectedManifest: {
+        format: "cloudflare-fleet.documentation.v1",
+        outputs: [{ path: "index.html", sha256: "0".repeat(64), size: 0 }],
+        package: { name: "cloudflare-fleet", version: "1.2.3" },
+      },
+    }),
+    /documentation URL is required/u,
+  )
 })
 
 test("documentation asset ignore policy is an exact deployment allowlist", () => {

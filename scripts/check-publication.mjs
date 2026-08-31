@@ -300,8 +300,11 @@ export async function checkPublication() {
   )
   for (const required of [
     "environment:\n      name: documentation",
+    "vars.CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION == 'true'",
+    "url: ${{ vars.CLOUDFLARE_FLEET_DOCUMENTATION_URL }}",
     "CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}",
     "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}",
+    "CLOUDFLARE_FLEET_DOCUMENTATION_URL: ${{ vars.CLOUDFLARE_FLEET_DOCUMENTATION_URL }}",
     "include-hidden-files: true",
     "npm run deploy:docs -- --message",
     "npm run check:docs:public -- --manifest documentation-dist/publication-manifest.json",
@@ -312,6 +315,9 @@ export async function checkPublication() {
   }
   if (/deploy-pages|configure-pages|pages:\s*write/u.test(ciWorkflow)) {
     errors.push("CI retains obsolete GitHub Pages deployment authority")
+  }
+  if (ciWorkflow.includes("https://docs.cloudflare-fleet.lasers.app")) {
+    errors.push("CI hardcodes the upstream documentation deployment target")
   }
   const artifactFiles = packedFiles()
   for (const required of [
