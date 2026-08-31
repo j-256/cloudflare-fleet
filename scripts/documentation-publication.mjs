@@ -8,7 +8,6 @@ const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url))
 export const PROJECT_ROOT = path.dirname(MODULE_DIRECTORY)
 export const DOCUMENTATION_SOURCE_ROOT = path.join(PROJECT_ROOT, "docs")
 export const DOCUMENTATION_OUTPUT_ROOT = path.join(PROJECT_ROOT, "documentation-dist")
-export const DOCUMENTATION_URL = "https://docs.cloudflare-fleet.lasers.app"
 export const DOCUMENTATION_MANIFEST_FORMAT = "cloudflare-fleet.documentation.v1"
 export const DOCUMENTATION_MANIFEST_PATH = "publication-manifest.json"
 export const DOCUMENTATION_ASSETS_IGNORE_PATH = ".assetsignore"
@@ -372,9 +371,13 @@ async function verifyDocumentationAttempt(options, attempt, expectedFingerprint)
 export async function verifyPublicDocumentation(options) {
   const attempts = options.attempts ?? 1
   const delayMs = options.delayMs ?? 0
-  const baseUrl = options.baseUrl || DOCUMENTATION_URL
+  const baseUrl = options.baseUrl
   const fetchImplementation = options.fetchImplementation || fetch
   validateDocumentationManifest(options.expectedManifest)
+  invariant(
+    typeof baseUrl === "string" && baseUrl.length > 0,
+    "documentation URL is required",
+  )
   invariant(
     Number.isSafeInteger(attempts) && attempts >= 1 && attempts <= 12,
     "documentation attempts are invalid",

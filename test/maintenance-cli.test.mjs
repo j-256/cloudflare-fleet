@@ -85,7 +85,7 @@ test("documentation server mirrors clean Worker routes and branded not-found han
     const origin = `http://127.0.0.1:${address.port}`
     const deployment = await fetch(`${origin}/deployment`)
     assert.equal(deployment.status, 200)
-    assert.match(await deployment.text(), /Publish these docs with Workers Static Assets/u)
+    assert.match(await deployment.text(), /Stand up a protected Worker without losing local mode/u)
     const missing = await fetch(`${origin}/nested/missing`)
     assert.equal(missing.status, 404)
     assert.match(await missing.text(), /This fleet coordinate does not exist/u)

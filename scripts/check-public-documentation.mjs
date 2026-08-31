@@ -5,7 +5,6 @@ import { isMainModule } from "../src/entrypoint.mjs"
 import {
   DOCUMENTATION_MANIFEST_PATH,
   DOCUMENTATION_OUTPUT_ROOT,
-  DOCUMENTATION_URL,
   readDocumentationManifest,
   verifyPublicDocumentation,
 } from "./documentation-publication.mjs"
@@ -19,15 +18,19 @@ export function publicDocumentationCheckUsage() {
   return [
     "Usage: check-public-documentation.mjs [options]",
     "",
-    `Verify that ${DOCUMENTATION_URL} exactly matches a local artifact manifest.`,
-    "The command requires Node.js network access to the fixed documentation URL.",
+    "Verify that a deployed documentation origin exactly matches a local artifact manifest.",
+    "The target is required through --url or CLOUDFLARE_FLEET_DOCUMENTATION_URL.",
     "",
     "Options:",
+    "  -u, --url URL         Verify this HTTPS documentation origin",
     "  -m, --manifest FILE   Read the expected manifest from FILE",
     "  -a, --attempts N      Try from 1 through 12 times (default: 1)",
     "  -d, --delay-ms N      Wait up to 10000 milliseconds between attempts",
     "  -j, --json            Write the verification report as JSON",
     "  -h, --help            Show this help",
+    "",
+    "Environment:",
+    "  CLOUDFLARE_FLEET_DOCUMENTATION_URL   Default documentation origin",
     "",
     "Exit status: 0 for an exact deployment, 1 for verification failure, 2 for invalid usage.",
   ].join("\n")
@@ -44,16 +47,29 @@ function parseInteger(value, label, minimum, maximum) {
   return parsed
 }
 
-export function parsePublicDocumentationCheckArguments(argv) {
+export function parsePublicDocumentationCheckArguments(argv, environment = process.env) {
   const options = parseCliOptions(argv, [
     { default: "1", name: "attempts", short: "a", value: true },
+    {
+      default: environment.CLOUDFLARE_FLEET_DOCUMENTATION_URL || "",
+      key: "baseUrl",
+      name: "url",
+      short: "u",
+      value: true,
+    },
     { default: "0", key: "delayMs", name: "delay-ms", short: "d", value: true },
     { default: false, name: "help", short: "h", value: false },
     { default: false, name: "json", short: "j", value: false },
     { default: DEFAULT_MANIFEST_PATH, name: "manifest", short: "m", value: true },
   ])
+  if (!options.help && !options.baseUrl) {
+    throw new CliUsageError(
+      "--url or CLOUDFLARE_FLEET_DOCUMENTATION_URL is required",
+    )
+  }
   return {
     attempts: parseInteger(options.attempts, "--attempts", 1, 12),
+    baseUrl: options.baseUrl,
     delayMs: parseInteger(options.delayMs, "--delay-ms", 0, 10_000),
     help: options.help,
     json: options.json,
@@ -65,6 +81,7 @@ async function checkPublicDocumentation(options) {
   const expectedManifest = await readDocumentationManifest(options.manifestPath)
   return verifyPublicDocumentation({
     attempts: options.attempts,
+    baseUrl: options.baseUrl,
     delayMs: options.delayMs,
     expectedManifest,
     onRetry(error, attempt, attempts) {

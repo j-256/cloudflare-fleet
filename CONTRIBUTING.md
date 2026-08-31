@@ -23,7 +23,7 @@ The command prints a loopback URL backed by synthetic `.example` zones. Stop it 
 
 Never commit or attach `state.json`, `fleet-policy.json`, `wrangler.jsonc`, `.dev.vars*`, `.env*`, live audit output, browser traces, or screenshots from a real account. Use the committed example files and deterministic fixture data in tests, docs, issues, and pull requests.
 
-Do not add an operator domain, account identifier, D1 identifier, Access audience, team name, email address, API token, or machine-local absolute path to tracked content. The canonical public documentation hostname is the only tracked deployment domain. Run `npm run check:publication` before proposing a change.
+Do not add an operator domain, account identifier, D1 identifier, Access audience, team name, email address, API token, deployment target, or machine-local absolute path to tracked content. Official repository and documentation links identify the upstream project; they do not configure a clone's deployment. Run `npm run check:publication` before proposing a change.
 
 ## Making changes
 
@@ -58,6 +58,18 @@ The opt-in live read-only test is useful for changes to inventory coverage, but 
 The Workers Static Assets site lives under `docs/` and uses only relative, dependency-free assets. Preview it with `npm run docs:serve`; reproduce the exact deployment artifact with `npm run build:docs`.
 
 When visible dashboard behavior changes, regenerate the public screenshots with `npm run screenshots`. The capture must continue using only the deterministic fixture. Inspect each image for synthetic `.example` data before committing it. Do not replace these images with live-account captures.
+
+### Optional documentation publication
+
+The default workflow verifies the documentation source, artifact, and neutral Worker configuration. Publication is opt-in so a fork does not attempt to deploy after an ordinary push to `main`.
+
+To enable publication for a repository, set the repository variable `CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION` to `true` and set `CLOUDFLARE_FLEET_DOCUMENTATION_URL` to that repository's HTTPS documentation origin. Create a protected GitHub Actions environment named `documentation`, store the Cloudflare account identifier in its `CLOUDFLARE_ACCOUNT_ID` variable, and store a dedicated account-owned token with Workers Scripts Write in its `CLOUDFLARE_WORKERS_DEPLOY_TOKEN` secret. Configure any custom domain and redirects in the owning Cloudflare account rather than in tracked source.
+
+The workflow deploys the exact artifact produced by verification and checks it against the configured origin. A maintainer can run the same verification against any deployment without changing source:
+
+```sh
+npm run check:docs:public -- --url https://docs.example.com
+```
 
 ## Releases
 

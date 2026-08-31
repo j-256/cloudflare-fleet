@@ -265,20 +265,20 @@ Clearing or bypassing the inventory cache never removes intent or activity. Host
 
 ## Documentation and screenshots
 
-The dependency-free site under [`docs/`](docs/) is published at [docs.cloudflare-fleet.lasers.app](https://docs.cloudflare-fleet.lasers.app) by the repository's assets-only documentation Worker. CI builds and verifies an exact artifact without credentials, then the protected `documentation` environment deploys those same bytes and verifies every public output. Preview the source locally with:
+The official documentation is published at [docs.cloudflare-fleet.lasers.app](https://docs.cloudflare-fleet.lasers.app). Its dependency-free source lives under [`docs/`](docs/), and every clone can preview and build the same static artifact locally:
 
 ```sh
 npm run docs:serve
 ```
 
-Maintainers can reproduce the deployable artifact and Worker validation without deployment authority:
+The tracked Workers Static Assets configuration contains no account identifier, custom domain, route, runtime binding, or secret. Validate the portable deployment shape without Cloudflare credentials:
 
 ```sh
 npm run build:docs
 npm run deploy:docs:dry-run
 ```
 
-The [deployment guide](https://docs.cloudflare-fleet.lasers.app/deployment#documentation-worker-heading) owns one-time environment setup, narrow token policy, custom-domain cutover, routine publication, and recovery.
+Automated documentation publication is not enabled by the source defaults. Repository maintainers can opt their fork into publishing through externally stored GitHub variables, environment configuration, and a Cloudflare token as described in [CONTRIBUTING.md](CONTRIBUTING.md#optional-documentation-publication).
 
 Public product screenshots are automated:
 

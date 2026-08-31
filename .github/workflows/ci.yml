@@ -96,11 +96,11 @@ jobs:
 
   documentation:
     name: Publish documentation
-    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy-documentation')) && github.ref == 'refs/heads/main' && needs.verify.result == 'success' }}
+    if: ${{ vars.CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION == 'true' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy-documentation')) && github.ref == 'refs/heads/main' && needs.verify.result == 'success' }}
     needs: verify
     environment:
       name: documentation
-      url: https://docs.cloudflare-fleet.lasers.app
+      url: ${{ vars.CLOUDFLARE_FLEET_DOCUMENTATION_URL }}
     permissions:
       actions: read
       contents: read
@@ -133,3 +133,5 @@ jobs:
 
       - name: Verify exact public documentation
         run: npm run check:docs:public -- --manifest documentation-dist/publication-manifest.json --attempts 6 --delay-ms 10000
+        env:
+          CLOUDFLARE_FLEET_DOCUMENTATION_URL: ${{ vars.CLOUDFLARE_FLEET_DOCUMENTATION_URL }}
