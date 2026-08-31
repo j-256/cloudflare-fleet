@@ -5,6 +5,16 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Verification only, or an exact documentation redeployment from main
+        required: true
+        default: verify
+        type: choice
+        options:
+          - verify
+          - deploy-documentation
 
 permissions:
   contents: read
@@ -58,6 +68,21 @@ jobs:
       - name: Check publication safety
         run: npm run check:publication
 
+      - name: Build documentation artifact
+        run: npm run build:docs
+
+      - name: Validate documentation Worker
+        run: npm run deploy:docs:dry-run
+
+      - name: Upload verified documentation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: documentation-site
+          path: documentation-dist
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
       - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -68,3 +93,43 @@ jobs:
             playwright-report/
           if-no-files-found: ignore
           retention-days: 7
+
+  documentation:
+    name: Publish documentation
+    if: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy-documentation')) && github.ref == 'refs/heads/main' && needs.verify.result == 'success' }}
+    needs: verify
+    environment:
+      name: documentation
+      url: https://docs.cloudflare-fleet.lasers.app
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deployment dependencies
+        run: npm ci
+
+      - name: Download exact verified documentation artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: documentation-site
+          path: documentation-dist
+
+      - name: Deploy exact verified documentation artifact
+        run: npm run deploy:docs -- --message "GitHub Actions ${GITHUB_SHA}"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
+
+      - name: Verify exact public documentation
+        run: npm run check:docs:public -- --manifest documentation-dist/publication-manifest.json --attempts 6 --delay-ms 10000

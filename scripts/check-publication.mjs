@@ -4,12 +4,12 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 import { isMainModule } from "../src/entrypoint.mjs"
+import { DOCUMENTATION_SOURCE_PATHS } from "./documentation-publication.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DOCS_ROOT = path.join(PROJECT_ROOT, "docs")
 const REQUIRED_FILES = Object.freeze([
   ".github/workflows/ci.yml",
-  ".github/workflows/pages.yml",
   ".github/workflows/release.yml",
   "AGENTS.md",
   "CLAUDE.md",
@@ -17,26 +17,14 @@ const REQUIRED_FILES = Object.freeze([
   "LICENSE",
   "README.md",
   "SECURITY.md",
-  "docs/.nojekyll",
-  "docs/architecture.html",
-  "docs/deployment.html",
-  "docs/diagrams/architecture.svg",
-  "docs/diagrams/intent-alignment.svg",
-  "docs/diagrams/write-flow.svg",
-  "docs/getting-started.html",
-  "docs/index.html",
-  "docs/screenshots/alignment-blocked.png",
-  "docs/screenshots/cover.png",
-  "docs/screenshots/dashboard-overview.png",
-  "docs/screenshots/fleet-intent.png",
-  "docs/screenshots/intent-alignment.png",
-  "docs/screenshots/mobile-dashboard.png",
-  "docs/screenshots/reviewed-write.png",
-  "docs/security.html",
-  "docs/styles.css",
+  ...DOCUMENTATION_SOURCE_PATHS.map((file) => `docs/${file}`),
   "fleet-policy.example.json",
+  "scripts/build-documentation.mjs",
   "scripts/check-install.mjs",
+  "scripts/check-public-documentation.mjs",
   "scripts/check-release-tag.mjs",
+  "scripts/documentation-publication.mjs",
+  "wrangler.docs.jsonc",
   "wrangler.example.jsonc",
 ])
 const PRIVATE_TRACKED_FILES = new Set([
@@ -149,20 +137,30 @@ async function validateDocumentationLinks(files, errors) {
     entry.startsWith("docs/") && entry.endsWith(".html")
   ))) {
     const source = await fs.readFile(path.join(PROJECT_ROOT, file), "utf8")
-    for (const reference of localReferences(source)) {
+    for (const originalReference of localReferences(source)) {
+      let reference = originalReference
       if (reference.startsWith("/")) {
-        errors.push(`${file} uses a root-relative link: ${reference}`)
+        if (file !== "docs/404.html") {
+          errors.push(`${file} uses a root-relative link: ${reference}`)
+          continue
+        }
+        reference = reference === "/" ? "index.html" : reference.replace(/^\/+/, "")
+      }
+      let target = path.resolve(PROJECT_ROOT, path.dirname(file), reference)
+      if (target !== DOCS_ROOT && !target.startsWith(`${DOCS_ROOT}${path.sep}`)) {
+        errors.push(`${file} links outside the documentation source: ${reference}`)
         continue
       }
-      const target = path.resolve(PROJECT_ROOT, path.dirname(file), reference)
-      if (!target.startsWith(`${DOCS_ROOT}${path.sep}`)) {
-        errors.push(`${file} links outside the Pages source: ${reference}`)
-        continue
+      try {
+        const metadata = await fs.lstat(target)
+        if (metadata.isDirectory()) target = path.join(target, "index.html")
+      } catch {
+        if (!path.extname(target)) target = `${target}.html`
       }
       try {
         await fs.access(target)
       } catch {
-        errors.push(`${file} has a missing local link: ${reference}`)
+        errors.push(`${file} has a missing local link: ${originalReference}`)
       }
     }
   }
@@ -211,10 +209,19 @@ export async function checkPublication() {
   const errors = []
   const files = await publicationFiles()
   const fileSet = new Set(files)
+  const documentationFiles = new Set(
+    DOCUMENTATION_SOURCE_PATHS.map((file) => `docs/${file}`),
+  )
   for (const required of REQUIRED_FILES) {
     if (!fileSet.has(required)) errors.push(`Required publication file is missing: ${required}`)
   }
+  for (const obsolete of [".github/workflows/pages.yml", "docs/.nojekyll"]) {
+    if (fileSet.has(obsolete)) errors.push(`Obsolete Pages file remains tracked: ${obsolete}`)
+  }
   for (const file of files) {
+    if (file.startsWith("docs/") && !documentationFiles.has(file)) {
+      errors.push(`Documentation file is outside the deployment frontier: ${file}`)
+    }
     if (PRIVATE_TRACKED_FILES.has(file)
       || file.startsWith(".dev.vars")
       || file.startsWith(".env")
@@ -238,10 +245,29 @@ export async function checkPublication() {
   const packageMetadata = JSON.parse(
     await fs.readFile(path.join(PROJECT_ROOT, "package.json"), "utf8"),
   )
+  const documentationWorker = JSON.parse(
+    await fs.readFile(path.join(PROJECT_ROOT, "wrangler.docs.jsonc"), "utf8"),
+  )
+  if (documentationWorker.name !== "cloudflare-fleet-docs") {
+    errors.push("wrangler.docs.jsonc must use the dedicated documentation Worker")
+  }
+  if (documentationWorker.workers_dev !== true
+    || documentationWorker.preview_urls !== false
+    || documentationWorker.send_metrics !== false) {
+    errors.push("wrangler.docs.jsonc must retain its public bootstrap and telemetry policy")
+  }
+  if (documentationWorker.main !== undefined
+    || documentationWorker.routes !== undefined
+    || documentationWorker.assets?.binding !== undefined
+    || documentationWorker.assets?.directory !== "./documentation-dist"
+    || documentationWorker.assets?.html_handling !== "auto-trailing-slash"
+    || documentationWorker.assets?.not_found_handling !== "404-page") {
+    errors.push("wrangler.docs.jsonc must remain an assets-only documentation deployment")
+  }
   if (packageMetadata.license !== "AGPL-3.0-only") {
     errors.push("package.json must declare AGPL-3.0-only")
   }
-  if (packageMetadata.homepage !== "https://j-256.github.io/cloudflare-fleet/") {
+  if (packageMetadata.homepage !== "https://docs.cloudflare-fleet.lasers.app") {
     errors.push("package.json must link to the public documentation site")
   }
   if (!packageMetadata.private) {
@@ -256,14 +282,49 @@ export async function checkPublication() {
   if (packageMetadata.scripts?.["check:release-tag"] !== "node scripts/check-release-tag.mjs") {
     errors.push("package.json must retain the release-tag verification command")
   }
+  if (packageMetadata.scripts?.["build:docs"] !== "node scripts/build-documentation.mjs") {
+    errors.push("package.json must retain the documentation build command")
+  }
+  if (packageMetadata.scripts?.["check:docs:public"] !== "node scripts/check-public-documentation.mjs") {
+    errors.push("package.json must retain the public documentation verification command")
+  }
+  if (packageMetadata.scripts?.["deploy:docs"] !== "wrangler deploy --config wrangler.docs.jsonc") {
+    errors.push("package.json must retain the documentation deployment command")
+  }
+  if (packageMetadata.scripts?.["deploy:docs:dry-run"] !== "wrangler deploy --dry-run --config wrangler.docs.jsonc --outdir .wrangler/docs-dry-run") {
+    errors.push("package.json must retain the documentation deployment validation command")
+  }
+  const ciWorkflow = await fs.readFile(
+    path.join(PROJECT_ROOT, ".github", "workflows", "ci.yml"),
+    "utf8",
+  )
+  for (const required of [
+    "environment:\n      name: documentation",
+    "CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}",
+    "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}",
+    "include-hidden-files: true",
+    "npm run deploy:docs -- --message",
+    "npm run check:docs:public -- --manifest documentation-dist/publication-manifest.json",
+  ]) {
+    if (!ciWorkflow.includes(required)) {
+      errors.push(`CI lacks the verified documentation deployment contract: ${required}`)
+    }
+  }
+  if (/deploy-pages|configure-pages|pages:\s*write/u.test(ciWorkflow)) {
+    errors.push("CI retains obsolete GitHub Pages deployment authority")
+  }
   const artifactFiles = packedFiles()
   for (const required of [
     "README.md",
     "launch.sh",
     "src/cli.mjs",
     "src/mcp.mjs",
+    "scripts/build-documentation.mjs",
+    "scripts/check-public-documentation.mjs",
     "scripts/configure-hosted.mjs",
+    "scripts/documentation-publication.mjs",
     "scripts/import-hosted-state.mjs",
+    "wrangler.docs.jsonc",
   ]) {
     if (!artifactFiles.has(required)) {
       errors.push(`Source package is missing required runtime file: ${required}`)

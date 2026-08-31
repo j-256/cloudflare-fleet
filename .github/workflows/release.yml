@@ -60,6 +60,12 @@ jobs:
       - name: Check publication safety
         run: npm run check:publication
 
+      - name: Build documentation artifact
+        run: npm run build:docs
+
+      - name: Validate documentation Worker
+        run: npm run deploy:docs:dry-run
+
       - name: Pack source artifact
         id: artifact
         env:

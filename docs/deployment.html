@@ -6,22 +6,24 @@
   <meta name="description" content="Deploy Cloudflare Fleet as an Access-protected Cloudflare Worker without giving up the local launcher.">
   <meta name="theme-color" content="#071119">
   <title>Deployment | Cloudflare Fleet</title>
+  <link rel="canonical" href="https://docs.cloudflare-fleet.lasers.app/deployment">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
     <div class="header-inner">
-      <a class="brand" href="index.html" aria-label="Cloudflare Fleet documentation home">
+      <a class="brand" href="./" aria-label="Cloudflare Fleet documentation home">
         <span class="brand-mark" aria-hidden="true">CF</span>
         <span class="brand-name">Cloudflare Fleet</span>
       </a>
       <nav class="site-nav" aria-label="Documentation">
-        <a href="index.html">Overview</a>
-        <a href="getting-started.html">Get started</a>
-        <a href="architecture.html">Architecture</a>
-        <a href="deployment.html" aria-current="page">Deploy</a>
-        <a href="security.html">Security</a>
+        <a href="./">Overview</a>
+        <a href="getting-started">Get started</a>
+        <a href="architecture">Architecture</a>
+        <a href="deployment" aria-current="page">Deploy</a>
+        <a href="security">Security</a>
         <a href="https://github.com/j-256/cloudflare-fleet">Repository</a>
       </nav>
     </div>
@@ -40,7 +42,7 @@
         <li>Node.js 22 or newer and npm</li>
         <li>A Cloudflare account with an active zone for the Fleet hostname</li>
         <li>Permission to create Workers, a D1 database, a custom domain, and a Cloudflare Access application</li>
-        <li>An account API token scoped to the resources Fleet should inspect and, if enabled, change; see the <a href="getting-started.html#permissions-heading">least-privilege starting point</a></li>
+        <li>An account API token scoped to the resources Fleet should inspect and, if enabled, change; see the <a href="getting-started#permissions-heading">least-privilege starting point</a></li>
         <li>A configured Cloudflare Zero Trust team domain and identity provider</li>
       </ul>
       <div class="callout callout-warning">
@@ -172,13 +174,21 @@ cloudflare-fleet dashboard</code></pre>
       <p>The local fleet CLI and stdio MCP server inherit the same credentials and use the same durable state profile:</p>
       <pre><code>cloudflare-fleet alignment list --format json
 cloudflare-fleet mcp</code></pre>
-      <p>An MCP client should use <code>cloudflare-fleet</code> as its command and <code>["mcp"]</code> as its arguments. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named diagnostic, audit, intent, alignment, bounded change, activity, and guarded undo tools. The <a href="getting-started.html#mcp-heading">MCP setup guide</a> includes copyable Codex and Claude Code configuration.</p>
+      <p>An MCP client should use <code>cloudflare-fleet</code> as its command and <code>["mcp"]</code> as its arguments. Keep the token in the inherited process environment, not a tracked or shared client configuration. The server opens no listener and exposes only named diagnostic, audit, intent, alignment, bounded change, activity, and guarded undo tools. The <a href="getting-started#mcp-heading">MCP setup guide</a> includes copyable Codex and Claude Code configuration.</p>
     </section>
 
-    <section class="section prose" aria-labelledby="pages-heading">
-      <h2 id="pages-heading">Publish these docs with GitHub Pages</h2>
-      <p>The site is dependency-free and uses relative links, so it works beneath a project path. A least-privilege workflow checks the publication tree, uploads only <code>docs/</code>, and deploys it through GitHub's official Pages actions. A repository administrator must select <strong>GitHub Actions</strong> as the Pages source once. GitHub documents the workflow model in <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages">Using custom workflows with GitHub Pages</a>.</p>
-      <p>Run <code>npm run docs:serve</code> to preview the same files at <code>http://127.0.0.1:4173/</code>. The publication check validates every local documentation link and rejects unexpected symbolic links before deployment.</p>
+    <section class="section prose" aria-labelledby="documentation-worker-heading">
+      <h2 id="documentation-worker-heading">Publish these docs with Workers Static Assets</h2>
+      <p>The public site is an assets-only Cloudflare Worker named <code>cloudflare-fleet-docs</code>. It has no Worker script, runtime binding, secret, D1 access, product route, or authority over the authenticated <code>cloudflare-fleet</code> control plane. The tracked <code>wrangler.docs.jsonc</code> keeps a stable <code>workers.dev</code> route for bootstrap and provider-level diagnosis while the canonical site remains <a href="https://docs.cloudflare-fleet.lasers.app">docs.cloudflare-fleet.lasers.app</a>.</p>
+      <p>The CI workflow separates verification from deployment authority. Its unprivileged verification job checks the source tree, builds <code>documentation-dist/</code>, records every output digest in <code>publication-manifest.json</code>, generates a default-deny <code>.assetsignore</code> upload frontier, dry-runs Wrangler, and uploads that exact generic artifact including its hidden allowlist. Only after the complete job passes can the protected <code>documentation</code> environment provide a deployment token to the publication job. That job downloads the same artifact without rebuilding it, deploys it, and independently fetches and hashes every declared public output.</p>
+      <p>One-time repository setup requires a GitHub Actions environment named <code>documentation</code> restricted to protected <code>main</code>, an environment variable named <code>CLOUDFLARE_ACCOUNT_ID</code>, and an environment secret named <code>CLOUDFLARE_WORKERS_DEPLOY_TOKEN</code>. Create a dedicated account-owned token limited to the deployment account and <strong>Workers Scripts Write</strong>. Keep its returned-once value in the maintainer password manager and the GitHub environment only. That token can upload the site but cannot edit DNS or attach a custom domain.</p>
+      <pre><code>npm run build:docs
+npm run deploy:docs:dry-run
+npm run deploy:docs</code></pre>
+      <p>Bootstrap the Worker with a maintainer credential, verify its <code>workers.dev</code> route, then attach <code>docs.cloudflare-fleet.lasers.app</code> as a Workers Custom Domain using separate DNS authority. Reserve <code>cloudflare-fleet.lasers.app</code> for the future product and temporarily redirect it to the documentation with a path-and-query-preserving 307. Permanently redirect <code>cf-fleet.lasers.app</code> to the spelled-out product hostname and <code>doc.cf-fleet.lasers.app</code> to the spelled-out documentation hostname with equivalent 308 rules. Once the canonical hostname is active, verify the exact deployment with <code>npm run check:docs:public</code>, set the GitHub repository homepage to that URL, and disable the obsolete GitHub Pages site. Keep Pages available until the Worker, redirects, custom domain, and public manifest all pass so rollback remains immediate.</p>
+      <p>The redirect-only product and short product hostnames use proxied originless <code>AAAA 100::</code> records. Attach the nested <code>doc.cf-fleet.lasers.app</code> alias to the documentation Worker as an additional Custom Domain so Cloudflare manages its dedicated certificate; the zone-level 308 remains authoritative before the assets Worker. Keep the three redirect rules in the zone's <code>http_request_dynamic_redirect</code> entry point with stable references so unrelated redirects survive updates.</p>
+      <p>Protected <code>main</code> pushes publish automatically after verification. A maintainer can redeploy the exact current source without a content change through <code>gh workflow run ci.yml --ref main -f operation=deploy-documentation</code>. Revoke and replace the narrow token before using that recovery path if credential exposure is suspected. Avoid dashboard content edits because they create deployment state that the source manifest cannot explain.</p>
+      <p>Run <code>npm run docs:serve</code> to preview the dependency-free source at <code>http://127.0.0.1:4173/</code>. Cloudflare's <a href="https://developers.cloudflare.com/workers/static-assets/">Workers Static Assets documentation</a> defines the hosting model, and its <a href="https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/">Pages migration guide</a> owns the provider cutover details.</p>
     </section>
 
     <section class="section prose" aria-labelledby="publication-heading">
@@ -194,7 +204,7 @@ cloudflare-fleet mcp</code></pre>
         <h2 id="deployment-cta-heading">Review the security model.</h2>
         <p>Understand the Access, Worker, proxy, persistence, and browser boundaries before enabling mutations.</p>
       </div>
-      <a class="button button-primary" href="security.html">Open security</a>
+      <a class="button button-primary" href="security">Open security</a>
     </section>
   </main>
 
@@ -202,8 +212,8 @@ cloudflare-fleet mcp</code></pre>
     <div class="footer-inner">
       <span>Cloudflare Fleet is licensed under AGPL-3.0-only.</span>
       <nav class="footer-links" aria-label="Footer">
-        <a href="index.html">Overview</a>
-        <a href="architecture.html">Architecture</a>
+        <a href="./">Overview</a>
+        <a href="architecture">Architecture</a>
         <a href="https://github.com/j-256/cloudflare-fleet/blob/main/CONTRIBUTING.md">Contributing</a>
       </nav>
     </div>

@@ -40,7 +40,8 @@ export function parseDocumentationServerArguments(argv) {
 
 function documentationPath(requestUrl) {
   const pathname = decodeURIComponent(new URL(requestUrl, "http://localhost").pathname)
-  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "")
+  let relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "")
+  if (relative && !path.extname(relative)) relative = `${relative}.html`
   const resolved = path.resolve(DOCS_ROOT, relative)
   if (!resolved.startsWith(`${DOCS_ROOT}${path.sep}`)) return null
   return resolved
@@ -63,9 +64,25 @@ export function createDocumentationServer() {
       })
       response.end(body)
     } catch (error) {
-      if (error?.code !== "ENOENT") console.error(error)
-      response.writeHead(404)
-      response.end("Not found\n")
+      if (error?.code !== "ENOENT") {
+        console.error(error)
+        response.writeHead(500)
+        response.end("Internal server error\n")
+        return
+      }
+      try {
+        const body = await fs.readFile(path.join(DOCS_ROOT, "404.html"))
+        response.writeHead(404, {
+          "Content-Length": body.length,
+          "Content-Type": MIME_TYPES[".html"],
+          "X-Content-Type-Options": "nosniff",
+        })
+        response.end(body)
+      } catch (fallbackError) {
+        console.error(fallbackError)
+        response.writeHead(500)
+        response.end("Internal server error\n")
+      }
     }
   })
 }

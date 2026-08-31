@@ -22,7 +22,7 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Saves pending activity before mutation, verifies authoritative resources afterward, and offers guarded undo only when the inverse is lossless
 - Keeps the hosted Cloudflare proxy inside explicit read and write allowlists
 
-The [documentation site](docs/index.html) includes a copyable [getting-started guide](docs/getting-started.html), the complete [architecture](docs/architecture.html), [deployment guide](docs/deployment.html), [security model](docs/security.html), screenshots, and accessible visual diagrams.
+The [documentation site](https://docs.cloudflare-fleet.lasers.app) includes a copyable [getting-started guide](https://docs.cloudflare-fleet.lasers.app/getting-started), the complete [architecture](https://docs.cloudflare-fleet.lasers.app/architecture), [deployment guide](https://docs.cloudflare-fleet.lasers.app/deployment), [security model](https://docs.cloudflare-fleet.lasers.app/security), screenshots, and accessible visual diagrams.
 
 ## Quick start
 
@@ -265,11 +265,20 @@ Clearing or bypassing the inventory cache never removes intent or activity. Host
 
 ## Documentation and screenshots
 
-The dependency-free site under [`docs/`](docs/) is published by the repository's least-privilege GitHub Pages workflow. Preview it locally with:
+The dependency-free site under [`docs/`](docs/) is published at [docs.cloudflare-fleet.lasers.app](https://docs.cloudflare-fleet.lasers.app) by the repository's assets-only documentation Worker. CI builds and verifies an exact artifact without credentials, then the protected `documentation` environment deploys those same bytes and verifies every public output. Preview the source locally with:
 
 ```sh
 npm run docs:serve
 ```
+
+Maintainers can reproduce the deployable artifact and Worker validation without deployment authority:
+
+```sh
+npm run build:docs
+npm run deploy:docs:dry-run
+```
+
+The [deployment guide](https://docs.cloudflare-fleet.lasers.app/deployment#documentation-worker-heading) owns one-time environment setup, narrow token policy, custom-domain cutover, routine publication, and recovery.
 
 Public product screenshots are automated:
 
@@ -298,6 +307,8 @@ npm run test:e2e:ergonomics
 shellcheck launch.sh
 npm run build:hosted
 npx wrangler deploy --dry-run --config wrangler.example.jsonc
+npm run build:docs
+npm run deploy:docs:dry-run
 npm run check:install
 npm run check:publication
 ```
@@ -314,7 +325,7 @@ Run the publication gate before proposing a public change:
 npm run check:publication
 ```
 
-The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. It also requires the public documentation, security guidance, CI, Pages, release workflows, install smoke test, and synthetic product screenshots that make the repository independently useful.
+The checker rejects operator files, unexpected symbolic links, machine-private paths, malformed screenshots, and broken local documentation links. It also requires the public documentation, security guidance, CI, Workers Static Assets deployment, release workflow, install smoke test, and synthetic product screenshots that make the repository independently useful.
 
 ## Security
 

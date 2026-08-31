@@ -14,6 +14,7 @@ import {
   parseImportHostedStateArguments,
 } from "../scripts/import-hosted-state.mjs"
 import {
+  createDocumentationServer,
   documentationServerUsage,
   parseDocumentationServerArguments,
 } from "../scripts/serve-docs.mjs"
@@ -71,4 +72,24 @@ test("maintenance CLIs reject unsupported short options", () => {
   assert.throws(() => parseCaptureScreenshotsArguments(["-x"]), /Unknown option: -x/)
   assert.throws(() => parseImportHostedStateArguments(["-x"]), /Unknown option: -x/)
   assert.throws(() => parseDocumentationServerArguments(["-x"]), /Unknown option: -x/)
+})
+
+test("documentation server mirrors clean Worker routes and branded not-found handling", async () => {
+  const server = createDocumentationServer()
+  await new Promise((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", resolve)
+  })
+  try {
+    const address = server.address()
+    const origin = `http://127.0.0.1:${address.port}`
+    const deployment = await fetch(`${origin}/deployment`)
+    assert.equal(deployment.status, 200)
+    assert.match(await deployment.text(), /Publish these docs with Workers Static Assets/u)
+    const missing = await fetch(`${origin}/nested/missing`)
+    assert.equal(missing.status, 404)
+    assert.match(await missing.text(), /This fleet coordinate does not exist/u)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
