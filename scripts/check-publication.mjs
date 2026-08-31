@@ -23,6 +23,7 @@ const REQUIRED_FILES = Object.freeze([
   "scripts/check-install.mjs",
   "scripts/check-public-documentation.mjs",
   "scripts/check-release-tag.mjs",
+  "scripts/deploy-documentation.mjs",
   "scripts/documentation-publication.mjs",
   "wrangler.docs.jsonc",
   "wrangler.example.jsonc",
@@ -130,6 +131,17 @@ function localReferences(source) {
     references.push(reference.split(/[?#]/, 1)[0])
   }
   return references
+}
+
+export function referencesUrlOrigin(source, expectedOrigin) {
+  const references = source.match(/https:\/\/[^\s'"<>]+/gu) || []
+  return references.some((reference) => {
+    try {
+      return new URL(reference).origin === expectedOrigin
+    } catch {
+      return false
+    }
+  })
 }
 
 async function validateDocumentationLinks(files, errors) {
@@ -288,7 +300,7 @@ export async function checkPublication() {
   if (packageMetadata.scripts?.["check:docs:public"] !== "node scripts/check-public-documentation.mjs") {
     errors.push("package.json must retain the public documentation verification command")
   }
-  if (packageMetadata.scripts?.["deploy:docs"] !== "wrangler deploy --config wrangler.docs.jsonc") {
+  if (packageMetadata.scripts?.["deploy:docs"] !== "node scripts/deploy-documentation.mjs") {
     errors.push("package.json must retain the documentation deployment command")
   }
   if (packageMetadata.scripts?.["deploy:docs:dry-run"] !== "wrangler deploy --dry-run --config wrangler.docs.jsonc --outdir .wrangler/docs-dry-run") {
@@ -304,6 +316,7 @@ export async function checkPublication() {
     "url: ${{ vars.CLOUDFLARE_FLEET_DOCUMENTATION_URL }}",
     "CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}",
     "CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}",
+    "CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION: ${{ vars.CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION }}",
     "CLOUDFLARE_FLEET_DOCUMENTATION_URL: ${{ vars.CLOUDFLARE_FLEET_DOCUMENTATION_URL }}",
     "include-hidden-files: true",
     "npm run deploy:docs -- --message",
@@ -316,7 +329,7 @@ export async function checkPublication() {
   if (/deploy-pages|configure-pages|pages:\s*write/u.test(ciWorkflow)) {
     errors.push("CI retains obsolete GitHub Pages deployment authority")
   }
-  if (ciWorkflow.includes("https://docs.cloudflare-fleet.lasers.app")) {
+  if (referencesUrlOrigin(ciWorkflow, new URL(packageMetadata.homepage).origin)) {
     errors.push("CI hardcodes the upstream documentation deployment target")
   }
   const artifactFiles = packedFiles()
@@ -328,6 +341,7 @@ export async function checkPublication() {
     "scripts/build-documentation.mjs",
     "scripts/check-public-documentation.mjs",
     "scripts/configure-hosted.mjs",
+    "scripts/deploy-documentation.mjs",
     "scripts/documentation-publication.mjs",
     "scripts/import-hosted-state.mjs",
     "wrangler.docs.jsonc",

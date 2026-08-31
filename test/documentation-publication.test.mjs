@@ -14,6 +14,13 @@ import {
   publicDocumentationCheckUsage,
 } from "../scripts/check-public-documentation.mjs"
 import {
+  documentationDeployCommand,
+  documentationDeploymentContextError,
+  documentationDeployUsage,
+  parseDocumentationDeployArguments,
+} from "../scripts/deploy-documentation.mjs"
+import { referencesUrlOrigin } from "../scripts/check-publication.mjs"
+import {
   buildDocumentationArtifact,
   canonicalJson,
   DOCUMENTATION_ASSETS_IGNORE_PATH,
@@ -24,6 +31,18 @@ import {
 } from "../scripts/documentation-publication.mjs"
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, "..")
+const VALID_DEPLOYMENT_ENVIRONMENT = Object.freeze({
+  CLOUDFLARE_ACCOUNT_ID: "test-account",
+  CLOUDFLARE_API_TOKEN: "test-token",
+  CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION: "true",
+  GITHUB_ACTIONS: "true",
+  GITHUB_EVENT_NAME: "push",
+  GITHUB_JOB: "documentation",
+  GITHUB_REF: "refs/heads/main",
+  GITHUB_REF_PROTECTED: "true",
+  GITHUB_SHA: "a".repeat(40),
+  GITHUB_WORKFLOW_REF: "example/repository/.github/workflows/ci.yml@refs/heads/main",
+})
 
 async function withTemporaryProject(callback) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cloudflare-fleet-docs."))
@@ -218,12 +237,54 @@ test("documentation maintenance CLIs expose equivalent option forms", () => {
     () => parsePublicDocumentationCheckArguments(["--", "unexpected"]),
     /Expected 0 positional arguments/,
   )
+  assert.deepEqual(
+    parseDocumentationDeployArguments(["-mrelease"]),
+    parseDocumentationDeployArguments(["--message", "release"]),
+  )
+  assert.deepEqual(documentationDeployCommand({ message: "release" }), {
+    args: [
+      "deploy",
+      "--config",
+      "wrangler.docs.jsonc",
+      "--message",
+      "release",
+    ],
+    command: "wrangler",
+  })
+  assert.throws(
+    () => parseDocumentationDeployArguments(["--config", "other.jsonc"]),
+    /Unknown option: --config/u,
+  )
+  assert.match(documentationDeployUsage(), /Exit status: 0/u)
+})
+
+test("documentation deployment requires the protected publication job", () => {
+  assert.equal(
+    documentationDeploymentContextError(VALID_DEPLOYMENT_ENVIRONMENT),
+    null,
+  )
+  for (const [key, value, expected] of [
+    ["GITHUB_ACTIONS", "false", /protected GitHub Actions job/u],
+    ["GITHUB_JOB", "verify", /documentation job/u],
+    ["GITHUB_REF", "refs/heads/topic", /refs\/heads\/main/u],
+    ["GITHUB_REF_PROTECTED", "false", /protected GitHub ref/u],
+    ["GITHUB_WORKFLOW_REF", "example/repository/.github/workflows/other.yml@refs/heads/main", /main CI workflow/u],
+    ["GITHUB_EVENT_NAME", "pull_request", /push or workflow_dispatch/u],
+    ["CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION", "false", /not enabled/u],
+    ["GITHUB_SHA", "", /source revision/u],
+    ["CLOUDFLARE_ACCOUNT_ID", "", /CLOUDFLARE_ACCOUNT_ID/u],
+    ["CLOUDFLARE_API_TOKEN", "", /CLOUDFLARE_API_TOKEN/u],
+  ]) {
+    const environment = { ...VALID_DEPLOYMENT_ENVIRONMENT, [key]: value }
+    assert.match(documentationDeploymentContextError(environment), expected)
+  }
 })
 
 test("documentation CLI help and failure streams use documented statuses", async () => {
   const commands = [
     ["scripts/build-documentation.mjs", "--help"],
     ["scripts/check-public-documentation.mjs", "-h"],
+    ["scripts/deploy-documentation.mjs", "--help"],
   ]
   for (const args of commands) {
     const result = spawnSync(process.execPath, args, {
@@ -262,11 +323,50 @@ test("documentation CLI help and failure streams use documented statuses", async
   assert.equal(runtimeFailure.status, 1)
   assert.equal(runtimeFailure.stdout, "")
   assert.match(runtimeFailure.stderr, /Cannot read documentation manifest/u)
+
+  const blockedDeployment = spawnSync(
+    process.execPath,
+    ["scripts/deploy-documentation.mjs"],
+    {
+      cwd: PROJECT_ROOT,
+      encoding: "utf8",
+      env: { PATH: process.env.PATH || "" },
+    },
+  )
+  assert.equal(blockedDeployment.status, 2)
+  assert.equal(blockedDeployment.stdout, "")
+  assert.match(blockedDeployment.stderr, /protected GitHub Actions job/u)
+
+  const missingWrangler = spawnSync(
+    process.execPath,
+    ["scripts/deploy-documentation.mjs"],
+    {
+      cwd: PROJECT_ROOT,
+      encoding: "utf8",
+      env: { ...VALID_DEPLOYMENT_ENVIRONMENT, PATH: "" },
+    },
+  )
+  assert.equal(missingWrangler.status, 3)
+  assert.equal(missingWrangler.stdout, "")
+  assert.match(missingWrangler.stderr, /Wrangler is required/u)
 })
 
 test("canonical documentation JSON ignores object key order but preserves arrays", () => {
   assert.equal(canonicalJson({ b: 2, a: 1 }), canonicalJson({ a: 1, b: 2 }))
   assert.notEqual(canonicalJson(["b", "a"]), canonicalJson(["a", "b"]))
+})
+
+test("publication URL checks compare complete origins", () => {
+  const origin = "https://docs.cloudflare-fleet.lasers.app"
+  assert.equal(referencesUrlOrigin(`url: ${origin}/guide`, origin), true)
+  assert.equal(
+    referencesUrlOrigin(`url: https://example.com/${origin}`, origin),
+    false,
+  )
+  assert.equal(
+    referencesUrlOrigin("url: https://docs.cloudflare-fleet.lasers.app.example.com", origin),
+    false,
+  )
 })
 
 test("public verification requires an explicit deployment origin", async () => {

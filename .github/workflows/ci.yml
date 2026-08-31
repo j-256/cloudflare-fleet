@@ -130,6 +130,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN }}
+          CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION: ${{ vars.CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION }}
 
       - name: Verify exact public documentation
         run: npm run check:docs:public -- --manifest documentation-dist/publication-manifest.json --attempts 6 --delay-ms 10000

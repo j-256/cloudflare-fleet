@@ -65,6 +65,8 @@ The default workflow verifies the documentation source, artifact, and neutral Wo
 
 To enable publication for a repository, set the repository variable `CLOUDFLARE_FLEET_PUBLISH_DOCUMENTATION` to `true` and set `CLOUDFLARE_FLEET_DOCUMENTATION_URL` to that repository's HTTPS documentation origin. Create a protected GitHub Actions environment named `documentation`, store the Cloudflare account identifier in its `CLOUDFLARE_ACCOUNT_ID` variable, and store a dedicated account-owned token with Workers Scripts Write in its `CLOUDFLARE_WORKERS_DEPLOY_TOKEN` secret. Configure any custom domain and redirects in the owning Cloudflare account rather than in tracked source.
 
+The `npm run deploy:docs` command is reserved for the protected `documentation` job on `main`. Use `npm run deploy:docs:dry-run` for local validation.
+
 The workflow deploys the exact artifact produced by verification and checks it against the configured origin. A maintainer can run the same verification against any deployment without changing source:
 
 ```sh
