@@ -79,11 +79,11 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "@playwright/test": "1.62.1",
-    "wrangler": "4.121.0"
+    "wrangler": "4.127.1"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
-    "jose": "6.2.8",
+    "jose": "6.2.10",
     "zod": "4.4.3"
   }
 }
