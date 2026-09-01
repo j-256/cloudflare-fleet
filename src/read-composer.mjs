@@ -74,6 +74,9 @@ function mergeOptionalFilter(current, incoming) {
 
 export function inventoryRead(options = {}) {
   return {
+    ...(options.accountSurfaceIds === undefined ? {} : {
+      accountSurfaceIds: unique(options.accountSurfaceIds),
+    }),
     includeEmailAddresses: Boolean(options.includeEmailAddresses),
     includeRuleDetails: Boolean(options.includeRuleDetails),
     kind: REQUIREMENT_KIND.INVENTORY,
@@ -346,6 +349,7 @@ export function composeReadPlan(requirements) {
 
     if (inventory === null) {
       inventory = {
+        accountSurfaceIds: [],
         includeEmailAddresses: false,
         includeRuleDetails: false,
         ruleDetailKinds: [],
@@ -356,6 +360,10 @@ export function composeReadPlan(requirements) {
     }
     inventory.includeEmailAddresses ||= requirement.includeEmailAddresses
     inventory.includeRuleDetails ||= requirement.includeRuleDetails
+    inventory.accountSurfaceIds = unique([
+      ...inventory.accountSurfaceIds,
+      ...(requirement.accountSurfaceIds || []),
+    ])
     inventory.surfaceIds = unique([...inventory.surfaceIds, ...requirement.surfaceIds])
     inventory.zoneIds = mergeOptionalFilter(inventory.zoneIds, requirement.zoneIds)
     if (requirement.includeRuleDetails) {
@@ -371,6 +379,7 @@ export function composeReadPlan(requirements) {
   }
 
   if (inventory) {
+    if (inventory.accountSurfaceIds.length === 0) delete inventory.accountSurfaceIds
     if (inventory.zoneIds === null) delete inventory.zoneIds
     if (inventory.ruleDetailKinds === null || !inventory.includeRuleDetails) {
       delete inventory.ruleDetailKinds

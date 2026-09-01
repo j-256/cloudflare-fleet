@@ -1,4 +1,5 @@
 import {
+  ACCOUNT_SURFACES,
   DEFAULT_CONCURRENCY,
   INVENTORY_COVERAGE_KIND,
   SURFACES,
@@ -37,7 +38,13 @@ async function runPool(tasks, worker, concurrency, onProgress) {
   if (rejected) throw rejected.reason
 }
 
-async function readSurface(api, path, signal) {
+function errorMatchesEmptyResult(error, emptyErrorCodes = []) {
+  if (!(error instanceof CloudflareApiError)) return false
+  const expected = new Set(emptyErrorCodes.map(String))
+  return error.errors.some((entry) => expected.has(String(entry?.code)))
+}
+
+async function readSurface(api, path, signal, options = {}) {
   try {
     const response = await api.request(path, { signal })
     return {
@@ -48,6 +55,14 @@ async function readSurface(api, path, signal) {
   } catch (error) {
     if (signal?.aborted) throw error
     if (error instanceof CloudflareApiError && error.status === 429) throw error
+    if (errorMatchesEmptyResult(error, options.emptyErrorCodes)) {
+      return {
+        notApplicable: true,
+        ok: true,
+        result: [],
+        status: error.status,
+      }
+    }
     return {
       ok: false,
       error: serializeApiError(error),
@@ -55,6 +70,41 @@ async function readSurface(api, path, signal) {
       status: error?.status ?? null,
     }
   }
+}
+
+function selectedAccountSurfaces(accountSurfaceIds, surfaceIds) {
+  if (accountSurfaceIds === undefined) {
+    return surfaceIds === undefined ? ACCOUNT_SURFACES : []
+  }
+  const requested = new Set(accountSurfaceIds)
+  const surfaces = ACCOUNT_SURFACES.filter((surface) => requested.has(surface.id))
+  if (surfaces.length !== requested.size) {
+    const known = new Set(ACCOUNT_SURFACES.map((surface) => surface.id))
+    const unknown = [...requested].filter((surfaceId) => !known.has(surfaceId))
+    throw new TypeError(`Unknown account inventory surface: ${unknown.join(", ")}`)
+  }
+  return surfaces
+}
+
+async function readAccountSurfaces(api, surfaces, signal, onProgress) {
+  const results = {}
+  let completed = 0
+  await Promise.all(surfaces.map(async (surface) => {
+    results[surface.id] = await readSurface(
+      api,
+      surface.path(api.accountId),
+      signal,
+      surface,
+    )
+    completed += 1
+    onProgress?.({
+      completed,
+      stage: "account-surfaces",
+      message: `Reading account surfaces ${completed}/${surfaces.length}`,
+      total: surfaces.length,
+    })
+  }))
+  return results
 }
 
 async function readEmailAddresses(api, signal) {
@@ -101,11 +151,15 @@ function selectedZones(zones, zoneIds) {
 export async function loadInventory(api, options = {}) {
   const concurrency = options.concurrency || DEFAULT_CONCURRENCY
   const surfaces = selectedSurfaces(options.surfaceIds)
+  const accountSurfaces = selectedAccountSurfaces(
+    options.accountSurfaceIds,
+    options.surfaceIds,
+  )
   const includeEmailAddresses = options.includeEmailAddresses !== false
   const includeRuleDetails = options.includeRuleDetails
     ?? surfaces.some((surface) => surface.id === "rulesets")
   const signal = options.signal
-  const [availableZones, emailAddresses] = await Promise.all([
+  const [availableZones, emailAddresses, accountSurfaceResults] = await Promise.all([
     api.listZones({ signal }),
     includeEmailAddresses
       ? readEmailAddresses(api, signal)
@@ -114,6 +168,12 @@ export async function loadInventory(api, options = {}) {
           result: [],
           skipped: true,
         }),
+    readAccountSurfaces(
+      api,
+      accountSurfaces,
+      signal,
+      options.onProgress,
+    ),
   ])
   const zones = selectedZones(availableZones, options.zoneIds)
   const records = zones
@@ -130,7 +190,12 @@ export async function loadInventory(api, options = {}) {
   await runPool(
     surfaceTasks,
     async ({ zone, surface }) => {
-      zone.surfaces[surface.id] = await readSurface(api, surface.path(zone.meta.id), signal)
+      zone.surfaces[surface.id] = await readSurface(
+        api,
+        surface.path(zone.meta.id),
+        signal,
+        surface,
+      )
     },
     concurrency,
     (progress) => options.onProgress?.({
@@ -159,6 +224,7 @@ export async function loadInventory(api, options = {}) {
       const result = await readSurface(api, `zones/${zone.meta.id}/rulesets/${ruleset.id}`, signal)
       zone.ruleDetails.push({
         phase: ruleset.phase,
+        rulesetId: ruleset.id,
         ...result,
       })
     },
@@ -174,6 +240,7 @@ export async function loadInventory(api, options = {}) {
     account: {
       emailAddresses,
       id: api.accountId,
+      surfaces: accountSurfaceResults,
     },
     loadedAt: new Date().toISOString(),
     zones: records,
@@ -181,7 +248,7 @@ export async function loadInventory(api, options = {}) {
 }
 
 export function coverageFor(inventory) {
-  return SURFACES.map((surface) => {
+  const zoneCoverage = SURFACES.map((surface) => {
     const failed = inventory.zones.filter((zone) => !zone.surfaces[surface.id]?.ok)
     return {
       id: surface.id,
@@ -205,6 +272,33 @@ export function coverageFor(inventory) {
         : `${failed.length} zone request${failed.length === 1 ? "" : "s"} failed`,
     }
   })
+  const accountCoverage = ACCOUNT_SURFACES.map((surface) => {
+    const response = inventory.account?.surfaces?.[surface.id]
+    const failed = response?.ok
+      ? []
+      : [{
+          detail: coverageErrorDetail(response?.error || { message: "No response" }),
+          error: response?.error || { message: "No response" },
+          kind: INVENTORY_COVERAGE_KIND.LIMITATION,
+          observedCanonical: coverageIssueCanonical(
+            response?.error || { message: "No response" },
+          ),
+          subjectId: surface.id,
+          subjectLabel: surface.label,
+          zoneId: null,
+          zoneName: null,
+        }]
+    return {
+      detail: failed.length === 0
+        ? "Read successfully for the account"
+        : "The account request failed",
+      failed,
+      id: surface.id,
+      label: surface.label,
+      ok: failed.length === 0,
+    }
+  })
+  return [...zoneCoverage, ...accountCoverage]
 }
 
 export function coverageErrorDetail(error) {

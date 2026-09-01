@@ -80,6 +80,7 @@ export function makeZone(name, options = {}) {
     },
     ruleDetails: options.ruleDetails || [],
     surfaces: {
+      "custom-hostnames": ok(options.customHostnames || []),
       dns: ok(dns),
       email: ok(email),
       "email-catch-all": ok(catchAll),
@@ -87,6 +88,12 @@ export function makeZone(name, options = {}) {
       "email-rules": ok(options.emailRules || []),
       rulesets: ok(options.rulesets || []),
       settings: ok(settings),
+      healthchecks: ok(options.healthchecks || []),
+      "load-balancers": ok(options.loadBalancers || []),
+      snippets: ok(options.snippets || []),
+      "waiting-rooms": ok(options.waitingRooms || []),
+      web3: ok(options.web3 || []),
+      "workers-routes": ok(options.workerRoutes || []),
       ...options.surfaces,
     },
   }
@@ -102,6 +109,11 @@ export function makeInventory(zones, options = {}) {
         },
       ]),
       id: "account-id",
+      surfaces: {
+        "pages-projects": ok(options.pagesProjects || []),
+        "worker-custom-domains": ok(options.workerCustomDomains || []),
+        ...options.accountSurfaces,
+      },
     },
     loadedAt: "2026-07-29T00:00:00Z",
     zones,

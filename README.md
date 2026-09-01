@@ -16,6 +16,7 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Compares normalized configuration across every selected zone without hiding raw source values
 - Separates observed differences from saved fleet intent, acknowledged exceptions, and expected coverage gaps
 - Turns supported exact and forbidden intent into first-class cell, row, and policy alignment reviews
+- Models compatibility domains as strict canonical passthrough intent that rejects independent web behavior
 - Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
 - Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
 - Displays targets, before and after values, methods, endpoints, and request bodies before a write
@@ -46,7 +47,7 @@ Do not use `npm install --global .` for a durable installation. npm normally lin
 
 Fleet reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the launching environment. Put them in your shell's secret-loading workflow or secret manager, not in this repository, an MCP file with literal values, or a committed dotenv file.
 
-Create a token scoped to only the intended account and zones. `Zone Read` is the baseline for `doctor --live` and zone discovery. Complete inventory calls product-specific surfaces, so add the matching groups for the products you use, commonly `Zone Settings Read`, `DNS Read`, `Email Routing Rules Read`, `Zone WAF Read`, `Workers Routes Read`, `Firewall Services Read`, `Health Checks`, and `Load Balancers`. Missing optional access remains visible as coverage evidence instead of being treated as trustworthy absence.
+Create a token scoped to only the intended account and zones. `Zone Read` is the baseline for `doctor --live` and zone discovery. Complete inventory calls product-specific surfaces, so add the matching groups for the products you use, commonly `Zone Settings Read`, `DNS Read`, `Email Routing Rules Read`, `Zone WAF Read`, `Workers Routes Read`, `Firewall Services Read`, `Health Checks`, and `Load Balancers`. Canonical alias coverage also reads zone Worker routes, SSL for SaaS custom hostnames, rulesets, load balancers, health checks, waiting rooms, Web3 hostnames, snippets, plus account Workers custom domains and Pages projects. Missing optional access remains visible as coverage evidence instead of being treated as trustworthy absence.
 
 Keep the token read-only unless you plan to use reviewed writes. Supported mutations commonly require the corresponding `Zone Settings Write`, `DNS Write`, `Email Routing Rules Edit`, or `Zone WAF Write` group. Deep audit account surfaces can require additional account-level read groups for Workers, Pages, D1, KV, R2, Queues, Workflows, and Registrar. Cloudflare maintains the authoritative [API token permission groups](https://developers.cloudflare.com/fundamentals/api/reference/permissions/); rerun the audit after changing a token so its actual coverage is explicit.
 
@@ -95,7 +96,7 @@ cloudflare-fleet audit --format html > audit.html
 cloudflare-fleet audit --deep --fail-on warning
 ```
 
-Core findings cover inventory gaps, fleet intent, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
+Core findings cover inventory gaps, fleet intent, canonical alias behavior and attachments, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
 
 `--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit is a point-in-time review of every proxied exact hostname; it does not schedule probes or retain endpoint state.
 
@@ -138,6 +139,7 @@ cloudflare-fleet alignment apply --policy POLICY_ID \
 
 umask 077
 cloudflare-fleet intent show > fleet-intent.json
+cloudflare-fleet intent aliases --format json
 cloudflare-fleet intent plan --input fleet-intent.json --format json
 cloudflare-fleet intent apply --input fleet-intent.json \
   --expect-plan 'sha256:...' --format json
@@ -211,7 +213,7 @@ For an explicit profile, append `--state-file /absolute/path/state.json` and `--
 The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Mutation tools display the exact request, digest, and operations through MCP input elicitation, require explicit approval, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
-- Read: `audit_fleet`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
+- Read: `audit_fleet`, `describe_zone_alias_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
 - Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_change`, and `plan_activity_undo`
 - Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_change`, and `apply_activity_undo`
 
@@ -252,6 +254,12 @@ Remove only the installed program with `npm uninstall --global cloudflare-fleet`
 ## Fleet intent and writes
 
 Fleet intent defines presence and value constraints independently. Broader groups act as baselines, contained groups refine them, and partial overlaps remain peers. Exact acknowledgements bind one policy, zone, and observed normalized value, then become stale if that context changes. Saving intent evaluates drift but never writes Cloudflare.
+
+The typed `Zone aliases / canonical-web-passthrough` facet is an opt-in policy for compatibility domains. It is fixed to required presence and exact value: status, target scheme and host, path preservation, query preservation, subdomain matching, subdomain preservation, serving apex and wildcard DNS, and an empty unexpected-resource envelope all participate in equality. `cloudflare-fleet intent aliases --format json` and the MCP `describe_zone_alias_policy` tool return reusable values plus initial templates for `j256.dev`, `strangelaser.com`, and `strangelasers.net`; the dashboard loads the matching template when one of those zones is selected.
+
+The `canonicalization-dns-mail-security-v1` envelope allows proxied apex and wildcard DNS used by the redirect, non-web and mail or ownership-verification DNS, one canonical dynamic redirect, ordinary TLS and zone posture, and shared security rulesets. Additional web-serving DNS, redirects, application rules, Worker routes or custom domains, Pages domains, SSL for SaaS custom hostnames, load balancers, health checks, waiting rooms, Web3 hostnames, and snippets are reported individually with the canonical target as owner evidence. A failed relevant read blocks alignment. Legacy Page Rules remain an explicit coverage limitation because Cloudflare rejects that endpoint for account-owned tokens, so Fleet never presents their absence as proven.
+
+Alias cleanup reuses the ordinary alignment state machine. Fleet can edit or create the canonical redirect and remove only extra DNS records or rules that have lossless inverse adapters. Required serving DNS and the selected canonical rule are never collateral cleanup targets; unsupported attachments block the complete alignment and direct the operator to the product-specific workflow.
 
 Review alignment appears on a supported policy, matrix row, and individual drifting cell. Exact intent can edit supported zone settings, Email Routing's `skip_wizard` and `support_subaddress` settings, DNS records, DNSSEC status, API-managed Email Routing rules, redirects, and ruleset rules, and it can fill missing DNS records and portable rules from a matching fleet source. Forbidden intent can remove supported DNS records and rules through reversible adapters. Conflicts, must-differ choices, required values without an exact expectation, missing portable sources, generated resources, and unsupported endpoint shapes stay visibly blocked with their exact reason beside the disabled action.
 

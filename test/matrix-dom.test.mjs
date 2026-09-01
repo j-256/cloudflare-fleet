@@ -29,10 +29,13 @@ test("matrix gives sticky priority to zone headings across full-width controls",
 })
 
 test("matrix keeps filtered rows detached from the live document", () => {
+  const shellRule = styles.match(/\.matrix-shell \{([^}]*)\}/)?.[1] || ""
+
   assert.match(appSource, /let matrixRowElements = \[\]/)
   assert.match(appSource, /elements\.matrixBody\.replaceChildren\(\.\.\.visibleRows\)/)
   assert.match(appSource, /function matrixAwareQuery\(selector\)/)
   assert.doesNotMatch(appSource, /const currentRows = \[\.\.\.elements\.matrixBody\.querySelectorAll\("tr"\)\]/)
+  assert.match(shellRule, /min-height: 260px;/)
 })
 
 test("matrix control availability avoids layout reads", () => {

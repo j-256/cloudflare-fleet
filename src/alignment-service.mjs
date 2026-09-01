@@ -290,6 +290,15 @@ function assertSurfaceReads(inventory, surfaceIds) {
   }
 }
 
+function assertAccountSurfaceReads(inventory, surfaceIds = []) {
+  const failures = surfaceIds.filter(
+    (surfaceId) => !inventory.account?.surfaces?.[surfaceId]?.ok,
+  )
+  if (failures.length > 0) {
+    throw new Error(`Intent alignment live validation could not read account surfaces ${failures.join(", ")}`)
+  }
+}
+
 function assertRuleDetails(inventory, requirement) {
   if (!requirement.includeRuleDetails) return
   const phases = requirement.ruleDetailPhases
@@ -517,6 +526,10 @@ export async function prepareIntentAlignments(api, intent, requestedSelectors, o
   assertFleetMembership(baseline, liveInventory)
   for (const context of contexts) {
     assertSurfaceReads(liveInventory, context.requirement.surfaceIds)
+    assertAccountSurfaceReads(
+      liveInventory,
+      context.requirement.accountSurfaceIds,
+    )
     assertRuleDetails(liveInventory, context.requirement)
   }
 
@@ -672,6 +685,7 @@ export async function prepareIntentAlignment(api, intent, requestedSelector, opt
   const liveInventory = liveData.inventory
   assertFleetMembership(baseline, liveInventory)
   assertSurfaceReads(liveInventory, requirement.surfaceIds)
+  assertAccountSurfaceReads(liveInventory, requirement.accountSurfaceIds)
   assertRuleDetails(liveInventory, requirement)
   const liveRow = scopedRow(liveInventory, intent, facet)
   if (!liveRow) {

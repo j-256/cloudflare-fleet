@@ -38,6 +38,15 @@ import {
 import {
   inventoryRead,
 } from "./read-composer.mjs"
+import {
+  isZoneAliasMatrixRow,
+  ZONE_ALIAS_REQUIRED_ACCOUNT_SURFACE_IDS,
+  ZONE_ALIAS_REQUIRED_SURFACE_IDS,
+} from "./zone-alias-intent.mjs"
+import {
+  buildZoneAliasAlignmentPlan,
+  zoneAliasAlignmentBlocker,
+} from "./zone-alias-remediation.mjs"
 
 const DNS_RECORD_CATEGORY = "DNS records"
 const EMAIL_CATCH_ALL_KEY = "catch-all"
@@ -70,6 +79,7 @@ export const INTENT_ALIGNMENT_TARGET_KIND = Object.freeze({
   FILL_DNS_RECORDS: "fill-dns-records",
   FILL_RULE: "fill-rule",
   SET_DNSSEC_STATUS: "set-dnssec-status",
+  ZONE_ALIAS: "zone-alias",
 })
 
 function cloneJsonValue(value) {
@@ -260,6 +270,20 @@ function emailRoutingSettingTarget(row, cell, exact) {
 }
 
 function editTarget(row, cell, currentCell, exact) {
+  if (isZoneAliasMatrixRow(row)) {
+    const desiredValue = materializeValue(exact.value, cell.zone.meta.name)
+    const reason = zoneAliasAlignmentBlocker(
+      currentCell?.alignmentAction,
+      currentCell?.intentValue,
+      desiredValue,
+    )
+    return reason
+      ? blocker(cell, reason)
+      : target(cell, INTENT_ALIGNMENT_TARGET_KIND.ZONE_ALIAS, {
+          action: currentCell.alignmentAction,
+          expected: exact,
+        })
+  }
   if (row.category === EMAIL_DNS_SPECIFICATION_CATEGORY) {
     return blocker(
       cell,
@@ -390,6 +414,15 @@ export function assessIntentAlignment(row, options = {}) {
 }
 
 export function intentAlignmentReadRequirement(row) {
+  if (isZoneAliasMatrixRow(row)) {
+    return inventoryRead({
+      accountSurfaceIds: ZONE_ALIAS_REQUIRED_ACCOUNT_SURFACE_IDS,
+      includeEmailAddresses: false,
+      includeRuleDetails: true,
+      ruleDetailKinds: [RULESET_KIND.ZONE, RULESET_KIND.CUSTOM],
+      surfaceIds: ZONE_ALIAS_REQUIRED_SURFACE_IDS,
+    })
+  }
   if (rowSupportsDnssecIntentCorrection(row)) {
     return inventoryRead({
       includeEmailAddresses: false,
@@ -491,6 +524,17 @@ function requiredDnsRecords(zone, recordIds) {
 
 function targetPlans(targetDefinition, zonesById) {
   const zone = requiredZone(zonesById, targetDefinition.zoneId)
+  if (targetDefinition.kind === INTENT_ALIGNMENT_TARGET_KIND.ZONE_ALIAS) {
+    const desired = materializeValue(
+      targetDefinition.expected.value,
+      zone.meta.name,
+    )
+    return [buildZoneAliasAlignmentPlan(
+      zone,
+      targetDefinition.action,
+      desired,
+    )]
+  }
   if (targetDefinition.kind === INTENT_ALIGNMENT_TARGET_KIND.EDIT_SETTING) {
     const desired = applyIntentExpectedValue(
       targetDefinition.action.value,

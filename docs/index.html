@@ -102,7 +102,7 @@
       <div class="section-heading">
         <p class="eyebrow">From intent to action</p>
         <h2 id="alignment-heading">Review a complete convergence plan</h2>
-        <p>Exact and forbidden intent can produce first-class alignment actions on a policy, matrix row, or individual drifting cell. Supported adapters include zone settings, Email Routing subaddressing and wizard preferences, DNS, DNSSEC, API-managed routes, redirects, and rules. Fleet refreshes the latest intent and the relevant facet across the account, then blocks the whole selected scope if any drift cell is conflicting, ambiguous, or unsupported.</p>
+        <p>Exact and forbidden intent can produce first-class alignment actions on a policy, matrix row, or individual drifting cell. Supported adapters include zone settings, Email Routing subaddressing and wizard preferences, DNS, DNSSEC, API-managed routes, redirects, rules, and strict canonical domain passthroughs. Fleet refreshes the latest intent and the relevant facet across the account, then blocks the whole selected scope if any drift cell is conflicting, ambiguous, or unsupported.</p>
       </div>
       <figure class="screenshot-frame">
         <img src="screenshots/intent-alignment.png" width="1440" height="1000" alt="Cloudflare Fleet intent alignment confirmation for a synthetic zone setting, showing the target zone, live current and desired values, API endpoint, method, and review acknowledgement.">
@@ -112,6 +112,18 @@
         <img src="screenshots/alignment-blocked.png" width="1440" height="1000" alt="Cloudflare Fleet matrix showing a disabled intent alignment action with the exact read-only Email Routing status reason visible at row and cell scope.">
         <figcaption class="screenshot-caption">A disabled control never hides its explanation in a tooltip. The exact blocker remains visible beside the affected action.</figcaption>
       </figure>
+    </section>
+
+    <section class="section" aria-labelledby="aliases-heading">
+      <div class="section-heading">
+        <p class="eyebrow">Compatibility without accumulation</p>
+        <h2 id="aliases-heading">Keep alias zones as passthroughs</h2>
+        <p>The typed canonical passthrough facet compares redirect status, canonical owner, path, query, and subdomain behavior together with required serving DNS and an exact empty accumulation envelope. It allows mail, ownership, DNSSEC, TLS, settings, and shared security posture while identifying each independent web attachment.</p>
+      </div>
+      <div class="callout">
+        <strong>Strict by construction</strong>
+        <p>Alias intent is always required and exact. Unread relevant surfaces block convergence, supported cleanup cannot remove serving DNS or the canonical redirect as collateral, and every write still passes through fresh planning, explicit confirmation, durable activity, verification, and guarded recovery.</p>
+      </div>
     </section>
 
     <section class="section" aria-labelledby="architecture-heading">

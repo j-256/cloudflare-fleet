@@ -43,6 +43,10 @@ import {
   redirectIntentComparisonValue,
   ruleExactComparisonValue,
 } from "./facet-equivalence.mjs"
+import {
+  observeZoneAliasIntent,
+  zoneAliasMatrixFacet,
+} from "./zone-alias-intent.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
@@ -126,6 +130,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
       labelSources: new Set(),
       cells: new Map(),
       duplicateZoneNames: new Set(),
+      intentOptInOnly: Boolean(options.intentOptInOnly),
       phase: options.phase || "",
       resolutionKind: options.resolutionKind || null,
     })
@@ -161,6 +166,7 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     : normalized
   const cell = {
     action: options.action || null,
+    alignmentAction: options.alignmentAction || null,
     canonical: stableString(normalized),
     capability: options.capability || null,
     display: options.display ?? shortDisplay(normalized),
@@ -182,6 +188,40 @@ function addCell(rows, category, key, label, zone, value, options = {}) {
     cell.intentDisplay = options.intentDisplay
   }
   row.cells.set(zone.meta.name, cell)
+}
+
+function addZoneAliasRows(rows, inventory) {
+  const facet = zoneAliasMatrixFacet()
+  for (const zone of inventory.zones) {
+    const observation = observeZoneAliasIntent(inventory, zone)
+    addCell(
+      rows,
+      facet.category,
+      facet.key,
+      facet.label,
+      zone,
+      observation.value,
+      {
+        alignmentAction: observation.action,
+        capability: {
+          kind: "not-directly-editable",
+          label: "Intent-managed passthrough",
+          reason: "Canonical alias changes use fresh intent alignment review",
+        },
+        description: facet.description,
+        display: observation.display,
+        full: displayJson(observation.inspectionValue),
+        inspectionValue: observation.inspectionValue,
+        intentValue: observation.value,
+        intentOptInOnly: true,
+        labelSource: "Fleet alias policy",
+        normalized: observation.value,
+        search: observation.value.unexpectedResources
+          .map((resource) => `${resource.kind} ${resource.label} ${resource.surface}`)
+          .join(" "),
+      },
+    )
+  }
 }
 
 function addScalar(rows, inventory, category, key, label, getter, options = {}) {
@@ -1213,6 +1253,7 @@ export function buildMatrix(inventory) {
   const rows = new Map()
 
   addZoneRows(rows, inventory)
+  addZoneAliasRows(rows, inventory)
   addSettingRows(rows, inventory)
   addDnssecRows(rows, inventory)
   addEmailRows(rows, inventory)
@@ -1340,6 +1381,7 @@ export function matrixRenderKey(inventory, matrix) {
       key: row.key,
       label: row.label,
       labelSource: row.labelSource,
+      intentOptInOnly: row.intentOptInOnly,
       missingCount: row.missingCount,
       missingZoneIds: row.missingZoneIds,
       missingResolutions: inventory.zones.map(

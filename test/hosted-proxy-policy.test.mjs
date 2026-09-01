@@ -36,6 +36,14 @@ test("hosted proxy permits every dashboard inventory read", () => {
     HTTP_METHOD.GET,
     `accounts/${ACCOUNT_ID}/email/routing/addresses?page=1&per_page=100`,
   ).allowed, true)
+  assert.equal(decision(
+    HTTP_METHOD.GET,
+    `accounts/${ACCOUNT_ID}/workers/domains?per_page=1000`,
+  ).allowed, true)
+  assert.equal(decision(
+    HTTP_METHOD.GET,
+    `accounts/${ACCOUNT_ID}/pages/projects`,
+  ).allowed, true)
   for (const surface of SURFACES) {
     assert.equal(
       decision(HTTP_METHOD.GET, surface.path(ZONE_ID)).allowed,

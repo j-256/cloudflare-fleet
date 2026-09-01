@@ -59,6 +59,53 @@ test("scoped inventory reads only requested surfaces", async () => {
   assert.equal(requests.every((path) => /\/(dns_records|settings)/.test(path)), true)
 })
 
+test("full inventory reads account attachment surfaces and treats absent SSL for SaaS as empty", async () => {
+  const requests = []
+  const api = {
+    accountId: "account-id",
+    async listEmailAddresses() {
+      return []
+    },
+    async listZones() {
+      return [zone("alpha.example")]
+    },
+    async request(path) {
+      requests.push(path)
+      if (path.includes("/custom_hostnames")) {
+        throw new CloudflareApiError("No quota", {
+          errors: [{ code: 1404, message: "No quota has been allocated" }],
+          status: 400,
+        })
+      }
+      return {
+        result: [],
+        status: 200,
+      }
+    },
+  }
+
+  const inventory = await loadInventory(api)
+
+  assert.equal(requests.includes(
+    "accounts/account-id/workers/domains?per_page=1000",
+  ), true)
+  assert.equal(requests.includes(
+    "accounts/account-id/pages/projects",
+  ), true)
+  assert.deepEqual(inventory.account.surfaces["worker-custom-domains"].result, [])
+  assert.deepEqual(inventory.account.surfaces["pages-projects"].result, [])
+  assert.deepEqual(inventory.zones[0].surfaces["custom-hostnames"], {
+    notApplicable: true,
+    ok: true,
+    result: [],
+    status: 400,
+  })
+  assert.equal(
+    coverageFor(inventory).find((entry) => entry.id === "custom-hostnames").ok,
+    true,
+  )
+})
+
 test("ruleset-scoped inventory includes live rule details", async () => {
   const requests = []
   const api = {
@@ -210,6 +257,20 @@ test("scoped inventory rejects unknown surfaces", async () => {
       surfaceIds: ["not-a-surface"],
     }),
     /Unknown inventory surface/,
+  )
+})
+
+test("scoped inventory rejects unknown account surfaces", async () => {
+  const api = {
+    accountId: "account-id",
+  }
+
+  await assert.rejects(
+    loadInventory(api, {
+      accountSurfaceIds: ["not-an-account-surface"],
+      surfaceIds: [],
+    }),
+    /Unknown account inventory surface/,
   )
 })
 

@@ -36,6 +36,21 @@ test("rule equivalence distinguishes facet identity from compared definition", (
   )
 })
 
+test("canonical aliases explain their typed resource envelope", () => {
+  const description = describeFacetEquivalence({
+    category: "Zone aliases",
+    key: "canonical-web-passthrough",
+  })
+
+  assert.equal(
+    description.identitySummary,
+    "Zone aliases / canonical passthrough",
+  )
+  assert.match(description.equivalenceSummary, /empty accumulation envelope/)
+  assert.match(description.normalizationSummary, /not substituted/)
+  assert.match(description.ignoredSummary, /shared security resources/)
+})
+
 test("comparison helpers expose the canonical value that controls equality", () => {
   const canonical = JSON.stringify({
     kind: "zone",

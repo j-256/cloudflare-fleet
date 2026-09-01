@@ -22,6 +22,7 @@ const READ_PATTERNS = Object.freeze([
   ["zones", "*", "rulesets"],
   ["zones", "*", "rulesets", "*"],
   ["zones", "*", "workers", "routes"],
+  ["zones", "*", "custom_hostnames"],
   ["zones", "*", "firewall", "access_rules", "rules"],
   ["zones", "*", "filters"],
   ["zones", "*", "firewall", "rules"],
@@ -37,6 +38,10 @@ const READ_PATTERNS = Object.freeze([
   ["zones", "*", "web3", "hostnames"],
   ["zones", "*", "cache", "origin_post_quantum_encryption"],
   ["zones", "*", "snippets"],
+])
+const ACCOUNT_READ_PATTERNS = Object.freeze([
+  ["accounts", "*", "workers", "domains"],
+  ["accounts", "*", "pages", "projects"],
 ])
 const WRITE_PATTERNS = Object.freeze({
   [HTTP_METHOD.DELETE]: [
@@ -123,6 +128,14 @@ export function authorizeCloudflareRequest(method, url, accountId) {
         : { allowed: false, reason: "Zone listing is not scoped to the configured account" }
     }
     if (patternMatches(segments, ["accounts", "*", "email", "routing", "addresses"])) {
+      if (segments[1] !== accountId) {
+        return { allowed: false, reason: "Account path does not match the configured account" }
+      }
+      return paginationIsSafe(url.searchParams)
+        ? { allowed: true, zoneId: null }
+        : { allowed: false, reason: "Cloudflare query is not allowed" }
+    }
+    if (matchesAny(segments, ACCOUNT_READ_PATTERNS)) {
       if (segments[1] !== accountId) {
         return { allowed: false, reason: "Account path does not match the configured account" }
       }
