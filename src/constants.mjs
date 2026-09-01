@@ -17,6 +17,7 @@ export const MATRIX_CATEGORY = Object.freeze({
   LEGACY_FIREWALL_VIEW: "Legacy firewall view",
   REDIRECTS: "Redirects",
   RULESET_RULES: "Ruleset rules",
+  ZONE_ALIASES: "Zone aliases",
 })
 
 const MATRIX_CATEGORY_LABEL = Object.freeze({
@@ -164,6 +165,12 @@ export const SURFACES = Object.freeze([
     path: (zoneId) => `zones/${zoneId}/workers/routes`,
   },
   {
+    emptyErrorCodes: Object.freeze([1404]),
+    id: "custom-hostnames",
+    label: "SSL for SaaS custom hostnames",
+    path: (zoneId) => `zones/${zoneId}/custom_hostnames?per_page=100`,
+  },
+  {
     id: "access-rules",
     label: "IP access rules",
     path: (zoneId) => `zones/${zoneId}/firewall/access_rules/rules?per_page=100`,
@@ -240,6 +247,19 @@ export const SURFACES = Object.freeze([
   },
 ])
 
+export const ACCOUNT_SURFACES = Object.freeze([
+  {
+    id: "worker-custom-domains",
+    label: "Workers custom domains",
+    path: (accountId) => `accounts/${accountId}/workers/domains?per_page=1000`,
+  },
+  {
+    id: "pages-projects",
+    label: "Pages projects",
+    path: (accountId) => `accounts/${accountId}/pages/projects`,
+  },
+])
+
 export const STATIC_LIMITATIONS = Object.freeze([
   {
     id: "legacy-page-rules",
@@ -255,10 +275,5 @@ export const STATIC_LIMITATIONS = Object.freeze([
     id: "spectrum-applications",
     label: "Spectrum applications",
     detail: "The plan or token rejects this surface with HTTP 403",
-  },
-  {
-    id: "custom-hostnames",
-    label: "Custom hostnames",
-    detail: "No SSL for SaaS quota is allocated to the fleet (API error 1404)",
   },
 ])

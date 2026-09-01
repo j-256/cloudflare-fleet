@@ -1350,6 +1350,7 @@ button.drift-badge:disabled {
 .matrix-shell {
   overflow: auto;
   width: calc(100% + var(--page-gutter) + var(--page-gutter));
+  min-height: 260px;
   max-height: calc(100dvh - 52px);
   margin-left: calc(0px - var(--page-gutter));
   scroll-margin-top: 52px;

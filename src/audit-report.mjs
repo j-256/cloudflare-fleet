@@ -3,6 +3,7 @@ import {
   FLEET_INTENT_COVERAGE_EXPECTATION_STATUS,
   evaluateFleetIntent,
   evaluateFleetIntentCoverage,
+  fleetIntentFacetId,
 } from "./fleet-intent.mjs"
 import {
   dnssecTransitionHealth,
@@ -32,6 +33,11 @@ import {
   RULESET_KIND,
   STATIC_LIMITATIONS,
 } from "./constants.mjs"
+import {
+  isZoneAliasFacet,
+  ZONE_ALIAS_CATEGORY,
+  ZONE_ALIAS_KEY,
+} from "./zone-alias-intent.mjs"
 
 export const FLEET_AUDIT_SCHEMA_VERSION = 1
 
@@ -247,6 +253,87 @@ function intentFindings(evaluation) {
         zones: stale.map((entry) => entry.acknowledgement.zoneName),
       },
     ))
+  }
+  return findings
+}
+
+function aliasBehaviorValue(value) {
+  return {
+    redirect: value?.redirect ?? null,
+    resourceEnvelope: value?.resourceEnvelope ?? null,
+    servingDns: value?.servingDns ?? null,
+  }
+}
+
+function aliasIntentFindings(evaluation) {
+  if (!evaluation) return []
+  const rowState = evaluation.rowStates.get(
+    fleetIntentFacetId(ZONE_ALIAS_CATEGORY, ZONE_ALIAS_KEY),
+  )
+  if (!rowState?.governed) return []
+  const findings = []
+  for (const cell of rowState.cells.values()) {
+    const policy = cell.policies?.find((entry) => isZoneAliasFacet(entry.facet))
+      || (isZoneAliasFacet(cell.policy?.facet) ? cell.policy : null)
+    if (!policy) continue
+    const observed = rowState.row.cells.get(cell.zone.meta.name)?.intentValue
+    const desired = policy.expected?.value
+    const canonicalOwner = desired?.redirect?.targetHost || null
+    if (stableString(aliasBehaviorValue(observed))
+      !== stableString(aliasBehaviorValue(desired))) {
+      findings.push(finding(
+        `alias.behavior:${cell.zone.meta.id}`,
+        FLEET_AUDIT_SEVERITY.WARNING,
+        ZONE_ALIAS_CATEGORY,
+        "A compatibility zone does not preserve its canonical passthrough",
+        `${cell.zone.meta.name} does not match its saved redirect or serving DNS invariant`,
+        {
+          evidence: {
+            canonicalOwner,
+            desired: aliasBehaviorValue(desired),
+            observed: aliasBehaviorValue(observed),
+          },
+          recommendation: "Review a fresh exact alignment plan for the canonical redirect and preserve required serving DNS",
+          zones: [cell.zone.meta.name],
+        },
+      ))
+    }
+    for (const resource of observed?.unexpectedResources || []) {
+      findings.push(finding(
+        `alias.unexpected:${cell.zone.meta.id}:${stableHash(stableString(resource))}`,
+        FLEET_AUDIT_SEVERITY.WARNING,
+        ZONE_ALIAS_CATEGORY,
+        "Independent web behavior is attached to a compatibility zone",
+        `${cell.zone.meta.name} contains ${resource.label} on ${resource.surface}`,
+        {
+          evidence: {
+            canonicalOwner,
+            resource,
+          },
+          recommendation: resource.remediation === "unsupported"
+            ? `Move the behavior to ${canonicalOwner || "the canonical zone"}, then remove it through its product-specific reviewed workflow`
+            : `Move any required behavior to ${canonicalOwner || "the canonical zone"}, then review the reversible alias alignment plan`,
+          zones: [cell.zone.meta.name],
+        },
+      ))
+    }
+    for (const surface of observed?.unreadSurfaces || []) {
+      findings.push(finding(
+        `alias.unread:${cell.zone.meta.id}:${stableHash(stableString(surface))}`,
+        FLEET_AUDIT_SEVERITY.WARNING,
+        ZONE_ALIAS_CATEGORY,
+        "Compatibility-zone behavior could not be fully inspected",
+        `${cell.zone.meta.name} could not prove the ${surface.id} surface is free of independent behavior`,
+        {
+          evidence: {
+            canonicalOwner,
+            surface,
+          },
+          recommendation: "Restore read coverage before treating the alias as aligned or attempting cleanup",
+          zones: [cell.zone.meta.name],
+        },
+      ))
+    }
   }
   return findings
 }
@@ -799,6 +886,7 @@ export function buildFleetAudit(inventory, options = {}) {
   const findings = sortedFindings([
     ...coverageFindings(inventory, intent),
     ...intentFindings(evaluation),
+    ...aliasIntentFindings(evaluation),
     ...dnssecFindings(inventory, now),
     ...emailFindings(inventory, options.policyConfiguration),
     ...wafFindings(inventory),

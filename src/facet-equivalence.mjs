@@ -99,6 +99,9 @@ export function facetPhase(facet) {
 function facetIdentitySummary(facet, phaseLabel) {
   const category = String(facet?.category || "")
   const key = String(facet?.key || "")
+  if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
+    return "Zone aliases / canonical passthrough"
+  }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return `Redirects / ${phaseLabel} / normalized match / occurrence`
   }
@@ -116,6 +119,9 @@ function facetIdentitySummary(facet, phaseLabel) {
 
 function facetEquivalenceSummary(facet) {
   const category = String(facet?.category || "")
+  if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
+    return "Canonical redirect behavior, serving DNS presence, and an exact empty accumulation envelope"
+  }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return "Behavioral rule fields"
   }
@@ -136,6 +142,9 @@ function facetEquivalenceSummary(facet) {
 
 function facetNormalizationSummary(facet) {
   const category = String(facet?.category || "")
+  if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
+    return "Hostnames are lowercased; zone names are not substituted"
+  }
   if (RULE_CATEGORIES.has(category)) {
     return "Zone domain becomes {zone}; array order counts"
   }
@@ -144,6 +153,9 @@ function facetNormalizationSummary(facet) {
 
 function facetIgnoredSummary(facet) {
   const category = String(facet?.category || "")
+  if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
+    return "Allowed non-web DNS, mail, DNSSEC, TLS, settings, shared security resources, and serving-record identifiers"
+  }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return "Absolute position, description, explicit ref, IDs, timestamps, versions, unsupported API fields"
   }

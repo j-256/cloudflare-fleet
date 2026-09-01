@@ -385,6 +385,16 @@ test("doctor emits structured attention results with exit 4", async () => {
 
 test("unified CLI parses canonical intent, change, undo, and schema commands", () => {
   assert.deepEqual(
+    parseFleetArguments(["intent", "aliases", "--format=json"]),
+    {
+      command: "intent-aliases",
+      expectedDigest: null,
+      format: "json",
+      input: null,
+      stateFile: null,
+    },
+  )
+  assert.deepEqual(
     parseFleetArguments(["intent", "plan", "-iintent.json", "-fjson"]),
     {
       command: "intent-plan",
@@ -424,6 +434,31 @@ test("unified CLI parses canonical intent, change, undo, and schema commands", (
   assert.deepEqual(parseFleetArguments(["schema", "change"]), {
     command: "schema-change",
   })
+})
+
+test("unified CLI exposes reusable canonical alias templates without credentials", async () => {
+  const stdout = outputStream()
+  await runFleetCommand({
+    argv: ["intent", "aliases", "--format=json"],
+    environment: {},
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  const result = JSON.parse(stdout.value())
+  assert.equal(result.facet.key, "canonical-web-passthrough")
+  assert.deepEqual(
+    result.templates.map((template) => [
+      template.sourceHost,
+      template.value.redirect.targetHost,
+      template.value.redirect.statusCode,
+    ]),
+    [
+      ["j256.dev", "j-256.dev", 307],
+      ["strangelaser.com", "strangelasers.com", 308],
+      ["strangelasers.net", "strangelasers.com", 307],
+    ],
+  )
 })
 
 test("unified CLI exports intent documents and accepts bounded JSON input", async () => {

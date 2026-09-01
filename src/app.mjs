@@ -276,6 +276,10 @@ import {
   WRITE_VERIFICATION_KIND,
 } from "./write-verification.mjs"
 import { executeVerifiedPlanSet } from "./write-executor.mjs"
+import {
+  isZoneAliasMatrixRow,
+  zoneAliasPolicyTemplateForSourceHost,
+} from "./zone-alias-intent.mjs"
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
@@ -318,6 +322,8 @@ const INVENTORY_SOURCE = Object.freeze({
 })
 const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGNMENT]
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
+const DEFAULT_INTENT_POLICY_CONSTRAINT_HELP = "Choose these independently: Presence decides whether absence is drift. Value when present compares only zones where the facet exists."
+const ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP = "Canonical passthrough intent is always Required and Exact so independent behavior cannot be silently tolerated."
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = ".matrix-zone-select, summary, .cell-action"
 const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
@@ -737,6 +743,7 @@ const elements = {
   intentPolicyCustomKind: document.querySelector("#intent-policy-custom-kind"),
   intentPolicyCustomRaw: document.querySelector("#intent-policy-custom-raw"),
   intentPolicyConstraintExact: document.querySelector("#intent-policy-constraint-exact"),
+  intentPolicyConstraintHelp: document.querySelector("#intent-policy-constraint-help"),
   intentPolicyConstraintMayDiffer: document.querySelector("#intent-policy-constraint-may-differ"),
   intentPolicyConstraintMustDiffer: document.querySelector("#intent-policy-constraint-must-differ"),
   intentPolicyCategoryFilter: document.querySelector("#intent-policy-category-filter"),
@@ -5419,6 +5426,7 @@ function seedIntentPolicyCustomDraft() {
 }
 
 function renderIntentPolicyValueMode() {
+  const strictAlias = isZoneAliasMatrixRow(state.intentPolicyDraft?.row)
   const valuesApply = selectedIntentPolicyPresenceConstraint()
     !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
   const exact = valuesApply
@@ -5426,8 +5434,14 @@ function renderIntentPolicyValueMode() {
   const custom = exact
     && selectedIntentPolicyValueMode() === INTENT_POLICY_VALUE_MODE.CUSTOM
   elements.intentPolicyValueRelationship.hidden = !valuesApply
+  elements.intentPolicyConstraintHelp.textContent = strictAlias
+    ? `${ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP}${state.intentPolicyDraft?.aliasTemplateSourceHost ? ` The built-in ${state.intentPolicyDraft.aliasTemplateSourceHost} template is loaded as a custom value.` : ""}`
+    : DEFAULT_INTENT_POLICY_CONSTRAINT_HELP
+  elements.intentPolicyPresenceRequired.disabled = strictAlias
+  elements.intentPolicyPresenceOptional.disabled = strictAlias
+  elements.intentPolicyPresenceForbidden.disabled = strictAlias
   for (const control of elements.intentPolicyValueRelationship.elements) {
-    control.disabled = !valuesApply
+    control.disabled = !valuesApply || strictAlias
   }
   elements.intentPolicyExactFields.hidden = !exact
   elements.intentPolicyModeObserved.disabled = !exact
@@ -5593,21 +5607,31 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
     draft.policies,
     group.id,
   )
-  const presenceConstraint = options.presenceConstraint
-    || selection.presenceConstraint
-  const valueConstraint = options.valueConstraint || selection.valueConstraint
+  const loadedScopeZones = scopeZones
+    .filter((zone) => !zone.unavailable)
+    .map((zone) => zoneById(zone.zoneId))
+    .filter(Boolean)
+  const strictAlias = isZoneAliasMatrixRow(draft.row)
+  const aliasTemplate = strictAlias
+    && !selection.policy
+    && loadedScopeZones.length === 1
+    ? zoneAliasPolicyTemplateForSourceHost(loadedScopeZones[0].meta.name)
+    : null
+  const presenceConstraint = strictAlias
+    ? FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
+    : options.presenceConstraint || selection.presenceConstraint
+  const valueConstraint = strictAlias
+    ? FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+    : options.valueConstraint || selection.valueConstraint
   const valuesApply = presenceConstraint
     !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
   const exact = valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
   const policyIsAuthored = valuesApply
     && exact
-    && fleetIntentExpectedIsAuthored(selection.policy?.expected)
+    && (fleetIntentExpectedIsAuthored(selection.policy?.expected)
+      || Boolean(aliasTemplate))
   const selectedCanonical = options.expectedCanonical
     || selection.expectedCanonical
-  const loadedScopeZones = scopeZones
-    .filter((zone) => !zone.unavailable)
-    .map((zone) => zoneById(zone.zoneId))
-    .filter(Boolean)
   const valueComparison = rowIntentVariants(
     draft.row,
     selection.policy ? [selection.policy] : [],
@@ -5624,7 +5648,7 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
     ? draft.variants.find((variant) => variant.canonical === selectedCanonical)
     : draft.variants[0]
   const customSeed = policyIsAuthored
-    ? selection.policy.expected.value
+    ? selection.policy?.expected?.value ?? aliasTemplate.value
     : selected?.value ?? ""
 
   draft.activeGroupId = group.id
@@ -5632,6 +5656,7 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
   draft.customDraft = cloneJsonValue(customSeed)
   draft.customJsonInvalid = false
   draft.policy = selection.policy
+  draft.aliasTemplateSourceHost = aliasTemplate?.sourceHost || null
   draft.policyId = selection.policy?.id || intentId("policy")
   draft.scopeGroup = group
   draft.scopeName = options.scopeName ?? ""
@@ -5735,6 +5760,7 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
     || FLEET_INTENT_ALL_ZONES_GROUP_ID
   state.intentPolicyDraft = {
     activeGroupId: selectedGroupId,
+    aliasTemplateSourceHost: null,
     baseRevision: state.intent.revision,
     customDirty: false,
     customDraft: "",

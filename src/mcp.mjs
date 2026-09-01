@@ -43,6 +43,11 @@ import { PACKAGE_VERSION } from "./package-metadata.mjs"
 import { createProgressReporter } from "./progress.mjs"
 import { diagnoseFleetRuntime } from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
+import {
+  describeZoneAliasPolicy,
+  ZONE_ALIAS_INTENT_KIND,
+  ZONE_ALIAS_RESOURCE_ENVELOPE,
+} from "./zone-alias-intent.mjs"
 
 const MCP_SERVER_NAME = "cloudflare-fleet"
 const CONFIRMATION_KEY = "confirm_action"
@@ -276,6 +281,52 @@ const runtimeOutputSchema = z.union([
   runtimeStatusOutputSchema,
   errorOutputSchema,
 ])
+const zoneAliasIntentValueOutputSchema = z.strictObject({
+  kind: z.literal(ZONE_ALIAS_INTENT_KIND),
+  redirect: z.strictObject({
+    enabled: z.literal(true),
+    includeSubdomains: z.boolean(),
+    preservePath: z.boolean(),
+    preserveQuery: z.boolean(),
+    preserveSubdomains: z.boolean(),
+    statusCode: z.union([
+      z.literal(301),
+      z.literal(302),
+      z.literal(307),
+      z.literal(308),
+    ]),
+    targetHost: z.string(),
+    targetScheme: z.literal("https"),
+  }),
+  resourceEnvelope: z.literal(ZONE_ALIAS_RESOURCE_ENVELOPE),
+  servingDns: z.strictObject({
+    apex: z.literal(true),
+    wildcard: z.boolean(),
+  }),
+  unexpectedResources: z.array(z.never()).max(0),
+  unreadSurfaces: z.array(z.never()).max(0),
+})
+const zoneAliasPolicyOutputSchema = z.strictObject({
+  allowedResources: z.array(z.string()),
+  facet: z.strictObject({
+    category: z.string(),
+    description: z.string(),
+    key: z.string(),
+    label: z.string(),
+  }),
+  limitations: z.array(z.string()),
+  requiredConstraints: z.strictObject({
+    presenceConstraint: z.literal("required"),
+    valueConstraint: z.literal("exact"),
+  }),
+  resourceEnvelope: z.literal(ZONE_ALIAS_RESOURCE_ENVELOPE),
+  templates: z.array(z.strictObject({
+    id: identifierSchema,
+    sourceHost: z.string(),
+    value: zoneAliasIntentValueOutputSchema,
+  })),
+  unexpectedResources: z.array(z.string()),
+})
 
 const READ_ONLY_EXTERNAL_ANNOTATIONS = Object.freeze({
   destructiveHint: false,
@@ -642,7 +693,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -788,7 +839,7 @@ export function createFleetMcpServer(options = {}) {
     "audit_fleet",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
-      description: "Audit live Cloudflare fleet posture without writing. Deep mode adds bounded account, delegation, endpoint, and dependency checks.",
+      description: "Audit live Cloudflare fleet posture without writing, including canonical alias redirect semantics and independent web attachments. Deep mode adds bounded account, delegation, endpoint, and dependency checks.",
       inputSchema: z.strictObject({
         deep: z.boolean().default(false),
       }),
@@ -807,6 +858,24 @@ export function createFleetMcpServer(options = {}) {
         status: "ok",
       }
       return toolResult(result, auditSummary(result))
+    }, secrets),
+  )
+
+  server.registerTool(
+    "describe_zone_alias_policy",
+    {
+      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      description: "Return the strict reusable canonical web passthrough facet, allowed resource envelope, and initial compatibility-domain templates without reading or writing Cloudflare.",
+      inputSchema: emptyInputSchema,
+      outputSchema: zoneAliasPolicyOutputSchema,
+      title: "Describe canonical zone alias policy",
+    },
+    safeToolHandler(async () => {
+      const result = describeZoneAliasPolicy()
+      return toolResult(
+        result,
+        `Canonical zone alias policy has ${result.templates.length} initial templates`,
+      )
     }, secrets),
   )
 

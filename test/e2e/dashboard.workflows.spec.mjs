@@ -140,6 +140,59 @@ test("reviews and applies exact intent alignment from a drifting cell", async ({
   ))).toHaveLength(zoneNames.length)
 })
 
+test("uses the typed alias template and reviewed alignment in the dashboard", async ({ zoneAliasDashboard }) => {
+  const {
+    page,
+    requests,
+  } = zoneAliasDashboard
+
+  await page.locator("#category").selectOption("Zone aliases")
+  await page.locator("#scope").selectOption("all")
+  await page.locator("#difference-toggle").click()
+  await page.getByRole("button", {
+    name: "Set intent: Set intent for Canonical web passthrough",
+  }).click()
+
+  const policy = page.getByRole("dialog", { name: "Set facet intent" })
+  await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
+  await expect(policy.getByRole("radio", { name: /^Required/ })).toBeDisabled()
+  await expect(policy.getByRole("radio", { name: /^Exact value/ })).toBeChecked()
+  await expect(policy.getByRole("radio", { name: /^Exact value/ })).toBeDisabled()
+  await expect(policy.getByRole("radio", { name: /^Optional by zone/ })).toBeDisabled()
+  await expect(policy.getByRole("radio", { name: /^May differ/ })).toBeDisabled()
+  await expect(policy.locator("#intent-policy-constraint-help")).toContainText(
+    "built-in j256.dev template",
+  )
+  await expect(policy.locator("#intent-policy-custom-raw")).toHaveValue(
+    /"statusCode": 307/,
+  )
+  await expect(policy.locator("#intent-policy-custom-raw")).toHaveValue(
+    /"targetHost": "j-256.dev"/,
+  )
+  await policy.locator("#intent-policy-save").click()
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "Canonical web passthrough intent saved for All zones",
+  )
+  await page.getByRole("button", {
+    name: "Review alignment (1): Align Canonical web passthrough with fleet intent",
+  }).click()
+  const confirmation = page.locator("#confirm-dialog")
+  await expect(confirmation).toContainText(
+    "zones/zone-j256.dev/rulesets/alias-redirect-ruleset/rules/alias-redirect-rule",
+  )
+  await acceptCurrentWrite(page)
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "Canonical web passthrough aligned with fleet intent and live verification passed",
+  )
+  expect(requests.filter((request) => (
+    request.method === "PATCH"
+      && request.path === "zones/zone-j256.dev/rulesets/alias-redirect-ruleset/rules/alias-redirect-rule"
+      && request.body.action_parameters.from_value.status_code === 307
+  ))).toHaveLength(1)
+})
+
 test("aligns Email Routing settings and shows unsupported reasons", async ({ emailIntentDashboard }) => {
   const {
     emailSettingValue,

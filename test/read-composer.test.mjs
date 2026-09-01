@@ -16,6 +16,7 @@ import {
 test("read composer merges inventory requirements and deduplicates resources", () => {
   const plan = composeReadPlan([
     inventoryRead({
+      accountSurfaceIds: ["pages-projects"],
       includeRuleDetails: true,
       ruleDetailKinds: ["zone"],
       ruleDetailPhases: ["http_request_dynamic_redirect"],
@@ -23,6 +24,7 @@ test("read composer merges inventory requirements and deduplicates resources", (
       zoneIds: ["zone-alpha"],
     }),
     inventoryRead({
+      accountSurfaceIds: ["worker-custom-domains", "pages-projects"],
       includeEmailAddresses: true,
       includeRuleDetails: true,
       ruleDetailKinds: ["custom", "zone"],
@@ -36,6 +38,7 @@ test("read composer merges inventory requirements and deduplicates resources", (
 
   assert.deepEqual(plan, {
     inventory: {
+      accountSurfaceIds: ["pages-projects", "worker-custom-domains"],
       includeEmailAddresses: true,
       includeRuleDetails: true,
       ruleDetailKinds: ["zone", "custom"],

@@ -110,7 +110,7 @@ cloudflare-fleet audit --format html &gt; audit.html</code></pre>
           </thead>
           <tbody>
             <tr><td>First connection</td><td><code>Zone Read</code></td><td>Supports account-scoped zone discovery and the bounded live doctor request.</td></tr>
-            <tr><td>Common inventory</td><td><code>Zone Settings Read</code>, <code>DNS Read</code>, <code>Email Routing Rules Read</code>, <code>Zone WAF Read</code>, and the matching groups for other products in use</td><td>Add surface access deliberately. Missing optional access is reported as coverage evidence.</td></tr>
+            <tr><td>Common inventory</td><td><code>Zone Settings Read</code>, <code>DNS Read</code>, <code>Email Routing Rules Read</code>, <code>Zone WAF Read</code>, and the matching groups for other products in use</td><td>Add surface access deliberately. Canonical alias policies also need the relevant zone products plus account Workers custom-domain and Pages project reads. Missing optional access is reported as coverage evidence.</td></tr>
             <tr><td>Reviewed writes</td><td>The corresponding <code>Zone Settings Write</code>, <code>DNS Write</code>, <code>Email Routing Rules Edit</code>, or <code>Zone WAF Write</code></td><td>Do not add write permission until the matching operator outcome is required.</td></tr>
             <tr><td>Deep account audit</td><td>Product-specific account read groups for Workers, Pages, D1, KV, R2, Queues, Workflows, and Registrar</td><td>These expand evidence only for the selected deep audit and are not a baseline requirement.</td></tr>
           </tbody>
@@ -132,14 +132,16 @@ cloudflare-fleet config show</code></pre>
       <h2 id="daily-heading">Use a simple daily operating loop</h2>
       <pre><code>cloudflare-fleet doctor --live
 cloudflare-fleet audit --fail-on warning
-cloudflare-fleet dashboard</code></pre>
+cloudflare-fleet dashboard
+cloudflare-fleet intent aliases --format json</code></pre>
       <p>The dashboard is read-only until launched with <code>--write</code>. Use <code>--fresh</code> when a launch should bypass cached inventory. After a reviewed mutation, inspect durable evidence with <code>cloudflare-fleet activity list</code>; begin recovery only with <code>cloudflare-fleet activity undo plan --id ACTIVITY_ID</code>, which blocks if live state no longer matches the verified operation.</p>
       <p>The noninteractive CLI follows the same plan and apply split. Generate a JSON plan, present it for approval, and pass its exact digest to the corresponding apply command. A changed digest exits distinctly before mutation.</p>
+      <p><code>intent aliases</code> returns the strict canonical passthrough facet, its exact resource envelope, and initial compatibility-domain templates without reading or writing Cloudflare. Persist a selected value through the ordinary revisioned intent plan and apply commands, then remediate drift through alignment.</p>
     </section>
 
     <section class="section prose" aria-labelledby="mcp-heading">
       <h2 id="mcp-heading">Connect a trusted MCP client</h2>
-      <p>The installed <code>cloudflare-fleet mcp</code> command is a stdio server with no network listener and no arbitrary Cloudflare API passthrough. Its first diagnostic tool, <code>get_runtime_status</code>, can explain missing setup before an agent attempts fleet work.</p>
+      <p>The installed <code>cloudflare-fleet mcp</code> command is a stdio server with no network listener and no arbitrary Cloudflare API passthrough. Its first diagnostic tool, <code>get_runtime_status</code>, can explain missing setup before an agent attempts fleet work. <code>describe_zone_alias_policy</code> returns the same typed passthrough contract and templates as the CLI.</p>
 
       <h3>Codex</h3>
       <p>Add the server to <code>~/.codex/config.toml</code> and explicitly forward the credential variables from the environment that launches Codex.</p>

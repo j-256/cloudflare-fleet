@@ -10,6 +10,7 @@ import {
   createCacheRecord,
 } from "../../src/cache.mjs"
 import {
+  ACCOUNT_SURFACES,
   SURFACES,
 } from "../../src/constants.mjs"
 import {
@@ -32,12 +33,19 @@ import {
   makeZone,
   ok,
 } from "../fixtures.mjs"
+import {
+  buildZoneAliasRedirectRule,
+  createZoneAliasIntentValue,
+  ZONE_ALIAS_REDIRECT_PHASE,
+} from "../../src/zone-alias-intent.mjs"
 
 const ACCOUNT_ID = "e2e-account"
 const API_PATH_PREFIX = "/client/v4/"
 const DNS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/dns_records$/
 const DNS_RECORD_PATH_PATTERN = /^zones\/([^/]+)\/dns_records\/([^/]+)$/
 const EMAIL_SETTINGS_PATH_PATTERN = /^zones\/([^/]+)\/email\/routing$/
+const RULESET_PATH_PATTERN = /^zones\/([^/]+)\/rulesets\/([^/]+)$/
+const RULESET_RULE_PATH_PATTERN = /^zones\/([^/]+)\/rulesets\/([^/]+)\/rules\/([^/]+)$/
 const PROJECT_DIR = fileURLToPath(new URL("../..", import.meta.url))
 const SETTINGS_COLLECTION_PATH_PATTERN = /^zones\/([^/]+)\/settings$/
 const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
@@ -190,6 +198,55 @@ function emailIntentInventory() {
   return inventory
 }
 
+function zoneAliasIntentInventory() {
+  const sourceHost = "j256.dev"
+  const observed = createZoneAliasIntentValue({
+    statusCode: 302,
+    targetHost: "j-256.dev",
+  })
+  const ruleset = {
+    id: "alias-redirect-ruleset",
+    kind: "zone",
+    name: "default",
+    phase: ZONE_ALIAS_REDIRECT_PHASE,
+    rules: [{
+      id: "alias-redirect-rule",
+      ...buildZoneAliasRedirectRule(sourceHost, observed),
+    }],
+  }
+  const zone = makeDashboardZone(sourceHost, {
+    dns: [
+      {
+        content: "255.255.255.255",
+        id: "alias-apex",
+        name: sourceHost,
+        proxied: true,
+        ttl: 1,
+        type: "A",
+      },
+      {
+        content: "255.255.255.255",
+        id: "alias-wildcard",
+        name: `*.${sourceHost}`,
+        proxied: true,
+        ttl: 1,
+        type: "A",
+      },
+    ],
+    ruleDetails: [ok(ruleset)],
+    rulesets: [{
+      id: ruleset.id,
+      kind: ruleset.kind,
+      name: ruleset.name,
+      phase: ruleset.phase,
+    }],
+  })
+  const inventory = makeInventory([zone])
+  inventory.account.id = ACCOUNT_ID
+  inventory.loadedAt = new Date().toISOString()
+  return inventory
+}
+
 function denseRuleInventory() {
   const zones = Array.from({ length: DENSE_RULE_ZONE_COUNT }, (_, index) => {
     const ordinal = String(index + 1).padStart(2, "0")
@@ -241,6 +298,7 @@ function fakeCloudflareTransport(inventory) {
   const emailSettings = new Map()
   const failures = []
   const settings = new Map()
+  const rulesets = new Map()
   let createdDnsRecord = 0
   for (const zone of inventory.zones) {
     dnsByZone.set(
@@ -254,6 +312,11 @@ function fakeCloudflareTransport(inventory) {
     for (const entry of zone.surfaces.settings.result) {
       settings.set(`${zone.meta.id}:${entry.id}`, structuredClone(entry))
     }
+    rulesets.set(zone.meta.id, new Map(
+      zone.ruleDetails
+        .filter((detail) => detail.ok)
+        .map((detail) => [detail.result.id, structuredClone(detail.result)]),
+    ))
   }
 
   const fetch = async (url, request = {}) => {
@@ -287,6 +350,20 @@ function fakeCloudflareTransport(inventory) {
         result_info: { total_pages: 1 },
         success: true,
       })
+    }
+
+    if (method === "GET") {
+      const accountSurface = ACCOUNT_SURFACES.find(
+        (surface) => surface.path(ACCOUNT_ID).split("?", 1)[0] === relativePath,
+      )
+      if (accountSurface) {
+        return jsonResponse(200, {
+          result: structuredClone(
+            inventory.account.surfaces[accountSurface.id]?.result || [],
+          ),
+          success: true,
+        })
+      }
     }
 
     const dnsCollectionMatch = relativePath.match(DNS_COLLECTION_PATH_PATTERN)
@@ -398,6 +475,64 @@ function fakeCloudflareTransport(inventory) {
           .map(([, value]) => structuredClone(value)),
         success: true,
       })
+    }
+
+    const rulesetRuleMatch = relativePath.match(RULESET_RULE_PATH_PATTERN)
+    if (rulesetRuleMatch && method === "PATCH") {
+      const zoneId = decodeURIComponent(rulesetRuleMatch[1])
+      const rulesetId = decodeURIComponent(rulesetRuleMatch[2])
+      const ruleId = decodeURIComponent(rulesetRuleMatch[3])
+      const ruleset = rulesets.get(zoneId)?.get(rulesetId)
+      const ruleIndex = ruleset?.rules.findIndex((rule) => rule.id === ruleId) ?? -1
+      if (!ruleset || ruleIndex === -1) {
+        return jsonResponse(404, {
+          errors: [{ message: "Ruleset rule not found" }],
+          success: false,
+        })
+      }
+      ruleset.rules[ruleIndex] = {
+        id: ruleId,
+        ...body,
+      }
+      return jsonResponse(200, {
+        result: structuredClone(ruleset.rules[ruleIndex]),
+        success: true,
+      })
+    }
+
+    const rulesetMatch = relativePath.match(RULESET_PATH_PATTERN)
+    if (rulesetMatch && method === "GET") {
+      const zoneId = decodeURIComponent(rulesetMatch[1])
+      const rulesetId = decodeURIComponent(rulesetMatch[2])
+      const ruleset = rulesets.get(zoneId)?.get(rulesetId)
+      if (ruleset) {
+        return jsonResponse(200, {
+          result: structuredClone(ruleset),
+          success: true,
+        })
+      }
+    }
+
+    if (method === "GET") {
+      for (const zone of inventory.zones) {
+        const surface = SURFACES.find(
+          (candidate) => candidate.path(zone.meta.id).split("?", 1)[0]
+            === relativePath,
+        )
+        if (!surface) continue
+        const result = surface.id === "rulesets"
+          ? [...(rulesets.get(zone.meta.id)?.values() || [])].map((ruleset) => ({
+              id: ruleset.id,
+              kind: ruleset.kind,
+              name: ruleset.name,
+              phase: ruleset.phase,
+            }))
+          : zone.surfaces[surface.id]?.result
+        return jsonResponse(200, {
+          result: structuredClone(result ?? []),
+          success: true,
+        })
+      }
     }
 
     const match = relativePath.match(SETTING_PATH_PATTERN)
@@ -650,6 +785,11 @@ export const test = base.extend({
   emailIntentDashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo, {
       inventory: emailIntentInventory(),
+    })
+  },
+  zoneAliasDashboard: async ({ page }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, {
+      inventory: zoneAliasIntentInventory(),
     })
   },
   readOnlyDashboard: async ({ page }, use, testInfo) => {

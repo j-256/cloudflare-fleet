@@ -9,6 +9,10 @@ import {
 import { dnssecRequestedStatus } from "./dnssec.mjs"
 import { editableEmailRoutingRulePayload } from "./policies.mjs"
 import { redirectIntentValueProjection } from "./facet-equivalence.mjs"
+import {
+  normalizeZoneAliasIntentPolicy,
+  zoneAliasIntentPolicyIsValid,
+} from "./zone-alias-intent.mjs"
 
 export const FLEET_INTENT_SCHEMA_VERSION = 8
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
@@ -360,6 +364,7 @@ function normalizeFleetIntentPolicy(policy) {
   }
   normalized = normalizeObservedEmailRoutingIntentPolicy(normalized)
   normalized = normalizeRedirectIntentPolicy(normalized)
+  normalized = normalizeZoneAliasIntentPolicy(normalized)
   return normalized
 }
 
@@ -385,6 +390,7 @@ function isPolicy(policy, options = {}) {
     && Object.values(FLEET_INTENT_PRESENCE_CONSTRAINT).includes(presenceConstraint)
     && Object.values(FLEET_INTENT_VALUE_CONSTRAINT).includes(valueConstraint)
     && expectedValid
+    && zoneAliasIntentPolicyIsValid(policy)
     && (!options.requireNormalizedPresence
       || policy.presenceConstraint === presenceConstraint)
     && (!options.requireNormalizedDnssec
@@ -1323,6 +1329,7 @@ export function evaluateFleetIntent(document, inventory, matrix) {
     const unresolved = matchingPolicies.some(
       (policyState) => policyState.unresolved,
     )
+    const ungovernedActionable = row.different && !row.intentOptInOnly
     const status = matchingPolicies.length === 0
       ? FLEET_INTENT_ROW_STATUS.UNGOVERNED
       : actionableCells.length > 0
@@ -1333,7 +1340,7 @@ export function evaluateFleetIntent(document, inventory, matrix) {
     rowStates.set(facetId, {
       actionable: matchingPolicies.length > 0
         ? actionableCells.length > 0
-        : row.different,
+        : ungovernedActionable,
       actionableCells,
       acknowledgedCount,
       applicableCount: applicableCells.length,
