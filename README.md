@@ -210,7 +210,7 @@ Use the standard stdio command-plus-arguments shape and arrange for the client p
 
 For an explicit profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command.
 
-The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Mutation tools display the exact request, digest, and operations through MCP input elicitation, require explicit approval, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
+The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, paginate oversized details, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
 - Read: `audit_fleet`, `describe_zone_alias_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
@@ -267,7 +267,7 @@ A row or policy review is all-or-nothing: every unacknowledged drift cell in tha
 
 ![Cloudflare Fleet intent alignment review using a synthetic example fleet](docs/screenshots/intent-alignment.png)
 
-Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, current and desired values, methods, endpoints, and payloads. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
+Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, methods, endpoints, and focused current-to-desired deltas. The planner keeps the complete canonical request and payloads bound to the digest and signed confirmation state through apply. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
 
 Clearing or bypassing the inventory cache never removes intent or activity. Hosted sessions use transactional D1 state; local sessions use revisioned sections in the ignored account-scoped state file.
 
