@@ -514,6 +514,21 @@ async function connectedFixture(context, options = {}) {
   }
 }
 
+function approvedElicitation(request) {
+  return {
+    action: "accept",
+    content: Object.fromEntries(
+      request.params.requestedSchema.required.map((key) => [key, "approve"]),
+    ),
+  }
+}
+
+function elicitationReviewText(request) {
+  return Object.values(request.params.requestedSchema.properties)
+    .map((field) => `${field.title}\n${field.description}`)
+    .join("\n")
+}
+
 test("MCP server advertises the bounded fleet tools and accurate annotations", async (context) => {
   const { client } = await connectedFixture(context)
 
@@ -687,12 +702,7 @@ test("MCP apply elicits one explicit plan approval before invoking the write ser
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async (incoming) => {
       request = incoming
-      return {
-        action: "accept",
-        content: {
-          approve: true,
-        },
-      }
+      return approvedElicitation(incoming)
     },
   })
 
@@ -711,12 +721,20 @@ test("MCP apply elicits one explicit plan approval before invoking the write ser
     digest: DIGEST,
     selector: { kind: "policy", policyId: "policy-one" },
   }])
-  assert.match(request.params.message, /account account-one/)
+  const review = elicitationReviewText(request)
+  assert.match(request.params.message, /Account: account-one/)
   assert.match(request.params.message, new RegExp(DIGEST))
-  assert.match(request.params.message, /PATCH zones\/zone-one\/settings\/always_use_https/)
-  assert.match(request.params.message, /Body: \{"value":"on"\}/)
-  assert.match(request.params.message, /Current: \{"value":"off"\}/)
-  assert.deepEqual(request.params.requestedSchema.required, ["approve"])
+  assert.match(review, /API: PATCH settings\/always_use_https/)
+  assert.match(review, /value: "off" -> "on"/)
+  assert.doesNotMatch(review, /Body:|Current:/)
+  assert.deepEqual(request.params.requestedSchema.required, ["review_1"])
+  assert.deepEqual(
+    request.params.requestedSchema.properties.review_1.oneOf,
+    [
+      { const: "decline", title: "Do not apply" },
+      { const: "approve", title: "Approve this change" },
+    ],
+  )
   assert.equal(
     Object.hasOwn(request.params.requestedSchema.properties, "confirmDigest"),
     false,
@@ -741,13 +759,33 @@ test("MCP apply stops cleanly when confirmation is declined", async (context) =>
   assert.equal(calls.apply.length, 0)
 })
 
+test("MCP apply stops cleanly when a review field rejects the plan", async (context) => {
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async (request) => {
+      const response = approvedElicitation(request)
+      response.content.review_1 = "decline"
+      return response
+    },
+  })
+
+  const result = await client.callTool({
+    arguments: {
+      planDigest: DIGEST,
+      selector: SELECTOR,
+    },
+    name: "apply_alignment",
+  })
+
+  assert.equal(result.structuredContent.status, "confirmation-declined")
+  assert.equal(result.isError, undefined)
+  assert.equal(calls.apply.length, 0)
+})
+
 test("MCP apply refuses an unchecked confirmation", async (context) => {
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async () => ({
       action: "accept",
-      content: {
-        approve: false,
-      },
+      content: {},
     }),
   })
 
@@ -802,10 +840,7 @@ test("MCP batch apply elicits one combined review and fresh apply", async (conte
     elicitationHandler: async (incoming) => {
       elicitations += 1
       request = incoming
-      return {
-        action: "accept",
-        content: { approve: true },
-      }
+      return approvedElicitation(incoming)
     },
   })
 
@@ -822,12 +857,17 @@ test("MCP batch apply elicits one combined review and fresh apply", async (conte
     digest: DIGEST,
     selectors: NORMALIZED_BATCH_SELECTORS,
   }])
+  const review = elicitationReviewText(request)
   assert.match(request.params.message, /alignment batch/)
-  assert.match(request.params.message, /Always Use HTTPS: planned/)
-  assert.match(request.params.message, /Early Hints: planned/)
-  assert.match(request.params.message, /settings\/always_use_https/)
-  assert.match(request.params.message, /settings\/early_hints/)
-  assert.deepEqual(request.params.requestedSchema.required, ["approve"])
+  assert.match(request.params.message, /Scopes: 2/)
+  assert.match(review, /Enable Always Use HTTPS/)
+  assert.match(review, /Enable Early Hints/)
+  assert.match(review, /settings\/always_use_https/)
+  assert.match(review, /settings\/early_hints/)
+  assert.deepEqual(
+    request.params.requestedSchema.required,
+    ["review_1", "review_2"],
+  )
 })
 
 test("MCP batch apply stops without writing when confirmation is declined", async (context) => {
@@ -844,15 +884,30 @@ test("MCP batch apply stops without writing when confirmation is declined", asyn
   assert.equal(calls.applyBatch.length, 0)
 })
 
+test("MCP batch apply rejects a partially reviewed operation set", async (context) => {
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async () => ({
+      action: "accept",
+      content: { review_1: "approve" },
+    }),
+  })
+
+  const result = await client.callTool({
+    arguments: { selectors: BATCH_SELECTORS },
+    name: "apply_alignments",
+  })
+
+  assert.equal(result.structuredContent.status, "confirmation-invalid")
+  assert.equal(result.isError, true)
+  assert.equal(calls.applyBatch.length, 0)
+})
+
 test("MCP reviewed mutation tools bind intent, direct changes, and undo to signed confirmation", async (context) => {
-  const messages = []
+  const requests = []
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async (request) => {
-      messages.push(request.params.message)
-      return {
-        action: "accept",
-        content: { approve: true },
-      }
+      requests.push(request)
+      return approvedElicitation(request)
     },
   })
 
@@ -884,11 +939,11 @@ test("MCP reviewed mutation tools bind intent, direct changes, and undo to signe
   assert.equal(calls.applyIntent.length, 1)
   assert.equal(calls.applyChange.length, 1)
   assert.equal(calls.applyUndo.length, 1)
-  assert.equal(messages.length, 3)
-  assert.match(messages[0], /Exact request:/)
-  assert.match(messages[0], /No Cloudflare API writes/)
-  assert.match(messages[1], /zone-setting-update/)
-  assert.match(messages[2], /activity-one/)
+  assert.equal(requests.length, 3)
+  assert.doesNotMatch(requests[0].params.message, /Exact request:/)
+  assert.match(elicitationReviewText(requests[0]), /Cloudflare API writes: none/)
+  assert.match(elicitationReviewText(requests[1]), /value: "off" -> "on"/)
+  assert.match(requests[2].params.message, /Activity: activity-one/)
 })
 
 test("MCP tool errors redact the Cloudflare API token", async (context) => {

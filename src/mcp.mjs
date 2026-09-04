@@ -37,6 +37,13 @@ import {
   runtimeStatusInputSchema,
   runtimeStatusOutputSchema,
 } from "./interface-schemas.mjs"
+import {
+  buildConfirmationForm,
+  CONFIRMATION_DECISION,
+  confirmationFieldKeys,
+  intentReviewItems,
+  operationReviewItems,
+} from "./mcp-confirmation.mjs"
 import { stableString } from "./normalize.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
@@ -94,33 +101,22 @@ const changeApplyInputSchema = changeInputSchema.extend({
 const undoApplyInputSchema = activityUndoInputSchema.extend({
   planDigest: digestSchema.describe("Exact digest returned by plan_activity_undo"),
 })
-const confirmationSchema = z.strictObject({
-  approve: z.boolean().describe("Set true only after reviewing the exact plan shown above"),
-})
-const confirmationRequestSchema = Object.freeze({
-  properties: {
-    approve: {
-      description: "Set true only after reviewing the exact plan shown above",
-      title: "Approve reviewed action",
-      type: "boolean",
-    },
-  },
-  required: ["approve"],
-  type: "object",
-})
 const requestStateSchema = z.strictObject({
   accountId: identifierSchema,
+  confirmationCount: z.number().int().positive(),
   planDigest: digestSchema,
   selector: selectorSchema,
 })
 const batchRequestStateSchema = z.strictObject({
   accountId: identifierSchema,
+  confirmationCount: z.number().int().positive(),
   planDigest: digestSchema,
   selectors: selectorsSchema,
 })
 const reviewedRequestStateSchema = z.strictObject({
   accountId: identifierSchema,
   action: identifierSchema,
+  confirmationCount: z.number().int().positive(),
   fingerprint: digestSchema,
   planDigest: digestSchema,
 })
@@ -491,35 +487,62 @@ function inputFingerprint(value) {
     .digest("hex")}`
 }
 
-function confirmationOperation(operation, index) {
-  return [
-    `${index + 1}. ${operation.method} ${operation.path}`,
-    `Zone: ${operation.zoneName} (${operation.zoneId})`,
-    `Change: ${operation.label}`,
-    ...(Object.hasOwn(operation, "currentValue")
-      ? [`Current: ${JSON.stringify(operation.currentValue)}`]
-      : []),
-    ...(Object.hasOwn(operation, "body")
-      ? [`Body: ${JSON.stringify(operation.body)}`]
-      : []),
-  ].join("\n")
+const confirmationDecisionSchema = z.enum([
+  CONFIRMATION_DECISION.APPROVE,
+  CONFIRMATION_DECISION.DECLINE,
+])
+
+function confirmationResponseSchema(count) {
+  return z.strictObject(Object.fromEntries(
+    confirmationFieldKeys(count).map((key) => [
+      key,
+      confirmationDecisionSchema,
+    ]),
+  ))
 }
 
-function reviewedConfirmationMessage(title, plan) {
-  const operations = plan.planSet.preview.map(confirmationOperation)
-  const operationSection = operations.length > 0
-    ? operations
-    : ["No Cloudflare API writes; this action persists the exact request locally."]
-  return [
-    `Approve ${title} for account ${plan.accountId}?`,
-    `Plan digest: ${plan.planSet.digest}`,
-    `Validated: ${plan.planSet.validatedAt}`,
-    `Exact request: ${JSON.stringify(plan.planSet.request)}`,
-    "",
-    ...operationSection,
-    "",
-    "Set approve to true only after reviewing the exact request and every operation.",
-  ].join("\n")
+function acceptedConfirmation(inputResponses, count) {
+  return acceptedContent(
+    inputResponses,
+    CONFIRMATION_KEY,
+    confirmationResponseSchema(count),
+  )
+}
+
+function confirmationWasDeclined(confirmation) {
+  return Object.values(confirmation).includes(CONFIRMATION_DECISION.DECLINE)
+}
+
+function operationSummaryLines(count) {
+  return count > 1 ? [`Operations: ${count}`] : []
+}
+
+function reviewedConfirmationForm(title, plan) {
+  const operations = plan.planSet.preview
+  const summaryLines = []
+  if (plan.activityId) summaryLines.push(`Activity: ${plan.activityId}`)
+  summaryLines.push(...operationSummaryLines(operations.length))
+  let reviewItems
+  if (operations.length > 0) {
+    reviewItems = operationReviewItems(operations)
+  } else if (plan.diff) {
+    reviewItems = intentReviewItems(plan)
+  } else {
+    reviewItems = [{
+      lines: [
+        "Cloudflare API writes: none",
+        "The plan digest binds the complete local request",
+      ],
+      title: "Review local change",
+    }]
+  }
+  return buildConfirmationForm({
+    accountId: plan.accountId,
+    heading: `Review ${title}`,
+    planSet: plan.planSet,
+    reviewItems,
+    summaryLines,
+  })
 }
 
 function reviewedPlanChanged(plan, expectedDigest, action) {
@@ -549,7 +572,7 @@ function declinedConfirmationReason(subject, action) {
   return `${subject} confirmation was ${outcome}`
 }
 
-function validReviewedRequestState(
+function reviewedRequestState(
   value,
   accountId,
   action,
@@ -562,38 +585,33 @@ function validReviewedRequestState(
     && parsed.data.action === action
     && parsed.data.fingerprint === fingerprint
     && parsed.data.planDigest === planDigest
+    ? parsed.data
+    : null
 }
 
-function confirmationMessage(plan) {
-  const operations = plan.planSet.preview.map(confirmationOperation)
-  return [
-    `Approve Cloudflare Fleet alignment for account ${plan.accountId}?`,
-    `Facet: ${plan.facet.label}`,
-    `Plan digest: ${plan.planSet.digest}`,
-    `Validated: ${plan.planSet.validatedAt}`,
-    "",
-    ...operations,
-    "",
-    "Set approve to true only after reviewing every operation.",
-  ].join("\n")
+function confirmationForm(plan) {
+  const operations = plan.planSet.preview
+  return buildConfirmationForm({
+    accountId: plan.accountId,
+    heading: `Review alignment: ${plan.facet.label}`,
+    planSet: plan.planSet,
+    reviewItems: operationReviewItems(operations),
+    summaryLines: operationSummaryLines(operations.length),
+  })
 }
 
-function batchConfirmationMessage(plan) {
-  const scopes = plan.alignments.map((alignment) => (
-    `- ${alignment.facet?.label || "Unknown facet"}: ${alignment.status}`
-  ))
-  const operations = plan.planSet.preview.map(confirmationOperation)
-  return [
-    `Approve Cloudflare Fleet alignment batch for account ${plan.accountId}?`,
-    `Plan digest: ${plan.planSet.digest}`,
-    `Validated: ${plan.planSet.validatedAt}`,
-    "Scopes:",
-    ...scopes,
-    "",
-    ...operations,
-    "",
-    "Set approve to true only after reviewing every operation.",
-  ].join("\n")
+function batchConfirmationForm(plan) {
+  const operations = plan.planSet.preview
+  return buildConfirmationForm({
+    accountId: plan.accountId,
+    heading: "Review alignment batch",
+    planSet: plan.planSet,
+    reviewItems: operationReviewItems(operations),
+    summaryLines: [
+      `Scopes: ${plan.alignments.length}`,
+      ...operationSummaryLines(operations.length),
+    ],
+  })
 }
 
 function planChangedResult(plan, expectedDigest) {
@@ -618,18 +636,20 @@ function confirmationOutcome(accountId, selector, status, reason) {
   }
 }
 
-function validRequestState(value, accountId, selector, planDigest) {
+function alignmentRequestState(value, accountId, selector, planDigest) {
   const parsed = requestStateSchema.safeParse(value)
   if (!parsed.success
     || parsed.data.accountId !== accountId
-    || parsed.data.planDigest !== planDigest) return false
+    || parsed.data.planDigest !== planDigest) return null
   let stateSelector
   try {
     stateSelector = normalizeAlignmentSelector(parsed.data.selector)
   } catch {
-    return false
+    return null
   }
   return stableString(stateSelector) === stableString(selector)
+    ? parsed.data
+    : null
 }
 
 function batchRequestState(value, accountId, selectors) {
@@ -693,7 +713,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -706,13 +726,14 @@ export function createFleetMcpServer(options = {}) {
       const fingerprint = inputFingerprint(request)
       const requestState = context.mcpReq.requestState()
       if (requestState !== undefined) {
-        if (!validReviewedRequestState(
+        const state = reviewedRequestState(
           requestState,
           service.accountId,
           configuration.action,
           fingerprint,
           planDigest,
-        )) {
+        )
+        if (!state) {
           const result = reviewedConfirmationOutcome(
             service.accountId,
             configuration.action,
@@ -735,19 +756,27 @@ export function createFleetMcpServer(options = {}) {
           )
           return toolResult(result, result.reason)
         }
-        const confirmation = acceptedContent(
+        const confirmation = acceptedConfirmation(
           context.mcpReq.inputResponses,
-          CONFIRMATION_KEY,
-          confirmationSchema,
+          state.confirmationCount,
         )
-        if (!confirmation || confirmation.approve !== true) {
+        if (!confirmation) {
           const result = reviewedConfirmationOutcome(
             service.accountId,
             configuration.action,
             "confirmation-invalid",
-            "Confirmation must explicitly approve the displayed request and plan",
+            "Confirmation must answer every review field with a valid decision",
           )
           return toolResult(result, result.reason, { isError: true })
+        }
+        if (confirmationWasDeclined(confirmation)) {
+          const result = reviewedConfirmationOutcome(
+            service.accountId,
+            configuration.action,
+            "confirmation-declined",
+            declinedConfirmationReason(configuration.title, "decline"),
+          )
+          return toolResult(result, result.reason)
         }
         const result = await configuration.apply(request, planDigest, {
           onProgress: createProgressReporter(
@@ -793,17 +822,19 @@ export function createFleetMcpServer(options = {}) {
         )
         return toolResult(result, result.reason)
       }
+      const confirmation = reviewedConfirmationForm(configuration.title, plan)
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
         action: configuration.action,
+        confirmationCount: confirmation.fieldCount,
         fingerprint,
         planDigest,
       }, context)
       return inputRequired({
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
-            message: reviewedConfirmationMessage(configuration.title, plan),
-            requestedSchema: confirmationRequestSchema,
+            message: confirmation.message,
+            requestedSchema: confirmation.requestedSchema,
           }),
         },
         requestState: signedState,
@@ -987,12 +1018,13 @@ export function createFleetMcpServer(options = {}) {
       const selector = normalizeAlignmentSelector(requestedSelector)
       const requestState = context.mcpReq.requestState()
       if (requestState !== undefined) {
-        if (!validRequestState(
+        const state = alignmentRequestState(
           requestState,
           service.accountId,
           selector,
           planDigest,
-        )) {
+        )
+        if (!state) {
           const result = confirmationOutcome(
             service.accountId,
             selector,
@@ -1015,19 +1047,27 @@ export function createFleetMcpServer(options = {}) {
           )
           return toolResult(result, result.reason)
         }
-        const confirmation = acceptedContent(
+        const confirmation = acceptedConfirmation(
           context.mcpReq.inputResponses,
-          CONFIRMATION_KEY,
-          confirmationSchema,
+          state.confirmationCount,
         )
-        if (!confirmation || confirmation.approve !== true) {
+        if (!confirmation) {
           const result = confirmationOutcome(
             service.accountId,
             selector,
             "confirmation-invalid",
-            "Alignment confirmation must explicitly approve the displayed plan",
+            "Alignment confirmation must answer every review field with a valid decision",
           )
           return toolResult(result, result.reason, { isError: true })
+        }
+        if (confirmationWasDeclined(confirmation)) {
+          const result = confirmationOutcome(
+            service.accountId,
+            selector,
+            "confirmation-declined",
+            declinedConfirmationReason("Alignment", "decline"),
+          )
+          return toolResult(result, result.reason)
         }
         const result = await service.applyAlignment(selector, planDigest, {
           onProgress: createProgressReporter(
@@ -1064,16 +1104,18 @@ export function createFleetMcpServer(options = {}) {
         const result = planChangedResult(plan, planDigest)
         return toolResult(result, result.reason)
       }
+      const confirmation = confirmationForm(plan)
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
+        confirmationCount: confirmation.fieldCount,
         planDigest,
         selector: requestedSelector,
       }, context)
       return inputRequired({
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
-            message: confirmationMessage(plan),
-            requestedSchema: confirmationRequestSchema,
+            message: confirmation.message,
+            requestedSchema: confirmation.requestedSchema,
           }),
         },
         requestState: signedState,
@@ -1124,20 +1166,29 @@ export function createFleetMcpServer(options = {}) {
           }
           return toolResult(result, result.reason)
         }
-        const confirmation = acceptedContent(
+        const confirmation = acceptedConfirmation(
           context.mcpReq.inputResponses,
-          CONFIRMATION_KEY,
-          confirmationSchema,
+          state.confirmationCount,
         )
-        if (!confirmation || confirmation.approve !== true) {
+        if (!confirmation) {
           const result = {
             accountId: service.accountId,
-            reason: "Alignment confirmation must explicitly approve the displayed batch",
+            reason: "Alignment confirmation must answer every review field with a valid decision",
             schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
             selectors,
             status: "confirmation-invalid",
           }
           return toolResult(result, result.reason, { isError: true })
+        }
+        if (confirmationWasDeclined(confirmation)) {
+          const result = {
+            accountId: service.accountId,
+            reason: declinedConfirmationReason("Alignment", "decline"),
+            schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+            selectors,
+            status: "confirmation-declined",
+          }
+          return toolResult(result, result.reason)
         }
         const result = await service.applyAlignments(
           selectors,
@@ -1175,16 +1226,18 @@ export function createFleetMcpServer(options = {}) {
       if (plan.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
         return toolResult(plan, batchPlanSummary(plan))
       }
+      const confirmation = batchConfirmationForm(plan)
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
+        confirmationCount: confirmation.fieldCount,
         planDigest: plan.planSet.digest,
         selectors: requestedSelectors,
       }, context)
       return inputRequired({
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
-            message: batchConfirmationMessage(plan),
-            requestedSchema: confirmationRequestSchema,
+            message: confirmation.message,
+            requestedSchema: confirmation.requestedSchema,
           }),
         },
         requestState: signedState,
