@@ -98,6 +98,8 @@ cloudflare-fleet audit --deep --fail-on warning
 
 Core findings cover inventory gaps, fleet intent, canonical alias behavior and attachments, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
 
+Deep Worker checks independently flag Cron triggers without an exported `scheduled` handler, even when invocation logs or other account reads are unavailable. Findings include the Worker identity, observed schedules and handlers, read time, and explicit coverage. Missing metadata produces an unknown assessment. Review whether to restore an intended handler or remove an obsolete trigger; a mismatch alone does not establish that removal is safe. Invocation exception metrics describe all event paths and do not establish the HTTP failure rate.
+
 `--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit is a point-in-time review of every proxied exact hostname; it does not schedule probes or retain endpoint state.
 
 ## Hosted deployment

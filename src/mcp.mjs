@@ -870,7 +870,7 @@ export function createFleetMcpServer(options = {}) {
     "audit_fleet",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
-      description: "Audit live Cloudflare fleet posture without writing, including canonical alias redirect semantics and independent web attachments. Deep mode adds bounded account, delegation, endpoint, and dependency checks.",
+      description: "Audit live Cloudflare fleet posture without writing, including canonical alias redirect semantics and independent web attachments. Deep mode adds bounded account, delegation, endpoint, and dependency checks, including independent Worker Cron/handler mismatches with explicit unknown coverage when metadata is missing. All-invocation errors are not HTTP failure rates.",
       inputSchema: z.strictObject({
         deep: z.boolean().default(false),
       }),

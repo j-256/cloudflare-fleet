@@ -100,7 +100,8 @@ function accountApi(options = {}) {
         }
       }
       if (path.endsWith("/schedules")) {
-        return { result: { schedules: [] } }
+        if (options.schedulesError) throw new Error(options.schedulesError)
+        return { result: { schedules: options.schedules || [] } }
       }
       throw new Error(`Unexpected request path: ${path}`)
     },
@@ -171,6 +172,29 @@ test("account audit follows service bindings and reports only unbound storage", 
     "deep.storage-no-discovered-binding:d1:bound-database",
   ), false)
   assert.equal(ids.has("deep.worker-no-discovered-ingress:target"), false)
+})
+
+test("Cron mismatch is independent of logs and unrelated account coverage", async () => {
+  for (const scenario of [
+    { handlers: ["fetch"], schedules: [{ cron: "*/2 * * * *" }], expected: "mismatch" },
+    { handlers: undefined, schedules: [{ cron: "*/2 * * * *" }], expected: "unknown" },
+    { handlers: ["fetch"], schedulesError: "denied", expected: "unknown" },
+    { handlers: ["fetch"], schedules: [], expected: null },
+    { handlers: ["fetch", "scheduled"], schedules: [{ cron: "*/2 * * * *" }], expected: null },
+  ]) {
+    const findings = await collectAccountAuditFindings(accountApi({
+      ...scenario,
+      pagesError: "denied",
+      workerMetricsError: "denied",
+      scripts: [{ id: "example-worker", handlers: scenario.handlers }],
+    }), makeInventory([accountZone("alpha.example")]), { now: NOW })
+    const finding = findings.find((entry) => /worker-(scheduled-handler-missing|trigger-coverage-unknown)/.test(entry.id))
+    assert.equal(finding?.evidence.status || null, scenario.expected)
+    if (finding) {
+      assert.equal(finding.evidence.observations.worker, "example-worker")
+      assert.ok(Number.isFinite(Date.parse(finding.evidence.observations.readAt)))
+    }
+  }
 })
 
 test("account audit suppresses storage and Worker orphan findings after dependency read failure", async () => {
