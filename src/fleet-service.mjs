@@ -40,6 +40,9 @@ import {
   executeVerifiedPlanSet,
 } from "./write-executor.mjs"
 import { readWriteVerificationTarget } from "./write-verification.mjs"
+import { createWorkerService } from "./worker-service.mjs"
+import { localWorkerStore } from "./worker-store.mjs"
+import { WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
 
 export const FLEET_SERVICE_SCHEMA_VERSION = 1
 const BASELINE_INVENTORY_TTL_MS = 300000
@@ -227,6 +230,17 @@ export function createFleetService(options) {
     ? options.baselineInventoryTtlMs
     : BASELINE_INVENTORY_TTL_MS
   const now = options.now || Date.now
+  const workers = createWorkerService({
+    api,
+    now,
+    store: options.workerStore || localWorkerStore(stateFile, accountId),
+    withWriteLock: dependencies.withWriteLock,
+    activityStore: {
+      read: () => dependencies.readActivity(stateFile, accountId),
+      append: (entry) => dependencies.appendActivity(stateFile, accountId, entry),
+      finalize: (entry) => dependencies.finalizeActivity(stateFile, accountId, entry),
+    },
+  })
   let baselineInventoryCache = null
 
   function cacheBaseline(inventory, intentRevision) {
@@ -336,6 +350,7 @@ export function createFleetService(options) {
   }
 
   async function planChange(change, commandOptions = {}) {
+    if (change.kind === WORKER_SCHEDULE_KIND) return workers.planSchedules(change, commandOptions)
     const preparation = await prepareChange(change, commandOptions)
     return changePreparationResult(accountId, preparation)
   }
@@ -558,6 +573,7 @@ export function createFleetService(options) {
   }
 
   async function applyChange(change, expectedDigest, commandOptions = {}) {
+    if (change.kind === WORKER_SCHEDULE_KIND) return workers.applySchedules(change, expectedDigest, commandOptions)
     requiredString(expectedDigest, "Expected fleet change plan digest")
     return dependencies.withWriteLock(async () => {
       const preparation = await prepareChange(change, commandOptions)
@@ -718,6 +734,8 @@ export function createFleetService(options) {
   }
 
   async function planActivityUndo(activityId, commandOptions = {}) {
+    const document = await dependencies.readActivity(stateFile, accountId)
+    if (document.entries.find((entry) => entry.id === activityId)?.plans?.some((plan) => plan.kind === WORKER_SCHEDULE_KIND)) return workers.planUndo(activityId, commandOptions)
     return prepareActivityUndo(activityId, commandOptions)
   }
 
@@ -726,6 +744,8 @@ export function createFleetService(options) {
     expectedDigest,
     commandOptions = {},
   ) {
+    const document = await dependencies.readActivity(stateFile, accountId)
+    if (document.entries.find((entry) => entry.id === activityId)?.plans?.some((plan) => plan.kind === WORKER_SCHEDULE_KIND)) return workers.applyUndo(activityId, expectedDigest, commandOptions)
     requiredString(expectedDigest, "Expected activity undo plan digest")
     return dependencies.withWriteLock(async () => {
       const preparation = await prepareActivityUndo(activityId, commandOptions)
@@ -806,6 +826,7 @@ export function createFleetService(options) {
 
   return Object.freeze({
     accountId,
+    workers,
     applyActivityUndo,
     applyAlignment,
     applyAlignments,

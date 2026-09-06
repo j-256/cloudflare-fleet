@@ -303,6 +303,19 @@ export class CloudflareApi {
     return envelope.result
   }
 
+  async workerCommand(command, payload, options = {}) {
+    if (!this.usesBackend) throw new Error("Worker diagnostics require a protected backend")
+    const response = await this.fetchImpl(new URL(`workers/${encodeURIComponent(command)}`, this.backendBaseUrl), {
+      headers: this.backendHeaders({ json: true }),
+      method: HTTP_METHOD.POST,
+      body: JSON.stringify(payload),
+      signal: options.signal,
+    })
+    const envelope = await response.json()
+    if (!response.ok || envelope.success !== true) throw new Error(envelope.errors?.[0]?.message || `Worker operation returned HTTP ${response.status}`)
+    return envelope.result
+  }
+
   async persistFleetIntent(document, options = {}) {
     if (!this.usesBackend) {
       throw new Error("Fleet intent persistence requires a protected backend")

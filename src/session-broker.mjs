@@ -5,6 +5,11 @@ import http from "node:http"
 import path from "node:path"
 
 import { atomicWriteFile } from "./atomic-file.mjs"
+import { CloudflareApi } from "./api.mjs"
+import { createWorkerService } from "./worker-service.mjs"
+import { localWorkerStore } from "./worker-store.mjs"
+import { withFleetExecutionLock } from "./execution-lock.mjs"
+import { runWorkerCommand, WORKER_READ_COMMANDS, WORKER_COMMAND_TIMEOUT_MS } from "./worker-command.mjs"
 import {
   HTTP_METHOD,
 } from "./constants.mjs"
@@ -473,6 +478,30 @@ export async function startSessionBroker(options) {
         return
       }
       const apiPath = relativePath.slice(apiPrefix.length)
+      if (apiPath.startsWith("workers/")) {
+        if (request.method !== HTTP_METHOD.POST) { errorResponse(response, 405, "Worker commands require POST"); return }
+        const command = apiPath.slice("workers/".length)
+        if (options.readOnly && !WORKER_READ_COMMANDS.includes(command)) { errorResponse(response, 403, "Worker writes are disabled"); return }
+        const service = createWorkerService({
+          now: options.now === undefined ? Date.now : () => options.now,
+          api: new CloudflareApi({ accountId: options.accountId, apiToken: options.apiToken, fetchImpl: cloudflareFetch }),
+          store: localWorkerStore(options.stateFile, options.accountId),
+          withWriteLock: (operation) => withFleetExecutionLock(options.stateFile, operation),
+          activityStore: {
+            read: () => readOperationActivityDocument(options.stateFile, options.accountId),
+            append: (entry) => appendOperationActivity(options.stateFile, options.accountId, entry),
+            finalize: (entry) => finalizeOperationActivity(options.stateFile, options.accountId, entry),
+          },
+        })
+        const abort = upstreamAbort(response, WORKER_COMMAND_TIMEOUT_MS)
+        try {
+          const payload = JSON.parse((await requestBody(request)).toString("utf8"))
+          const result = await runWorkerCommand(service, command, payload, { readOnly: options.readOnly, signal: abort.signal })
+          jsonResponse(response, 200, { result, success: true })
+        } catch (error) { errorResponse(response, error instanceof TypeError || error instanceof SyntaxError ? 400 : 409, error.message) }
+        finally { abort.dispose() }
+        return
+      }
       if (apiPath === "liveness") {
         if (request.method !== HTTP_METHOD.GET) {
           errorResponse(response, 405, "Liveness method is not allowed")

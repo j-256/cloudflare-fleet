@@ -36,6 +36,12 @@ import {
   identifierSchema,
   runtimeStatusInputSchema,
   runtimeStatusOutputSchema,
+  workerInspectionSchema,
+  workerIntentInputSchema,
+  workerHistorySchema,
+  workerVerificationSchema,
+  workerReportOutputSchema,
+  workerIncidentOutputSchema,
 } from "./interface-schemas.mjs"
 import {
   buildConfirmationForm,
@@ -145,12 +151,16 @@ const operationPlanOutputSchema = z.looseObject({
   kind: z.string().optional(),
   operations: z.array(operationOutputSchema),
   summary: z.string().optional(),
-  zoneId: identifierSchema,
-  zoneName: z.string(),
+  zoneId: identifierSchema.optional(),
+  zoneName: z.string().optional(),
+  worker: identifierSchema.optional(),
+  accountId: identifierSchema.optional(),
 })
 const operationPreviewOutputSchema = operationOutputSchema.extend({
-  zoneId: identifierSchema,
-  zoneName: z.string(),
+  zoneId: identifierSchema.optional(),
+  zoneName: z.string().optional(),
+  worker: identifierSchema.optional(),
+  accountId: identifierSchema.optional(),
 })
 const planSetOutputSchema = z.looseObject({
   digest: digestSchema,
@@ -193,7 +203,9 @@ const verificationGuardOutputSchema = z.looseObject({
   summary: z.string(),
   target: z.looseObject({
     kind: z.string(),
-    zoneId: identifierSchema,
+    zoneId: identifierSchema.optional(),
+    worker: identifierSchema.optional(),
+    accountId: identifierSchema.optional(),
   }),
   value: z.unknown(),
 })
@@ -713,7 +725,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -865,6 +877,40 @@ export function createFleetMcpServer(options = {}) {
       return toolResult(result, summary)
     }, secrets),
   )
+
+  const workerOutputSchema = z.union([accountOutputSchema, errorOutputSchema])
+  for (const [name, method, schema, description, readOnly] of [
+    ["inspect_worker", "inspect", workerInspectionSchema, "Inspect one exact Worker or Worker finding within a bounded past time window. Return redacted configuration, deployed versions, invocation-only page counts, separate HTTP statuses and explicit coverage. Pass the original start/end with the next cursor. Does not retrieve source or save an incident.", true],
+    ["record_worker_incident", "record", workerInspectionSchema, "Capture fresh scoped Worker evidence as an append-only local incident assessment, linking the prior assessment without erasing it. Does not change Cloudflare resources.", false],
+    ["list_worker_incidents", "history", workerHistorySchema, "Read paginated incident history, supersession links and explicit schedule intent for one Worker.", true],
+    ["verify_worker_incident", "verify", workerVerificationSchema, "Verify this Worker's recorded schedule change using only evidence after the propagation grace period, and save the new assessment. Distinguishes configuration acceptance, propagation pending, observed failures, awaiting evidence and observed health.", false],
+    ["plan_worker_intent", "planIntent", workerIntentInputSchema, "Plan revision-safe local schedule intent: disabled, exact desired set, or unmanaged. Include the owning configuration and reviewed reconciliation step; no arbitrary local file is edited.", true],
+  ]) {
+    server.registerTool(name, {
+      title: name.replaceAll("_", " "), description,
+      annotations: readOnly ? READ_ONLY_EXTERNAL_ANNOTATIONS : { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      inputSchema: schema,
+      outputSchema: method === "inspect" ? z.union([workerReportOutputSchema, errorOutputSchema])
+        : ["record", "verify"].includes(method) ? z.union([accountOutputSchema.extend({ record: workerIncidentOutputSchema }), errorOutputSchema])
+        : method === "history" ? z.union([accountOutputSchema.extend({ records: z.array(workerIncidentOutputSchema).max(50), nextOffset: z.number().int().nullable(), intent: z.json(), revision: z.string() }), errorOutputSchema])
+        : planOutputSchema,
+    }, safeToolHandler(async (input, context) => {
+      const result = await service.workers[method](input, { signal: context.mcpReq.signal })
+      return toolResult(result, result.summary || result.reason || `Worker diagnostics ${result.status}`)
+    }, secrets))
+  }
+  server.registerTool("apply_worker_intent", {
+    title: "Save reviewed Worker schedule intent",
+    description: "Persist only the exact reviewed schedule intent after signed interactive confirmation and revision checking. Does not modify deployment files or Cloudflare schedules.",
+    annotations: { ...APPLY_ANNOTATIONS, openWorldHint: false },
+    inputSchema: z.strictObject({ input: workerIntentInputSchema, planDigest: digestSchema }),
+    outputSchema: workerOutputSchema,
+  }, reviewedMutationHandler({
+    action: "worker-intent-apply", toolName: "apply_worker_intent", title: "Worker schedule intent",
+    request: (input) => input.input,
+    plan: (input, options) => service.workers.planIntent(input, options),
+    apply: (input, digest, options) => service.workers.applyIntent(input, digest, options),
+  }))
 
   server.registerTool(
     "audit_fleet",

@@ -272,6 +272,7 @@
           <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters &amp; sort</button>
           <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
           <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
+          <button class="button button-quiet" id="show-worker-diagnostics" type="button" aria-haspopup="dialog">Workers</button>
           <button class="button button-quiet activity-button" id="show-activity" type="button" aria-haspopup="dialog" aria-label="Activity 0: operation history, no entries">Activity <span id="activity-count">0</span></button>
           <button class="button button-quiet toolbar-refresh" id="refresh" type="button">Refresh full fleet</button>
         </nav>
@@ -1002,6 +1003,7 @@
     </form>
   </dialog>
 
+  <dialog id="worker-diagnostics-dialog" aria-labelledby="worker-diagnostics-title"></dialog>
   <dialog class="activity-dialog" id="activity-dialog" aria-labelledby="activity-title" aria-describedby="activity-summary">
     <div class="activity-workspace">
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close operation history">&times;</button>

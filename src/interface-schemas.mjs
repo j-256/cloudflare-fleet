@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { WORKER_NAME_PATTERN, WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
 
 import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
 import {
@@ -25,7 +26,85 @@ const ruleTargetSchema = {
   ruleId: identifierSchema,
 }
 
+export const workerNameSchema = z.string().regex(WORKER_NAME_PATTERN)
+export const workerIntentSchema = z.strictObject({
+  mode: z.enum(["disabled", "exact", "unmanaged"]),
+  crons: z.array(z.string().min(1).max(256)).max(10).default([]),
+  owner: z.string().min(1).max(1000).nullable().optional(),
+  reconciliation: z.string().min(1).max(1000).nullable().optional(),
+})
+export const workerInspectionSchema = z.strictObject({
+  worker: workerNameSchema.optional(),
+  findingId: z.string().max(256).optional(),
+  start: z.iso.datetime({ offset: true }).optional(),
+  end: z.iso.datetime({ offset: true }).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z.number().int().min(1).max(200).default(50),
+  zoneIds: z.array(identifierSchema).max(20).optional(),
+  logs: z.boolean().default(true),
+})
+export const workerIntentInputSchema = z.strictObject({ worker: workerNameSchema, intent: workerIntentSchema, expectedRevision: z.string().max(64) })
+export const workerHistorySchema = z.strictObject({ worker: workerNameSchema, offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() })
+export const workerVerificationSchema = z.strictObject({ worker: workerNameSchema, activityId: identifierSchema, start: z.iso.datetime({ offset: true }).optional(), end: z.iso.datetime({ offset: true }).optional(), limit: z.number().int().min(1).max(200).optional(), zoneIds: z.array(identifierSchema).max(20).optional() })
+
+const workerReadSchema = (value) => z.looseObject({
+  status: z.enum(["observed", "unknown", "not-requested"]),
+  readAt: z.string().optional(),
+  reason: z.string().optional(),
+  value: value.nullable(),
+})
+const workerSampleSchema = z.strictObject({
+  id: identifierSchema,
+  timestamp: z.string(),
+  eventType: z.string(),
+  outcome: z.string(),
+  version: identifierSchema.nullable(),
+  servingVersion: z.boolean().nullable(),
+  httpStatus: z.number().int().nullable(),
+  cron: z.string().max(256).nullable(),
+  truncated: z.boolean(),
+})
+export const workerReportOutputSchema = z.looseObject({
+  accountId: identifierSchema,
+  worker: workerNameSchema,
+  schemaVersion: z.literal(1),
+  status: z.literal("ok"),
+  readAt: z.string(),
+  summary: z.string(),
+  selector: z.looseObject({ worker: workerNameSchema, start: z.string(), end: z.string(), limit: z.number().int().max(200) }),
+  assessment: z.looseObject({ findingId: z.string(), status: z.enum(["unknown", "mismatch", "consistent"]), confidence: z.string(), missingChecks: z.array(z.string()), recommendedActions: z.array(z.string()), observations: z.json(), coverage: z.json(), inferredCause: z.string().nullable() }),
+  deployment: workerReadSchema(z.json()),
+  schedules: workerReadSchema(z.array(z.string())),
+  versions: z.array(z.json()).max(10),
+  ingress: workerReadSchema(z.json()),
+  logging: workerReadSchema(z.json()),
+  domains: workerReadSchema(z.json()),
+  routes: z.array(z.json()).max(20),
+  logs: workerReadSchema(z.strictObject({
+    invocations: z.number().int().nonnegative(),
+    groups: z.array(z.strictObject({ eventType: z.string(), outcome: z.string(), version: z.string().nullable(), servingVersion: z.boolean().nullable(), count: z.number().int().positive() })).max(200),
+    httpStatuses: z.array(z.strictObject({ status: z.number().int().nullable(), version: z.string().nullable(), servingVersion: z.boolean().nullable(), count: z.number().int().positive() })).max(200),
+    samples: z.array(workerSampleSchema).max(200),
+    errorSignatures: z.array(z.enum(["missing-scheduled-handler", "missing-fetch-handler"])),
+    ignoredRecords: z.number().int().nonnegative(),
+    nextCursor: z.string().nullable(),
+    limitReached: z.boolean(),
+  })),
+  limitations: z.array(z.string()),
+  intent: workerIntentSchema,
+})
+export const workerIncidentOutputSchema = z.strictObject({
+  id: identifierSchema,
+  worker: workerNameSchema,
+  findingId: z.string(),
+  recordedAt: z.string(),
+  supersedes: identifierSchema.nullable(),
+  activityId: identifierSchema.nullable(),
+  report: workerReportOutputSchema,
+})
+
 export const fleetChangeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal(WORKER_SCHEDULE_KIND), worker: workerNameSchema, intent: workerIntentSchema, findingId: z.string().max(256).optional() }),
   z.strictObject({
     desired: desiredSchema,
     kind: z.literal("zone-setting-update"),

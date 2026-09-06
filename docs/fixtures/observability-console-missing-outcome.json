@@ -1,0 +1,11 @@
+{
+  "$metadata": { "id": "synthetic-console", "type": "cf-worker-log" },
+  "$workers": {
+    "scriptName": "example-worker",
+    "requestId": "synthetic-invocation",
+    "eventType": "scheduled",
+    "scriptVersion": { "id": "synthetic-version" }
+  },
+  "timestamp": 1788263999000,
+  "source": { "message": "Handler does not export a scheduled() function" }
+}

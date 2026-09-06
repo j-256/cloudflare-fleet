@@ -5,8 +5,12 @@ import {
   SURFACES,
 } from "./constants.mjs"
 import { dnssecStatusRequestSatisfied } from "./dnssec.mjs"
+import { activeDeployment } from "./worker-inspection.mjs"
+import { stableString } from "./normalize.mjs"
+import { scheduleSet, workerPath } from "./worker-triggers.mjs"
 
 export const WRITE_VERIFICATION_KIND = Object.freeze({
+  WORKER_SCHEDULES: "worker-schedules",
   DNS_RECORD: "dns-record",
   EMAIL_RULE: "email-rule",
   RULESET: "ruleset",
@@ -63,6 +67,12 @@ function emailDnsTargets(zoneId) {
 
 export function verificationTargetsForOperation(operation) {
   const segments = operationSegments(operation)
+  if (segments[0] === "accounts" && segments[2] === "workers"
+    && segments[3] === "scripts" && segments[5] === "schedules"
+    && segments.length === 6 && operation.method === HTTP_METHOD.PUT) {
+    if (!operation.deployment?.id) throw new TypeError("Schedule verification requires deployment identity")
+    return [{ kind: WRITE_VERIFICATION_KIND.WORKER_SCHEDULES, accountId: segments[1], worker: segments[4], deployment: operation.deployment, expectedSchedules: scheduleSet(operation.body) }]
+  }
   if (segments[0] !== "zones" || !segments[1]) {
     throw new Error(`Unsupported write verification path: ${operation.path}`)
   }
@@ -165,6 +175,19 @@ function zoneApiPath(zoneId, ...segments) {
 }
 
 export async function readWriteVerificationTarget(api, target, options = {}) {
+  if (target.kind === WRITE_VERIFICATION_KIND.WORKER_SCHEDULES) {
+    if (target.accountId !== api.accountId) throw new TypeError("Worker verification account mismatch")
+    const [schedulesRead, deploymentRead] = await Promise.all([
+      api.request(workerPath(target.accountId, target.worker, "schedules"), { signal: options.signal }),
+      api.request(workerPath(target.accountId, target.worker, "deployments"), { signal: options.signal }),
+    ])
+    const result = { schedules: scheduleSet(schedulesRead.result), deployment: activeDeployment(deploymentRead.result) }
+    if (stableString(result.schedules) !== stableString(target.expectedSchedules)
+      || stableString(result.deployment) !== stableString(target.deployment)) {
+      throw new Error("Worker schedules or deployment drifted from the reviewed result")
+    }
+    return { target, response: { status: schedulesRead.status, result } }
+  }
   if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
     const surface = SURFACE_BY_ID.get(target.surfaceId)
     if (!surface) throw new Error(`Unknown verification surface ${target.surfaceId}`)
@@ -259,6 +282,7 @@ export async function readWriteVerificationTarget(api, target, options = {}) {
 }
 
 function verificationTargetKey(target) {
+  if (target.kind === WRITE_VERIFICATION_KIND.WORKER_SCHEDULES) return `${target.accountId}:${target.worker}:${target.kind}`
   if (target.kind === WRITE_VERIFICATION_KIND.SURFACE) {
     return `${target.zoneId}:${target.kind}:${target.surfaceId}`
   }
