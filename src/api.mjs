@@ -7,6 +7,7 @@ import {
 
 export const BROKER_SESSION_HEADER = "X-Cloudflare-Fleet-Session"
 export const FLEET_BOOTSTRAP_ERROR_GLOBAL = "__CLOUDFLARE_FLEET_BOOTSTRAP_ERROR__"
+export const RETRY_AFTER_HEADER = "Retry-After"
 
 const API_BASE = new URL(API_BASE_URL)
 const DEFAULT_READ_THROTTLE_DELAY_MS = 1000
@@ -144,13 +145,16 @@ export class CloudflareApi {
     let response
     let throttleRetries = 0
     while (true) {
-      if (method === HTTP_METHOD.GET) {
-        await abortableDelay(
-          Math.max(0, this.readThrottleUntil - Date.now()),
-          options.signal,
-        )
-      }
       try {
+        if (method === HTTP_METHOD.GET) {
+          while (this.readThrottleUntil > Date.now() && !options.signal?.aborted) {
+            await abortableDelay(
+              this.readThrottleUntil - Date.now(),
+              options.signal,
+            )
+          }
+        }
+        options.signal?.throwIfAborted()
         response = await this.fetchImpl(url, request)
       } catch (error) {
         throw new CloudflareApiError(`Network request failed for ${method} ${cloudflareUrl.pathname}`, {
@@ -161,7 +165,7 @@ export class CloudflareApi {
       }
       if (method !== HTTP_METHOD.GET || response.status !== 429) break
       const retryAt = Date.now()
-        + retryAfterDelay(response.headers.get("Retry-After"))
+        + retryAfterDelay(response.headers.get(RETRY_AFTER_HEADER))
       this.readThrottleUntil = Math.max(this.readThrottleUntil, retryAt)
       if (throttleRetries >= MAX_READ_THROTTLE_RETRIES) break
       throttleRetries += 1

@@ -148,7 +148,7 @@
       </div>
       <div class="callout">
         <strong>Throttle-aware reads</strong>
-        <p>Cloudflare GET requests honor Retry-After after HTTP 429 responses. An exhausted throttle aborts inventory collection instead of becoming an ordinary coverage gap, while mutation requests are never automatically retried.</p>
+        <p>Cloudflare GET requests honor Retry-After after HTTP 429 responses. Both dashboard proxies preserve the upstream delay. Concurrent reads through the same API client recheck the shared cooldown before dispatch, so another response can extend a wait; cancellation stops waiting reads before another request. CLI and MCP reads use the same bounded retry behavior. An exhausted throttle aborts inventory collection instead of becoming an ordinary coverage gap, while mutation requests are never automatically retried.</p>
       </div>
       <div class="callout">
         <strong>No raw control-plane tool</strong>

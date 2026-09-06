@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { promises as fs } from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import process from "node:process"
 import test from "node:test"
 
@@ -13,6 +16,8 @@ import {
   runFleetMcpMain,
 } from "../src/mcp.mjs"
 import { createEmptyFleetIntentDocument } from "../src/fleet-intent.mjs"
+import { CloudflareApi } from "../src/api.mjs"
+import { collectFleetAudit } from "../src/audit.mjs"
 
 const DIGEST = `sha256:${"a".repeat(64)}`
 const DIFFERENT_DIGEST = `sha256:${"b".repeat(64)}`
@@ -576,6 +581,56 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   assert.equal(runtime.annotations.readOnlyHint, true)
   assert.match(JSON.stringify(runtime.outputSchema), /"checks"/)
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
+})
+
+test("MCP audit recovers from throttling and reports exhausted retries as an error", async (context) => {
+  for (const exhausted of [false, true]) {
+    await context.test(exhausted ? "exhausted" : "recovered", async (subcontext) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "fleet-mcp-throttle-"))
+      subcontext.after(() => fs.rm(root, { force: true, recursive: true }))
+      let zoneReads = 0
+      const api = new CloudflareApi({
+        accountId: "account-one",
+        apiToken: SECRET,
+        fetchImpl: async (url, request) => {
+          assert.equal(request.method, "GET")
+          const zones = new URL(url).pathname === "/client/v4/zones"
+          if (zones) zoneReads += 1
+          const limited = zones && (exhausted || zoneReads === 1)
+          return new Response(JSON.stringify(limited
+            ? { errors: [{ message: "Rate limited" }], success: false }
+            : { result: [], success: true }), {
+            headers: { "Content-Type": "application/json", "Retry-After": "0" },
+            status: limited ? 429 : 200,
+          })
+        },
+      })
+      const { client } = await connectedFixture(subcontext, {
+        auditFleet: (options) => collectFleetAudit({
+          ...options,
+          api,
+          policyFile: path.join(root, "policy.json"),
+          stateFile: path.join(root, "state.json"),
+        }),
+      })
+      const result = await client.callTool({ arguments: {}, name: "audit_fleet" })
+
+      assert.equal(zoneReads, exhausted ? 4 : 2)
+      if (exhausted) {
+        assert.equal(result.isError, true)
+        assert.equal(result.structuredContent.status, "error")
+        assert.equal(result.structuredContent.error.name, "CloudflareApiError")
+        assert.match(result.structuredContent.error.message, /Rate limited/)
+        assert.equal(Object.hasOwn(result.structuredContent, "report"), false)
+      } else {
+        assert.notEqual(result.isError, true)
+        assert.equal(result.structuredContent.status, "ok")
+        assert.equal(result.structuredContent.report.accountId, "account-one")
+        assert.equal(result.structuredContent.report.summary.zones, 0)
+      }
+      assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
+    })
+  }
 })
 
 test("MCP read tools return structured service and audit results", async (context) => {

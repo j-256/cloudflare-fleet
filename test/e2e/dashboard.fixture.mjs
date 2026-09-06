@@ -283,10 +283,11 @@ function denseRuleInventory() {
   return inventory
 }
 
-function jsonResponse(status, payload) {
+function jsonResponse(status, payload, headers = {}) {
   return new Response(JSON.stringify(payload), {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      ...headers,
     },
     status,
   })
@@ -341,7 +342,7 @@ function fakeCloudflareTransport(inventory) {
       return jsonResponse(failure.status, {
         errors: [{ message: failure.message }],
         success: false,
-      })
+      }, failure.headers)
     }
 
     if (relativePath === ZONES_PATH && method === "GET") {
@@ -353,6 +354,12 @@ function fakeCloudflareTransport(inventory) {
     }
 
     if (method === "GET") {
+      if (relativePath === `accounts/${ACCOUNT_ID}/email/routing/addresses`) {
+        return jsonResponse(200, {
+          result: structuredClone(inventory.account.emailAddresses.result),
+          success: true,
+        })
+      }
       const accountSurface = ACCOUNT_SURFACES.find(
         (surface) => surface.path(ACCOUNT_ID).split("?", 1)[0] === relativePath,
       )
@@ -585,6 +592,7 @@ function fakeCloudflareTransport(inventory) {
     },
     queueFailure(failure) {
       failures.push({
+        headers: failure.headers || {},
         message: failure.message || "Simulated upstream failure",
         method: failure.method,
         path: failure.path || "",

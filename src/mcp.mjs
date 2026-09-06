@@ -232,7 +232,7 @@ const auditOutputSchema = z.union([
     status: z.string(),
   }),
   errorOutputSchema,
-])
+]).describe("Completed audit or operational error; exhausted HTTP 429 retries return an error without a partial audit report")
 const candidatesOutputSchema = z.union([
   accountOutputSchema.extend({
     candidates: z.array(candidateOutputSchema),
@@ -713,7 +713,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
