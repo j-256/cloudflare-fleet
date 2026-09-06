@@ -300,3 +300,58 @@ export function previewIntentAdoption(document, inventory, matrix, entries) {
     },
   }
 }
+
+export const INTENT_ADOPTION_GAP_KIND = Object.freeze({
+  PRESENCE: "presence",
+  VALUE: "value",
+})
+
+function presenceConsensusRatio(candidate) {
+  const total = candidate.presentCount + candidate.missingCount
+  return total === 0 ? 0 : candidate.presentCount / total
+}
+
+export function buildAdoptionGapsView(candidates) {
+  const perZoneOutlierTally = {}
+  const presenceGaps = []
+  const valueGaps = []
+  const tally = (zones) => {
+    for (const zone of zones) {
+      perZoneOutlierTally[zone] = (perZoneOutlierTally[zone] || 0) + 1
+    }
+  }
+  for (const candidate of candidates) {
+    if (candidate.classification === INTENT_ADOPTION_CLASSIFICATION.ZONE_SPECIFIC
+      || candidate.classification === INTENT_ADOPTION_CLASSIFICATION.TIED_VARIANTS) {
+      continue
+    }
+    if (candidate.missingZones.length > 0) {
+      presenceGaps.push({
+        candidate,
+        gapKind: INTENT_ADOPTION_GAP_KIND.PRESENCE,
+        outlierZones: candidate.missingZones,
+      })
+      tally(candidate.missingZones)
+      continue
+    }
+    const outlierZones = candidate.variants.slice(1).flatMap((variant) => variant.zones)
+    if (outlierZones.length === 0) continue
+    valueGaps.push({
+      candidate,
+      gapKind: INTENT_ADOPTION_GAP_KIND.VALUE,
+      outlierZones,
+    })
+    tally(outlierZones)
+  }
+  presenceGaps.sort((left, right) => (
+    presenceConsensusRatio(right.candidate) - presenceConsensusRatio(left.candidate)
+    || right.candidate.presentCount - left.candidate.presentCount
+    || left.candidate.label.localeCompare(right.candidate.label)
+  ))
+  valueGaps.sort((left, right) => (
+    (right.candidate.variants[0].count / right.candidate.presentCount)
+    - (left.candidate.variants[0].count / left.candidate.presentCount)
+    || left.candidate.label.localeCompare(right.candidate.label)
+  ))
+  return { perZoneOutlierTally, presenceGaps, valueGaps }
+}

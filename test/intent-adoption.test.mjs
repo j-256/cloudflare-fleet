@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  buildAdoptionGapsView,
   buildIntentAdoptionCandidates,
   createIntentAdoptionPolicy,
   INTENT_ADOPTION_CLASSIFICATION,
@@ -372,4 +373,29 @@ test("adoption candidates name present and missing zones", () => {
     "gamma.example",
   ])
   assert.deepEqual(strongVariants.get("off"), ["delta.example"])
+})
+
+test("adoption gaps view splits presence/value gaps, ranks them, tallies outliers", () => {
+  const { document, inventory, matrix } = fixture()
+  const view = buildAdoptionGapsView(
+    buildIntentAdoptionCandidates(document, inventory, matrix),
+  )
+
+  // "missing" is the only presence gap; "tied"/"unique" are excluded.
+  assert.deepEqual(view.presenceGaps.map((gap) => gap.candidate.key), ["missing"])
+  assert.deepEqual(view.presenceGaps[0].outlierZones, [
+    "beta.example",
+    "gamma.example",
+    "delta.example",
+  ])
+
+  // value gaps ranked by majority ratio: strong (3/4) before split (2/4).
+  assert.deepEqual(view.valueGaps.map((gap) => gap.candidate.key), ["strong", "split"])
+
+  // delta is an outlier in missing+strong+split, gamma in missing+split, beta in missing.
+  assert.deepEqual(view.perZoneOutlierTally, {
+    "delta.example": 3,
+    "gamma.example": 2,
+    "beta.example": 1,
+  })
 })
