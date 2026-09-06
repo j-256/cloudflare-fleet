@@ -566,6 +566,7 @@ test("unified CLI delegates dashboard arguments through the canonical command", 
   let arguments_
   const result = await runFleetCommand({
     argv: ["dashboard", "-rf", "--debug-port=9224"],
+    environment: {},
     dashboardRunner(argv) {
       arguments_ = argv
       return "launched"

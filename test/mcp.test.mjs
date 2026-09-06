@@ -620,6 +620,7 @@ test("MCP audit recovers from throttling and reports exhausted retries as an err
         auditFleet: (options) => collectFleetAudit({
           ...options,
           api,
+          environment: {},
           policyFile: path.join(root, "policy.json"),
           stateFile: path.join(root, "state.json"),
         }),
