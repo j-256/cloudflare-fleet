@@ -347,3 +347,29 @@ test("optional adoption preserves sparse observed coverage without actionable ho
   assert.equal(preview.summary.actionableCells, 0)
   assert.equal(preview.summary.matchingCells, 4)
 })
+
+test("adoption candidates name present and missing zones", () => {
+  const { document, inventory, matrix } = fixture()
+  const byKey = new Map(
+    buildIntentAdoptionCandidates(document, inventory, matrix)
+      .map((candidate) => [candidate.key, candidate]),
+  )
+
+  assert.deepEqual(byKey.get("missing").presentZones, ["alpha.example"])
+  assert.deepEqual(byKey.get("missing").missingZones, [
+    "beta.example",
+    "gamma.example",
+    "delta.example",
+  ])
+  assert.deepEqual(byKey.get("strong").missingZones, [])
+
+  const strongVariants = new Map(
+    byKey.get("strong").variants.map((variant) => [variant.display, variant.zones]),
+  )
+  assert.deepEqual(strongVariants.get("on"), [
+    "alpha.example",
+    "beta.example",
+    "gamma.example",
+  ])
+  assert.deepEqual(strongVariants.get("off"), ["delta.example"])
+})
