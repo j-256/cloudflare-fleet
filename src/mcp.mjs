@@ -31,6 +31,8 @@ import { createConfiguredFleetService } from "./configured-fleet-service.mjs"
 import {
   activityUndoInputSchema,
   activityRecoverySchema,
+  alignmentCoverageSchema,
+  commandDiagnosticsSchema,
   digestSchema,
   fleetChangeSchema,
   fleetIntentDocumentSchema,
@@ -52,6 +54,7 @@ import {
   operationReviewItems,
 } from "./mcp-confirmation.mjs"
 import { stableString } from "./normalize.mjs"
+import { redactDiagnostics } from "./command-diagnostics.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
 import { createProgressReporter } from "./progress.mjs"
@@ -131,12 +134,17 @@ const errorOutputSchema = z.looseObject({
   error: z.looseObject({
     message: z.string(),
     name: z.string(),
+    diagnostics: commandDiagnosticsSchema.optional(),
   }),
   schemaVersion: z.number().int(),
   status: z.string(),
 })
 const accountOutputSchema = z.looseObject({
   accountId: identifierSchema,
+  diagnostics: z.strictObject({
+    kind: z.literal("incomplete-inventory"), requestId: z.string().uuid(),
+    command: z.string().max(64), elapsedMs: z.number().int().nonnegative(),
+  }).optional(),
   schemaVersion: z.number().int(),
   status: z.string(),
 })
@@ -186,6 +194,7 @@ const assessmentOutputSchema = z.looseObject({
   })),
 })
 const candidateOutputSchema = z.looseObject({
+  coverage: alignmentCoverageSchema.optional(),
   assessment: assessmentOutputSchema,
   facet: z.looseObject({
     category: z.string(),
@@ -257,6 +266,10 @@ const candidatesOutputSchema = z.union([
 ])
 const planOutputSchema = z.union([
   accountOutputSchema.extend({
+    coverage: alignmentCoverageSchema.optional(),
+    alignments: z.array(z.looseObject({
+      coverage: alignmentCoverageSchema.optional(), reason: z.string(), status: z.string(),
+    })).max(20).optional(),
     planSet: planSetOutputSchema.nullable(),
     reason: z.string(),
   }),
@@ -264,6 +277,10 @@ const planOutputSchema = z.union([
 ])
 const applyOutputSchema = z.union([
   accountOutputSchema.extend({
+    coverage: alignmentCoverageSchema.optional(),
+    alignments: z.array(z.looseObject({
+      coverage: alignmentCoverageSchema.optional(), reason: z.string(), status: z.string(),
+    })).max(20).optional(),
     applied: z.boolean().optional(),
     execution: z.looseObject({
       completed: z.number().int(),
@@ -404,6 +421,8 @@ function errorEnvelope(error, secrets) {
     result.error.actualDigest = error.actualDigest
     result.error.expectedDigest = error.expectedDigest
   }
+  const diagnostics = commandDiagnosticsSchema.safeParse(error?.diagnostics)
+  if (diagnostics.success) result.error.diagnostics = redactDiagnostics(diagnostics.data, secrets)
   return result
 }
 
@@ -732,7 +751,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )

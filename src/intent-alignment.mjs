@@ -82,6 +82,13 @@ export const INTENT_ALIGNMENT_TARGET_KIND = Object.freeze({
   ZONE_ALIAS: "zone-alias",
 })
 
+export class UnsupportedIntentAlignmentFacetError extends Error {
+  constructor(message = "This facet has no scoped live read for intent alignment") {
+    super(message)
+    this.name = "UnsupportedIntentAlignmentFacetError"
+  }
+}
+
 function cloneJsonValue(value) {
   return value === undefined ? undefined : structuredClone(value)
 }
@@ -373,8 +380,8 @@ function alignmentForCell(row, cell) {
 }
 
 function alignmentReason(targets, blockers, actionableCount, unresolved) {
-  if (actionableCount === 0) return "No unacknowledged fleet intent drift is present"
   if (unresolved) return "One or more policies reference zones or facets outside the loaded fleet"
+  if (actionableCount === 0) return "No unacknowledged fleet intent drift is present"
   if (blockers.length > 0) {
     const details = blockers
       .map((entry) => `${entry.zoneName}: ${entry.reason}`)
@@ -460,6 +467,7 @@ export function intentAlignmentReadRequirement(row) {
     })
   }
   if (RULE_CATEGORIES.has(row.category)) {
+    if (!row.phase) throw new UnsupportedIntentAlignmentFacetError("Ruleset intent alignment requires an explicit phase")
     return inventoryRead({
       includeEmailAddresses: false,
       includeRuleDetails: true,
@@ -468,7 +476,7 @@ export function intentAlignmentReadRequirement(row) {
       surfaceIds: ["rulesets"],
     })
   }
-  throw new Error("This facet has no scoped live read for intent alignment")
+  throw new UnsupportedIntentAlignmentFacetError()
 }
 
 function resultFor(zone, surfaceId) {

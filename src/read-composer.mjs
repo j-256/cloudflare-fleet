@@ -433,7 +433,7 @@ async function readRulesetPhase(api, requirement, options = {}) {
 
 async function executeComposedReadPlan(api, plan, options = {}) {
   const inventoryPromise = plan.inventory
-    ? loadInventory(api, {
+    ? (options.loadInventory || loadInventory)(api, {
         ...plan.inventory,
         onProgress: options.onProgress,
         signal: options.signal,

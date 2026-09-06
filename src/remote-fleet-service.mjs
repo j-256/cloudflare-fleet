@@ -2,6 +2,7 @@ import { selectFleetBackend, hostedCredentialPresence } from "./backend-selectio
 import { FleetConfigurationError } from "./cli-contract.mjs"
 import { FLEET_COMMAND_VERSION, fleetCommandIsReadOnly } from "./fleet-command.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
+import { commandDiagnosticsSchema } from "./interface-schemas.mjs"
 
 const RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 110000
@@ -73,6 +74,13 @@ export function createRemoteFleetService(options = {}) {
     try { envelope = JSON.parse(new TextDecoder().decode(bytes)) } catch { throw new Error("Hosted Fleet returned invalid JSON") }
     if (!response.ok || envelope.success !== true) {
       if (envelope.error?.name === "AlignmentPlanChangedError") throw new AlignmentPlanChangedError(input.planDigest, envelope.error.actualDigest || null)
+      const diagnostics = commandDiagnosticsSchema.safeParse(envelope.error?.diagnostics)
+      if (envelope.error?.name === "FleetCommandError" && diagnostics.success) {
+        const error = new Error(`Hosted Fleet command failed (HTTP ${response.status}): ${envelope.errors?.[0]?.message || "Inspect hosted diagnostics"}`)
+        error.name = "FleetCommandError"
+        error.diagnostics = diagnostics.data
+        throw error
+      }
       throw new Error(`Hosted Fleet command failed (HTTP ${response.status}): ${envelope.errors?.[0]?.message || "Inspect hosted activity and prepare a fresh plan"}`)
     }
     if (envelope.accountId !== backend.accountId || envelope.version !== FLEET_COMMAND_VERSION) throw new Error("Hosted Fleet response account or protocol version does not match the selected backend")

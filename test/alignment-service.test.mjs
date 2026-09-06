@@ -383,7 +383,7 @@ test("batch alignment rejects selectors with overlapping write targets", async (
   assert.match(result.reason, /overlapping writes/)
 })
 
-test("alignment preparation reports deterministic blockers without a live read", async () => {
+test("alignment preparation checks fresh reads before reporting adapter blockers", async () => {
   const fixture = settingFixture({ bravoEditable: false })
   let reads = 0
   const result = await prepareIntentAlignment(
@@ -399,7 +399,7 @@ test("alignment preparation reports deterministic blockers without a live read",
     },
   )
 
-  assert.equal(reads, 0)
+  assert.equal(reads, 1)
   assert.equal(result.status, ALIGNMENT_PREPARATION_STATUS.BLOCKED)
   assert.match(result.reason, /no direct exact-value alignment adapter/)
 })
@@ -424,7 +424,7 @@ test("alignment preparation rejects fleet membership changes", async () => {
   )
 })
 
-test("alignment preparation rejects incomplete scoped surface reads", async () => {
+test("alignment preparation blocks incomplete scoped surface reads", async () => {
   const fixture = settingFixture()
   const incomplete = structuredClone(fixture.inventory)
   incomplete.zones[1].surfaces.settings = {
@@ -434,16 +434,18 @@ test("alignment preparation rejects incomplete scoped surface reads", async () =
     status: 403,
   }
 
-  await assert.rejects(
-    prepareIntentAlignment(
-      fixture.api,
-      fixture.intent,
-      { policyId: fixture.policy.id },
-      {
-        baselineInventory: fixture.inventory,
-        executeReadPlan: async () => ({ inventory: incomplete }),
-      },
-    ),
-    /bravo\.example: settings/,
+  const result = await prepareIntentAlignment(
+    fixture.api,
+    fixture.intent,
+    { policyId: fixture.policy.id },
+    {
+      baselineInventory: fixture.inventory,
+      executeReadPlan: async () => ({ inventory: incomplete }),
+    },
   )
+  assert.equal(result.status, "blocked")
+  assert.equal(result.planSet, null)
+  assert.equal(result.coverage.complete, false)
+  assert.equal(result.coverage.failures[0].status, 403)
+  assert.match(result.reason, /bravo\.example: settings/)
 })

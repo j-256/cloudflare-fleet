@@ -34,6 +34,8 @@ import {
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 import { describeZoneAliasPolicy } from "./zone-alias-intent.mjs"
 import { runWorkerCommand, WORKER_COMMANDS } from "./worker-command.mjs"
+import { commandDiagnosticsSchema } from "./interface-schemas.mjs"
+import { redactDiagnostics } from "./command-diagnostics.mjs"
 
 const CLI_FORMAT = Object.freeze({
   JSON: "json",
@@ -1315,6 +1317,13 @@ function errorResult(error, environment) {
   if (error instanceof AlignmentPlanChangedError) {
     result.error.actualDigest = error.actualDigest
     result.error.expectedDigest = error.expectedDigest
+  }
+  const diagnostics = commandDiagnosticsSchema.safeParse(error?.diagnostics)
+  if (diagnostics.success) {
+    result.error.diagnostics = redactDiagnostics(diagnostics.data, [
+      environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID,
+      environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET, environment.CLOUDFLARE_FLEET_ACCESS_TOKEN,
+    ])
   }
   return result
 }

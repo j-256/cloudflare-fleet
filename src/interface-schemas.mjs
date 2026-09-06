@@ -14,6 +14,38 @@ import {
 
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+export const commandDiagnosticsSchema = z.strictObject({
+  command: z.string().max(64),
+  deadlineMs: z.number().int().nonnegative(),
+  elapsedMs: z.number().int().nonnegative(),
+  error: z.strictObject({
+    name: z.enum(["Error", "CloudflareApiError", "TypeError", "RangeError", "AbortError", "TimeoutError"]),
+    frames: z.array(z.strictObject({ file: z.string().max(256), line: z.number().int().positive(), column: z.number().int().positive() })).max(8),
+  }).optional(),
+  kind: z.enum(["command-timeout", "upstream-timeout", "cancelled", "upstream-error", "internal-error"]),
+  progress: z.strictObject({
+    stage: z.enum(["account-surfaces", "surfaces", "rulesets", "writes", "verification"]),
+    completed: z.number().int().nullable(), total: z.number().int().nullable(),
+  }).nullable(),
+  readOnly: z.boolean(),
+  requestId: z.string().uuid().optional(),
+  upstream: z.strictObject({
+    abortKind: z.enum(["timeout", "cancelled"]).nullable(),
+    elapsedMs: z.number().int().nonnegative().nullable(),
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).nullable(),
+    path: z.string().max(1024).nullable(),
+    status: z.number().int().nullable(),
+  }).nullable(),
+})
+export const alignmentCoverageSchema = z.strictObject({
+  complete: z.boolean(), failureCount: z.number().int().nonnegative(), truncated: z.boolean(),
+  failures: z.array(z.strictObject({
+    zoneId: identifierSchema.nullable(), zoneName: z.string().nullable(),
+    surfaceId: identifierSchema, phase: identifierSchema.optional(), rulesetId: identifierSchema.optional(),
+    errorKind: z.enum(["timeout", "cancelled", "read-failed", "not-read"]),
+    status: z.number().int().nullable(),
+  })).max(50),
+})
 export const activityRecoverySchema = z.strictObject({
   activityId: identifierSchema,
   reason: z.string().trim().min(10).max(1000),

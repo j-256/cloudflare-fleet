@@ -5,6 +5,7 @@ import {
 } from "./interface-schemas.mjs"
 import { normalizeAlignmentSelector, normalizeAlignmentSelectors } from "./alignment-service.mjs"
 import { runWorkerCommand, WORKER_COMMANDS, WORKER_READ_COMMANDS } from "./worker-command.mjs"
+import { FleetCommandError } from "./command-diagnostics.mjs"
 
 export const FLEET_COMMAND_VERSION = 1
 export const FLEET_COMMAND_TIMEOUT_MS = 90000
@@ -78,10 +79,25 @@ export async function runFleetServiceCommand(service, value, options = {}) {
   const { command, accountId, input } = validateFleetCommand(value)
   if (accountId !== service.accountId) throw new TypeError("Fleet command account does not match the hosted account")
   if (options.readOnly && !fleetCommandIsReadOnly(command)) throw new Error("Hosted Fleet writes are disabled")
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(FLEET_COMMAND_TIMEOUT_MS)])
-    : AbortSignal.timeout(FLEET_COMMAND_TIMEOUT_MS)
-  const context = { signal, onProgress: options.onProgress }
+  const startedAt = Date.now()
+  const deadlineMs = options.timeoutMs ?? FLEET_COMMAND_TIMEOUT_MS
+  const deadline = AbortSignal.timeout(deadlineMs)
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline
+  let progress = null
+  const context = { signal, onProgress(value) { progress = value; options.onProgress?.(value) } }
+  try {
+    signal.throwIfAborted()
+    return await dispatchFleetServiceCommand(service, command, accountId, input, context, options)
+  } catch (error) {
+    if (error instanceof TypeError || ["AlignmentPlanChangedError", "FleetIntentChangedError", "HostedExecutionConflictError"].includes(error?.name)) throw error
+    throw new FleetCommandError(error, {
+      command, deadlineMs, elapsedMs: Date.now() - startedAt, progress,
+      readOnly: fleetCommandIsReadOnly(command), signal,
+    })
+  }
+}
+
+async function dispatchFleetServiceCommand(service, command, accountId, input, context, options) {
   if (command.startsWith("worker-")) return runWorkerCommand(service.workers, command.slice(7), input, { ...context, readOnly: options.readOnly })
   switch (command) {
     case "status": return { ...(await service.status()), schemaVersion: 1, status: "ok", accountId, backend: "hosted", commandVersion: FLEET_COMMAND_VERSION, readOnly: options.readOnly === true }

@@ -248,7 +248,8 @@ test("fleet service misses a cached baseline after intent changes", async () => 
   await service.listAlignments()
   await service.planAlignment(SELECTOR)
 
-  assert.equal(calls.loadInventory, 2)
+  assert.equal(calls.loadInventory, 1)
+  assert.deepEqual(calls.baselineInventories, [null])
 })
 
 test("fleet service misses an expired planning baseline", async () => {
@@ -262,7 +263,8 @@ test("fleet service misses an expired planning baseline", async () => {
   clock = 11
   await service.planAlignment(SELECTOR)
 
-  assert.equal(calls.loadInventory, 2)
+  assert.equal(calls.loadInventory, 1)
+  assert.deepEqual(calls.baselineInventories, [null])
 })
 
 test("fleet service plans and applies one digest-bound alignment batch", async () => {
@@ -278,7 +280,7 @@ test("fleet service plans and applies one digest-bound alignment batch", async (
   assert.deepEqual(plan.selectors, BATCH_SELECTORS)
   assert.equal(result.status, OPERATION_ACTIVITY_STATUS.VERIFIED)
   assert.deepEqual(result.selectors, BATCH_SELECTORS)
-  assert.equal(calls.loadInventory, 1)
+  assert.equal(calls.loadInventory, 0)
   assert.equal(calls.batchBaselineInventories.length, 2)
   assert.deepEqual(events, ["lock", "execute"])
 })
@@ -297,11 +299,13 @@ test("fleet service rejects a changed batch digest before execution", async () =
 test("fleet service invalidates the baseline after execution", async () => {
   const { calls, service } = serviceFixture()
 
+  await service.listAlignments()
   await service.planAlignment(SELECTOR)
   await service.applyAlignment(SELECTOR, "sha256:approved")
   await service.planAlignment(SELECTOR)
 
-  assert.equal(calls.loadInventory, 2)
+  assert.equal(calls.loadInventory, 1)
+  assert.deepEqual(calls.baselineInventories, [{ zones: [] }, { zones: [] }, null])
 })
 
 test("fleet service applies an unchanged plan inside the exclusive write scope", async () => {

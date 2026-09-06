@@ -140,6 +140,25 @@ test("reviews and applies exact intent alignment from a drifting cell", async ({
   ))).toHaveLength(zoneNames.length)
 })
 
+test("blocks an alignment review when its fresh surface read fails", async ({ dashboard }) => {
+  const { allowBrowserError, page, queueFailure, requests, settingValue, zoneNames } = dashboard
+  await page.getByPlaceholder("Search facets, values, or zones").fill("always_use_https")
+  await page.getByRole("button", { name: "Compare 2 values: Observed values for always_use_https" }).click()
+  await page.getByRole("dialog", { name: "always_use_https" }).getByRole("button", {
+    name: "Use as exact intent: Fleet consensus for always_use_https",
+  }).click()
+  await page.getByRole("dialog", { name: "Set facet intent" }).locator("#intent-policy-save").click()
+  await expect(page.locator("#toast-message")).toHaveText("always_use_https intent saved for All zones")
+  allowBrowserError(/Failed to load resource: the server responded with a status of 503/)
+  queueFailure({ method: "GET", path: `zones/zone-${zoneNames[1]}/settings`, status: 503 })
+  await page.getByRole("button", { name: `Align to intent: always_use_https on ${zoneNames[1]}` }).click()
+  await expect(page.locator("#toast-message")).toContainText("blocked by incomplete inventory")
+  await expect(page.locator("#toast-message")).toContainText(`${zoneNames[1]}: settings`)
+  await expect(page.locator("#confirm-dialog")).not.toBeVisible()
+  expect(requests.filter((request) => request.method === "PATCH")).toHaveLength(0)
+  expect(settingValue(zoneNames[1], "always_use_https")).toBe("off")
+})
+
 test("uses the typed alias template and reviewed alignment in the dashboard", async ({ zoneAliasDashboard }) => {
   const {
     page,
