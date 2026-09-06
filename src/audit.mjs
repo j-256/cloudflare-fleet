@@ -23,6 +23,7 @@ import {
   fleetStateFileSelection,
 } from "./operator-paths.mjs"
 import { readFleetStateDocument } from "./state-store.mjs"
+import { selectFleetBackend } from "./backend-selection.mjs"
 
 const AUDIT_FORMAT = Object.freeze({
   HTML: "html",
@@ -134,6 +135,10 @@ export function resolvePolicyFile(argument, environment) {
 
 export async function collectFleetAudit(options = {}) {
   const environment = options.environment || process.env
+  if (selectFleetBackend({ ...options, environment }).kind === "hosted") {
+    const { createRemoteFleetService } = await import("./remote-fleet-service.mjs")
+    return createRemoteFleetService({ ...options, environment }).audit(options)
+  }
   const apiToken = environment.CLOUDFLARE_API_TOKEN
   const accountId = options.accountId || options.api?.accountId
     || environment.CLOUDFLARE_ACCOUNT_ID

@@ -9,6 +9,8 @@ import {
   fleetStateFileSelection,
 } from "./operator-paths.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
+import { selectFleetBackend, hostedCredentialPresence } from "./backend-selection.mjs"
+import { createRemoteFleetService } from "./remote-fleet-service.mjs"
 
 export const FLEET_RUNTIME_SCHEMA_VERSION = 1
 export const FLEET_RUNTIME_STATUS = Object.freeze({
@@ -261,6 +263,18 @@ function credentialMetadata(environment) {
 
 export async function inspectFleetRuntimeConfiguration(options = {}) {
   const environment = options.environment || process.env
+  const backend = selectFleetBackend({ ...options, environment })
+  if (backend.kind === "hosted") {
+    const remotePath = { accessible: false, exists: false, kind: "remote", mode: null, path: backend.endpoint, source: "hosted", sourceName: "CLOUDFLARE_FLEET_URL", symbolicLink: false }
+    return {
+      checkedAt: new Date(options.now ?? Date.now()).toISOString(),
+      backend: { ...backend, credentials: hostedCredentialPresence(environment), fallback: false },
+      credentials: credentialMetadata(environment),
+      dashboard: { available: true, dependencies: [], status: "hosted", reason: "Open the configured Access-protected URL; no local broker is started" },
+      paths: { state: { ...remotePath }, policy: { ...remotePath } },
+      runtime: runtimeMetadata(options), schemaVersion: FLEET_RUNTIME_SCHEMA_VERSION, status: "ok",
+    }
+  }
   const fsImpl = options.fsImpl || fs
   const runtime = runtimeMetadata(options)
   const selectionOptions = {
@@ -292,6 +306,7 @@ export async function inspectFleetRuntimeConfiguration(options = {}) {
   ])
   return {
     checkedAt: new Date(options.now ?? Date.now()).toISOString(),
+    backend,
     credentials: credentialMetadata(environment),
     dashboard,
     paths: { policy, state },
@@ -529,6 +544,33 @@ export async function diagnoseFleetRuntime(options = {}) {
     ...options,
     environment,
   })
+  if (configuration.backend?.kind === "hosted") {
+    const presence = configuration.backend.credentials
+    const valid = presence.accessToken
+      ? !presence.clientId && !presence.clientSecret
+      : presence.clientId && presence.clientSecret
+    const checks = [
+      check("runtime.node", "Node.js runtime", configuration.runtime.node.supported ? "pass" : "fail", `Node.js ${configuration.runtime.node.version}`),
+      check("backend.hosted", "Hosted Fleet", "pass", `${configuration.backend.endpoint}; shared D1 state; local fallback disabled`),
+      check("credentials.access", "Fleet Access credential", valid ? "pass" : "fail", valid ? "One application-scoped credential method is configured" : "Configure one Access service credential pair or application token"),
+    ]
+    let live = { requested: options.live === true, status: "skipped" }
+    if (options.live && valid) {
+      try {
+        const deadline = AbortSignal.timeout(LIVE_PROBE_TIMEOUT_MS)
+        const result = await createRemoteFleetService({ ...options, environment }).status({
+          signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
+        })
+        live = { requested: true, status: "ready", accountId: result.accountId, readOnly: result.readOnly }
+        checks.push(check("hosted.live", "Hosted command API", "pass", `Authenticated account-bound command API is ready (${result.readOnly ? "read-only" : "read/write"})`))
+      } catch {
+        live = { requested: true, status: "failed" }
+        checks.push(check("hosted.live", "Hosted command API", "fail", "Hosted command API could not be verified; check deployment, account, Access credential and policy"))
+      }
+    }
+    const summary = summarizeChecks(checks)
+    return { ...configuration, checks, live, summary, status: summary.fail ? FLEET_RUNTIME_STATUS.ATTENTION : FLEET_RUNTIME_STATUS.READY }
+  }
   const checks = [
     check(
       "runtime.node",
