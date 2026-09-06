@@ -65,6 +65,7 @@ const TOOL_NAMES = Object.freeze([
   "apply_worker_intent",
   "audit_fleet",
   "describe_zone_alias_policy",
+  "describe_hostname_scoped_rate_limit_policy",
   "get_fleet_intent",
   "plan_fleet_intent",
   "apply_fleet_intent",
@@ -588,6 +589,13 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   assert.match(JSON.stringify(aliases.outputSchema), /canonicalization-dns-mail-security-v1/)
   assert.match(JSON.stringify(aliases.outputSchema), /includeSubdomains/)
   assert.match(JSON.stringify(aliases.outputSchema), /unreadSurfaces/)
+  const rateLimits = result.tools.find(
+    (entry) => entry.name === "describe_hostname_scoped_rate_limit_policy",
+  )
+  assert.equal(rateLimits.annotations.readOnlyHint, true)
+  assert.match(JSON.stringify(rateLimits.outputSchema), /hostname-scoped-free-rate-limit/)
+  assert.match(JSON.stringify(rateLimits.outputSchema), /http_request_firewall_custom/)
+  assert.match(JSON.stringify(rateLimits.outputSchema), /http_ratelimit/)
   const runtime = result.tools.find((entry) => entry.name === "get_runtime_status")
   assert.equal(runtime.annotations.readOnlyHint, true)
   assert.match(JSON.stringify(runtime.outputSchema), /"checks"/)
@@ -651,6 +659,7 @@ test("MCP read tools return structured service and audit results", async (contex
   const [
     audit,
     aliases,
+    rateLimits,
     intent,
     intentPlan,
     candidates,
@@ -667,6 +676,10 @@ test("MCP read tools return structured service and audit results", async (contex
     client.callTool({
       arguments: {},
       name: "describe_zone_alias_policy",
+    }),
+    client.callTool({
+      arguments: {},
+      name: "describe_hostname_scoped_rate_limit_policy",
     }),
     client.callTool({
       arguments: {},
@@ -710,6 +723,12 @@ test("MCP read tools return structured service and audit results", async (contex
     aliases.structuredContent.templates[0].value.kind,
     "canonical-web-passthrough",
   )
+  assert.equal(
+    rateLimits.structuredContent.templates[1].value.kind,
+    "hostname-scoped-free-rate-limit",
+  )
+  assert.equal(rateLimits.structuredContent.templates[0].value.rateRules.length, 0)
+  assert.equal(rateLimits.structuredContent.templates[1].value.skipRules.length, 1)
   assert.equal(intent.structuredContent.document.accountId, "account-one")
   assert.equal(intentPlan.structuredContent.planSet.digest, DIGEST)
   assert.equal(candidates.structuredContent.status, "ok")

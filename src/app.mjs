@@ -281,6 +281,9 @@ import {
   isZoneAliasMatrixRow,
   zoneAliasPolicyTemplateForSourceHost,
 } from "./zone-alias-intent.mjs"
+import {
+  isHostnameScopedFreeRateLimitMatrixRow,
+} from "./rate-limit-intent.mjs"
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
@@ -326,6 +329,7 @@ const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGN
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const DEFAULT_INTENT_POLICY_CONSTRAINT_HELP = "Choose these independently: Presence decides whether absence is drift. Value when present compares only zones where the facet exists."
 const ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP = "Canonical passthrough intent is always Required and Exact so independent behavior cannot be silently tolerated."
+const RATE_LIMIT_INTENT_POLICY_CONSTRAINT_HELP = "Hostname-scoped Free rate-limit intent is always Required and Exact because the rate rule and its earlier WAF skip are one safety posture."
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = ".matrix-zone-select, summary, .cell-action"
 const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
@@ -5429,6 +5433,10 @@ function seedIntentPolicyCustomDraft() {
 
 function renderIntentPolicyValueMode() {
   const strictAlias = isZoneAliasMatrixRow(state.intentPolicyDraft?.row)
+  const strictRateLimit = isHostnameScopedFreeRateLimitMatrixRow(
+    state.intentPolicyDraft?.row,
+  )
+  const strictTypedPolicy = strictAlias || strictRateLimit
   const valuesApply = selectedIntentPolicyPresenceConstraint()
     !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
   const exact = valuesApply
@@ -5438,12 +5446,14 @@ function renderIntentPolicyValueMode() {
   elements.intentPolicyValueRelationship.hidden = !valuesApply
   elements.intentPolicyConstraintHelp.textContent = strictAlias
     ? `${ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP}${state.intentPolicyDraft?.aliasTemplateSourceHost ? ` The built-in ${state.intentPolicyDraft.aliasTemplateSourceHost} template is loaded as a custom value.` : ""}`
-    : DEFAULT_INTENT_POLICY_CONSTRAINT_HELP
-  elements.intentPolicyPresenceRequired.disabled = strictAlias
-  elements.intentPolicyPresenceOptional.disabled = strictAlias
-  elements.intentPolicyPresenceForbidden.disabled = strictAlias
+    : strictRateLimit
+      ? RATE_LIMIT_INTENT_POLICY_CONSTRAINT_HELP
+      : DEFAULT_INTENT_POLICY_CONSTRAINT_HELP
+  elements.intentPolicyPresenceRequired.disabled = strictTypedPolicy
+  elements.intentPolicyPresenceOptional.disabled = strictTypedPolicy
+  elements.intentPolicyPresenceForbidden.disabled = strictTypedPolicy
   for (const control of elements.intentPolicyValueRelationship.elements) {
-    control.disabled = !valuesApply || strictAlias
+    control.disabled = !valuesApply || strictTypedPolicy
   }
   elements.intentPolicyExactFields.hidden = !exact
   elements.intentPolicyModeObserved.disabled = !exact
@@ -5614,15 +5624,17 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
     .map((zone) => zoneById(zone.zoneId))
     .filter(Boolean)
   const strictAlias = isZoneAliasMatrixRow(draft.row)
+  const strictRateLimit = isHostnameScopedFreeRateLimitMatrixRow(draft.row)
+  const strictTypedPolicy = strictAlias || strictRateLimit
   const aliasTemplate = strictAlias
     && !selection.policy
     && loadedScopeZones.length === 1
     ? zoneAliasPolicyTemplateForSourceHost(loadedScopeZones[0].meta.name)
     : null
-  const presenceConstraint = strictAlias
+  const presenceConstraint = strictTypedPolicy
     ? FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
     : options.presenceConstraint || selection.presenceConstraint
-  const valueConstraint = strictAlias
+  const valueConstraint = strictTypedPolicy
     ? FLEET_INTENT_VALUE_CONSTRAINT.EXACT
     : options.valueConstraint || selection.valueConstraint
   const valuesApply = presenceConstraint

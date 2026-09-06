@@ -47,6 +47,11 @@ import {
   observeZoneAliasIntent,
   zoneAliasMatrixFacet,
 } from "./zone-alias-intent.mjs"
+import {
+  hostnameScopedFreeRateLimitMatrixFacet,
+  hostnameScopedFreeRateLimitSearchValue,
+  observeHostnameScopedFreeRateLimitIntent,
+} from "./rate-limit-intent.mjs"
 
 const EDITABLE_RULESET_KINDS = new Set([
   RULESET_KIND.CUSTOM,
@@ -219,6 +224,38 @@ function addZoneAliasRows(rows, inventory) {
         search: observation.value.unexpectedResources
           .map((resource) => `${resource.kind} ${resource.label} ${resource.surface}`)
           .join(" "),
+      },
+    )
+  }
+}
+
+function addHostnameScopedFreeRateLimitRows(rows, inventory) {
+  const facet = hostnameScopedFreeRateLimitMatrixFacet()
+  for (const zone of inventory.zones) {
+    const observation = observeHostnameScopedFreeRateLimitIntent(zone)
+    addCell(
+      rows,
+      facet.category,
+      facet.key,
+      facet.label,
+      zone,
+      observation.value,
+      {
+        alignmentAction: observation.action,
+        capability: {
+          kind: "not-directly-editable",
+          label: "Intent-managed rate limit",
+          reason: "Hostname-scoped rate-limit changes use fresh intent alignment review",
+        },
+        description: facet.description,
+        display: observation.display,
+        full: displayJson(observation.inspectionValue),
+        inspectionValue: observation.inspectionValue,
+        intentValue: observation.value,
+        intentOptInOnly: true,
+        labelSource: "Fleet rate-limit policy",
+        normalized: observation.value,
+        search: hostnameScopedFreeRateLimitSearchValue(observation.value),
       },
     )
   }
@@ -1254,6 +1291,7 @@ export function buildMatrix(inventory) {
 
   addZoneRows(rows, inventory)
   addZoneAliasRows(rows, inventory)
+  addHostnameScopedFreeRateLimitRows(rows, inventory)
   addSettingRows(rows, inventory)
   addDnssecRows(rows, inventory)
   addEmailRows(rows, inventory)

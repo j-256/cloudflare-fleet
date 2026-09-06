@@ -2,6 +2,9 @@ import {
   expect,
   test,
 } from "./dashboard.fixture.mjs"
+import {
+  createHostnameScopedFreeRateLimitIntentValue,
+} from "../../src/rate-limit-intent.mjs"
 
 async function acceptCurrentWrite(page) {
   const confirmation = page.locator("#confirm-dialog")
@@ -210,6 +213,91 @@ test("uses the typed alias template and reviewed alignment in the dashboard", as
       && request.path === "zones/zone-j256.dev/rulesets/alias-redirect-ruleset/rules/alias-redirect-rule"
       && request.body.action_parameters.from_value.status_code === 307
   ))).toHaveLength(1)
+})
+
+test("keeps hostname-scoped rate limits and their WAF skip in one reviewed posture", async ({ rateLimitDashboard }) => {
+  const {
+    page,
+    requests,
+    zoneNames,
+  } = rateLimitDashboard
+  const desired = createHostnameScopedFreeRateLimitIntentValue({
+    hosts: ["api.{zone}"],
+    rateDescription: "[fleet] Limit API requests by source",
+    rateExpression: "starts_with(http.request.uri.path, \"/api/\")",
+    requestsPerPeriod: 100,
+    skipDescription: "[fleet] Skip API rate limit on other hosts",
+  })
+
+  await page.locator("#category").selectOption("Rate limiting")
+  await page.locator("#scope").selectOption("all")
+  await page.locator("#difference-toggle").click()
+  await page.getByRole("button", {
+    name: "Set intent: Set intent for Hostname-scoped Free rate limit",
+  }).click()
+
+  const policy = page.getByRole("dialog", { name: "Set facet intent" })
+  await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
+  await expect(policy.getByRole("radio", { name: /^Required/ })).toBeDisabled()
+  await expect(policy.getByRole("radio", { name: /^Exact value/ })).toBeChecked()
+  await expect(policy.getByRole("radio", { name: /^Exact value/ })).toBeDisabled()
+  await expect(policy.locator("#intent-policy-constraint-help")).toContainText(
+    "rate rule and its earlier WAF skip are one safety posture",
+  )
+  await policy.getByRole("radio", { name: /^Custom value/ }).check()
+  await policy.locator("#intent-policy-custom-json").evaluate((element) => {
+    element.open = true
+  })
+  await policy.locator("#intent-policy-custom-raw").fill(
+    JSON.stringify(desired, null, 2),
+  )
+  await policy.locator("#intent-policy-save").click()
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "Hostname-scoped Free rate limit intent saved for All zones",
+  )
+  await page.getByRole("button", {
+    name: "Review alignment (1): Align Hostname-scoped Free rate limit with fleet intent",
+  }).click()
+  const confirmation = page.locator("#confirm-dialog")
+  const operations = confirmation.locator("#confirm-operations .operation")
+  await expect(operations).toHaveCount(3)
+  await expect(operations.nth(0)).toContainText(
+    "Disable [fleet] Limit API requests by source before changing host scope",
+  )
+  await expect(operations.nth(1)).toContainText(
+    "rate-limit-skip-ruleset/rules/rate-limit-skip-rule",
+  )
+  await expect(operations.nth(2)).toContainText(
+    "rate-limit-ruleset/rules/rate-limit-rule",
+  )
+  await acceptCurrentWrite(page)
+
+  await expect(page.locator("#toast-message")).toHaveText(
+    "Hostname-scoped Free rate limit aligned with fleet intent and live verification passed",
+  )
+  const writes = requests.filter((request) => request.method === "PATCH")
+  expect(writes.map((request) => [
+    request.path,
+    request.body.action,
+    request.body.enabled,
+  ])).toEqual([
+    [
+      `zones/zone-${zoneNames[0]}/rulesets/rate-limit-ruleset/rules/rate-limit-rule`,
+      "block",
+      false,
+    ],
+    [
+      `zones/zone-${zoneNames[0]}/rulesets/rate-limit-skip-ruleset/rules/rate-limit-skip-rule`,
+      "skip",
+      true,
+    ],
+    [
+      `zones/zone-${zoneNames[0]}/rulesets/rate-limit-ruleset/rules/rate-limit-rule`,
+      "block",
+      true,
+    ],
+  ])
 })
 
 test("aligns Email Routing settings and shows unsupported reasons", async ({ emailIntentDashboard }) => {

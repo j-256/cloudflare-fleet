@@ -79,7 +79,7 @@
         <article class="card">
           <p class="card-accent">INTENT</p>
           <h3>Describe expected state</h3>
-          <p><code>src/fleet-intent.mjs</code> defines scopes, presence constraints, value constraints, acknowledgements, and coverage expectations. <code>src/zone-alias-intent.mjs</code> adds a reusable strict canonical passthrough value and exact resource envelope. <code>src/intent-alignment.mjs</code> turns effective exact and forbidden intent into deterministic adapter targets only when every selected drift cell is supported.</p>
+          <p><code>src/fleet-intent.mjs</code> defines scopes, presence constraints, value constraints, acknowledgements, and coverage expectations. <code>src/zone-alias-intent.mjs</code> adds a reusable strict canonical passthrough value and exact resource envelope. <code>src/rate-limit-intent.mjs</code> combines the Free rate-rule slot and its hostname-complement WAF skip, while <code>src/rate-limit-remediation.mjs</code> owns fail-safe cross-phase transitions. <code>src/intent-alignment.mjs</code> turns effective exact and forbidden intent into deterministic adapter targets only when every selected drift cell is supported.</p>
         </article>
         <article class="card">
           <p class="card-accent">EXECUTION</p>
@@ -126,6 +126,10 @@
         <strong>Alias-only zones fail closed</strong>
         <p>Canonical passthrough intent inspects serving DNS, every editable ruleset phase, Worker routes and custom domains, Pages domains, SSL for SaaS custom hostnames, load balancers, health checks, waiting rooms, Web3 hostnames, and snippets. Each extra resource carries its canonical owner in audit evidence. Missing coverage or an attachment without a reversible adapter blocks the complete alignment.</p>
       </div>
+      <div class="callout">
+        <strong>Rate-limit host scope is cross-phase state</strong>
+        <p>The Free rule expression cannot select a hostname, so the exact value includes both the <code>http_ratelimit</code> rule and every <code>http_request_firewall_custom</code> skip targeting that phase. Fresh alignment reads both phases. Creation and restoration place the skip first; scope changes disable the rate rule around the skip edit; removal deletes the rate rule first. Reversing a verified transition retains the same safety order.</p>
+      </div>
     </section>
 
     <section class="section" aria-labelledby="agent-interface-heading">
@@ -138,12 +142,12 @@
         <article class="mode-card">
           <p class="card-accent">CLI</p>
           <h3>Explicit noninteractive approval</h3>
-          <p>The installed <code>cloudflare-fleet</code> command launches the dashboard, audits, describes reusable alias templates, exports or replaces intent, prepares alignment and direct-change plans, inspects activity, and performs guarded undo. A caller presents the complete plan and supplies that exact digest to apply; fresh replanning exits without mutation if it changed.</p>
+          <p>The installed <code>cloudflare-fleet</code> command launches the dashboard, audits, describes reusable alias and rate-limit values, exports or replaces intent, prepares alignment and direct-change plans, inspects activity, and performs guarded undo. A caller presents the complete plan and supplies that exact digest to apply; fresh replanning exits without mutation if it changed.</p>
         </article>
         <article class="mode-card">
           <p class="card-accent">MCP</p>
           <h3>Interactive protocol confirmation</h3>
-          <p>The stdio server exposes a typed alias-policy description plus paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every apply displays its exact request and plan, elicits one explicit approval through authenticated short-lived request state, and enters the same fresh locked apply path. Worker incident capture and verification save explicitly requested fresh evidence without a Cloudflare mutation. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
+          <p>The stdio server exposes typed alias and hostname-scoped rate-limit descriptions plus paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every apply displays its exact request and plan, elicits one explicit approval through authenticated short-lived request state, and enters the same fresh locked apply path. Worker incident capture and verification save explicitly requested fresh evidence without a Cloudflare mutation. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
         </article>
       </div>
       <div class="callout">
@@ -170,7 +174,7 @@
       <div class="section-heading">
         <p class="eyebrow">Mutation lifecycle</p>
         <h2 id="write-flow-heading">A write is a verified state transition, not a button click</h2>
-        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. Alias cleanup edits or creates one canonical redirect and removes only extra DNS records or rules with lossless inverse adapters; serving DNS and the selected canonical redirect are protected from collateral deletion. Bounded direct changes derive their reads and API operations from a discriminated request type rather than caller-supplied paths. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources. Guarded undo rereads the recorded post-write targets before review and again before sending the inverse.</p>
+        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. Alias cleanup edits or creates one canonical redirect and removes only extra DNS records or rules with lossless inverse adapters; serving DNS and the selected canonical redirect are protected from collateral deletion. Rate-limit alignment orders its WAF skip and rate-rule operations so a partial transition cannot activate the rule outside its selected hosts. Bounded direct changes derive their reads and API operations from a discriminated request type rather than caller-supplied paths. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources. Guarded undo rereads the recorded post-write targets before review and again before sending the inverse.</p>
       </div>
       <div class="diagram-frame">
         <img src="diagrams/write-flow.svg" width="1400" height="640" alt="Reviewed write flow from desired state through live read, plan, confirmation, pending journal, execution, verification, cache patch, and guarded undo.">

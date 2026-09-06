@@ -33,6 +33,7 @@ import {
 } from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 import { describeZoneAliasPolicy } from "./zone-alias-intent.mjs"
+import { describeHostnameScopedFreeRateLimitPolicy } from "./rate-limit-intent.mjs"
 import { runWorkerCommand, WORKER_COMMANDS } from "./worker-command.mjs"
 import { commandDiagnosticsSchema } from "./interface-schemas.mjs"
 import { redactDiagnostics } from "./command-diagnostics.mjs"
@@ -126,7 +127,7 @@ export function fleetUsage() {
     "  cloudflare-fleet alignment list [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment plan SELECTOR_OPTIONS [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
-    "  cloudflare-fleet intent aliases|show|plan|apply [OPTIONS]",
+    "  cloudflare-fleet intent aliases|rate-limits|show|plan|apply [OPTIONS]",
     "  cloudflare-fleet change plan|apply --input FILE|- [OPTIONS]",
     "  cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
     "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
@@ -205,6 +206,7 @@ export function fleetIntentUsage() {
     "SYNOPSIS",
     "  cloudflare-fleet intent show [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet intent aliases [--format text|json]",
+    "  cloudflare-fleet intent rate-limits [--format text|json]",
     "  cloudflare-fleet intent plan --input FILE|- [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet intent apply --input FILE|- --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "",
@@ -217,6 +219,7 @@ export function fleetIntentUsage() {
     "",
     "WORKFLOW",
     "  aliases emits the strict reusable passthrough facet and initial templates",
+    "  rate-limits emits the typed Free-plan rate rule and host-scope skip posture",
     "  intent show emits an editable document in text mode",
     "  plan validates every collection and reports additions, changes, and removals",
     "  apply replans under the shared write lock and persists only an exact digest match",
@@ -586,10 +589,11 @@ export function parseFleetArguments(argv) {
   }
   if (resource === "intent") {
     if (!action || isHelpArgument(action)) return { command: "intent-help" }
-    if (!["aliases", "show", "plan", "apply"].includes(action)) {
-      throw new CliUsageError("Intent command must be aliases, show, plan, or apply")
+    if (!["aliases", "rate-limits", "show", "plan", "apply"].includes(action)) {
+      throw new CliUsageError("Intent command must be aliases, rate-limits, show, plan, or apply")
     }
-    const definitions = action === "aliases"
+    const descriptor = ["aliases", "rate-limits"].includes(action)
+    const definitions = descriptor
       ? [FORMAT_OPTION, HELP_OPTION]
       : action === "show"
       ? COMMON_OPTIONS
@@ -598,7 +602,7 @@ export function parseFleetArguments(argv) {
         : [...COMMON_OPTIONS, INPUT_OPTION]
     const options = parseOptions(rest, definitions)
     if (options.help) return { command: "intent-help" }
-    if (!["aliases", "show"].includes(action) && !options.input) {
+    if (!["aliases", "rate-limits", "show"].includes(action) && !options.input) {
       throw new CliUsageError(`intent ${action} requires --input`)
     }
     if (action === "apply" && !options.expectplan) {
@@ -609,7 +613,7 @@ export function parseFleetArguments(argv) {
       expectedDigest: options.expectplan || null,
       format: options.format,
       input: options.input || null,
-      stateFile: action === "aliases" ? null : options.statefile,
+      stateFile: descriptor ? null : options.statefile,
     }
   }
   if (resource === "change") {
@@ -941,6 +945,16 @@ function renderResult(command, result) {
     )),
     ...result.limitations.map((limitation) => `Limitation: ${limitation}`),
   ].join("\n")
+  if (command === "intent-rate-limits") return [
+    "Hostname-scoped Free rate-limit fleet intent",
+    `Facet: ${result.facet.category}/${result.facet.key}`,
+    `Relationship: ${result.relationship.firstPhase} -> ${result.relationship.ratePhase}`,
+    `Free plan: ${result.freePlanLimits.rulesPerZone} rule, ${result.freePlanLimits.periodSeconds}s period, ${result.freePlanLimits.action}`,
+    `Portability: ${result.portability.customResponse}`,
+    ...result.templates.map((template) => (
+      `- ${template.id}: ${template.value.rateRules.length === 0 ? "unused" : template.value.hosts.join(", ")}`
+    )),
+  ].join("\n")
   if (command === "intent-plan") return renderIntentPlan(result)
   if (command === "intent-apply") {
     return result.applied
@@ -1169,6 +1183,12 @@ export async function runFleetCommand(options = {}) {
   }
   if (parsed.command === "intent-aliases") {
     const result = describeZoneAliasPolicy()
+    writeResult(stdout, parsed.format, parsed.command, result)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return result
+  }
+  if (parsed.command === "intent-rate-limits") {
+    const result = describeHostnameScopedFreeRateLimitPolicy()
     writeResult(stdout, parsed.format, parsed.command, result)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return result
