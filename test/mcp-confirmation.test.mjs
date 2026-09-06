@@ -125,12 +125,93 @@ test("MCP confirmation keeps a DNS deletion readable on one review field", () =>
   assert.ok(visibleContentLineCount(form, "review_1") <= 20)
 })
 
-test("MCP confirmation paginates an oversized operation", () => {
+test("MCP confirmation summarizes an oversized operation value onto one review field", () => {
+  const expression = `(${"x".repeat(3000)})`
   const form = confirmationForm([{
     body: {
-      description: "x".repeat(900),
+      action: "block",
+      description: "oversized rule",
+      enabled: true,
+      expression,
     },
     label: "Create a large rule",
+    method: "POST",
+    path: `zones/${ZONE_ID}/rulesets/${RULESET_ID}/rules`,
+    zoneId: ZONE_ID,
+    zoneName: "j-256.dev",
+  }])
+
+  const field = form.requestedSchema.properties.review_1
+  assert.equal(form.fieldCount, 1)
+  assert.equal(form.requestedSchema.required.length, 1)
+  assert.match(field.description, /action: "block"/)
+  assert.match(
+    field.description,
+    new RegExp(`expression: <large string, ${expression.length} chars, sha256:[a-f0-9]{12}`),
+  )
+  assert.match(field.description, /head:/)
+  assert.doesNotMatch(field.description, /x{200}/)
+  assert.ok(field.description.split("\n").every((line) => line.length <= 76))
+})
+
+test("MCP confirmation keeps a shared-WAF entrypoint create on one field with the rule expression summarized", () => {
+  const antiScanner = "( ( lower(http.request.uri.path) contains \"/.\" )"
+    + " or lower(http.request.uri.path) contains \".php\"".repeat(80)
+    + ")"
+  const form = confirmationForm([{
+    body: {
+      kind: "zone",
+      name: "default",
+      phase: "http_request_firewall_custom",
+      rules: [
+        {
+          action: "skip",
+          action_parameters: { products: ["zoneLockdown"] },
+          description: "[fleet] Log All Others (Skip No-op)",
+          enabled: true,
+          expression: "(http.request.uri.path contains \"/\")",
+          logging: { enabled: true },
+        },
+        {
+          action: "block",
+          description: "[fleet] cf-waf-deploy: anti-scanner block",
+          enabled: true,
+          expression: antiScanner,
+        },
+      ],
+    },
+    label: "Create the custom firewall entrypoint with fleet rules",
+    method: "POST",
+    path: `zones/${ZONE_ID}/rulesets`,
+    zoneId: ZONE_ID,
+    zoneName: "j256.dev",
+  }])
+
+  const field = form.requestedSchema.properties.review_1
+  assert.equal(form.fieldCount, 1)
+  assert.match(field.description, /rules\[0\]\.action: "skip"/)
+  assert.match(
+    field.description,
+    /rules\[1\]\.description: "\[fleet\] cf-waf-deploy: anti-scanner block"/,
+  )
+  assert.match(
+    field.description,
+    /rules\[1\]\.expression: <large string, \d+ chars, sha256:[a-f0-9]{12}/,
+  )
+  assert.doesNotMatch(field.description, /\.php/)
+  assert.ok(field.description.split("\n").every((line) => line.length <= 76))
+})
+
+test("MCP confirmation paginates an operation with many small leaves", () => {
+  const body = Object.fromEntries(
+    Array.from({ length: 90 }, (_value, index) => [
+      `field_${String(index).padStart(2, "0")}`,
+      `value-${index}`,
+    ]),
+  )
+  const form = confirmationForm([{
+    body,
+    label: "Create a rule with many fields",
     method: "POST",
     path: `zones/${ZONE_ID}/rulesets/${RULESET_ID}/rules`,
     zoneId: ZONE_ID,
@@ -140,7 +221,7 @@ test("MCP confirmation paginates an oversized operation", () => {
   assert.ok(form.fieldCount > 1)
   assert.equal(form.requestedSchema.required.length, form.fieldCount)
   for (const field of Object.values(form.requestedSchema.properties)) {
-    assert.ok(field.description.split("\n").length <= 10)
+    assert.ok(field.description.split("\n").length <= 40)
   }
 })
 
