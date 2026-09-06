@@ -16,6 +16,9 @@
   --category-width: 112px;
   --facet-width: 248px;
   --page-gutter: clamp(16px, 3vw, 44px);
+  --dialog-width: min(960px, calc(100vw - 24px));
+  --dialog-workspace-width: min(1680px, calc(100vw - 24px));
+  --dialog-workspace-height: calc(100dvh - 26px);
 }
 
 * {
@@ -2887,8 +2890,9 @@ body.matrix-focus .matrix-shell {
 }
 
 dialog {
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100dvh - 32px);
+  width: var(--dialog-width);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
   overflow: auto;
   padding: 0;
   border: 1px solid var(--line);
@@ -2909,29 +2913,28 @@ dialog form {
 }
 
 .ruleset-dialog {
-  width: min(1120px, calc(100vw - 24px));
+  width: var(--dialog-workspace-width);
 }
 
 .value-comparison-dialog {
-  width: min(1180px, calc(100vw - 24px));
+  width: var(--dialog-workspace-width);
 }
 
 .intent-dialog {
   --intent-policy-card-min-width: 400px;
   --intent-value-preview-max-height: 240px;
-  width: min(1120px, calc(100vw - 24px));
+  width: var(--dialog-workspace-width);
   overflow: hidden;
 }
 
 #intent-policy-dialog {
   --intent-value-preview-max-height: 240px;
-  width: min(1120px, calc(100vw - 24px));
+  width: var(--dialog-workspace-width);
 }
 
 .intent-workflow-dialog {
-  width: min(1120px, calc(100vw - 24px));
-  height: min(860px, calc(100dvh - 34px));
-  max-height: calc(100dvh - 34px);
+  width: var(--dialog-workspace-width);
+  height: var(--dialog-workspace-height);
   overflow: hidden;
 }
 
@@ -2942,7 +2945,7 @@ dialog form {
 }
 
 .activity-dialog {
-  width: min(920px, calc(100vw - 24px));
+  width: var(--dialog-workspace-width);
   overflow: hidden;
 }
 
@@ -2951,8 +2954,7 @@ dialog form {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
-  height: min(820px, calc(100dvh - 34px));
-  max-height: calc(100dvh - 34px);
+  height: var(--dialog-workspace-height);
   padding: 22px;
 }
 
@@ -3250,8 +3252,7 @@ dialog form {
   display: grid;
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   gap: 14px;
-  height: min(860px, calc(100dvh - 34px));
-  max-height: calc(100dvh - 34px);
+  height: var(--dialog-workspace-height);
   padding: 22px;
 }
 
@@ -3265,7 +3266,7 @@ dialog form {
 }
 
 .intent-adoption-dialog {
-  width: min(1120px, calc(100vw - 24px));
+  width: var(--dialog-workspace-width);
   overflow: hidden;
 }
 
@@ -3274,8 +3275,7 @@ dialog form {
   display: grid;
   grid-template-rows: auto auto auto minmax(180px, 1fr) auto;
   gap: 12px;
-  height: min(860px, calc(100dvh - 34px));
-  max-height: calc(100dvh - 34px);
+  height: var(--dialog-workspace-height);
   padding: 20px;
 }
 
@@ -6390,8 +6390,7 @@ dialog details > summary {
   }
 }
 #worker-diagnostics-dialog {
-  width: min(960px, 94vw);
-  max-height: 90vh;
+  width: var(--dialog-workspace-width);
   overflow: auto;
 }
 
