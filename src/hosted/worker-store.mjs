@@ -1,6 +1,5 @@
 import { emptyWorkerRecords, isWorkerRecords, revisedWorkerRecords } from "../worker-records.mjs"
-
-const LOCK_LEASE_MS = 120000
+import { hostedExecutionLock } from "./execution-lock.mjs"
 
 export function hostedWorkerStore(db, accountId) {
   async function read() {
@@ -19,13 +18,7 @@ export function hostedWorkerStore(db, accountId) {
     return next
   }
   async function withWriteLock(operation) {
-    const owner = crypto.randomUUID()
-    const now = Date.now()
-    const result = await db.prepare("INSERT INTO worker_execution_lock (account_id, owner, expires_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at WHERE worker_execution_lock.expires_at < ?").bind(accountId, owner, now + LOCK_LEASE_MS, now).run()
-    if (result.meta?.changes !== 1) throw new Error("Another Worker operation is in progress")
-    try { return await operation() } finally {
-      await db.prepare("DELETE FROM worker_execution_lock WHERE account_id = ? AND owner = ?").bind(accountId, owner).run()
-    }
+    return hostedExecutionLock(db, accountId).withWriteLock(operation)
   }
   return { read, write, withWriteLock }
 }

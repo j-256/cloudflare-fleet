@@ -9,7 +9,7 @@ The same browser application runs in two modes:
 - An Access-protected Cloudflare Worker with D1 persistence for hosted access
 - An ephemeral local loopback broker on macOS for a complete local workflow
 
-Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted configuration defaults to read-only, and local capabilities remain available after a hosted deployment.
+Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted configuration defaults to read-only. CLI and stdio MCP clients can use the hosted Worker and its shared D1 state, while standalone local mode remains available explicitly.
 
 ## What Fleet does
 
@@ -129,6 +129,53 @@ The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it t
 
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
 
+### One shared fleet from every device
+
+Configure each CLI or MCP process with the same hosted origin and expected account:
+
+```sh
+export CLOUDFLARE_FLEET_URL="https://fleet.example.com"
+export CLOUDFLARE_FLEET_ACCOUNT_ID="your-account-id"
+cloudflare-fleet config show
+cloudflare-fleet doctor --live
+cloudflare-fleet dashboard
+```
+
+Load `CLOUDFLARE_FLEET_ACCESS_CLIENT_ID` and `CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET` from a private secret manager into that process environment. Use a dedicated, expiring Access service token and an application-specific **Service Auth** policy that includes only that token. Preserve human login and MFA policies. Alternatively, supply an unexpired Access application JWT through `CLOUDFLARE_FLEET_ACCESS_TOKEN`, not both methods. See Cloudflare's [service-token authentication](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/). Credential values never belong in arguments, URLs, public files, or shared MCP configuration.
+
+The hosted Worker holds the account API token. Remote clients do not need it and never forward it. All ordinary CLI commands and MCP tools use the selected hosted backend, including audits, intent, alignment, bounded changes, activity, Worker records, and guarded undo. The MCP transport is still stdio: install the CLI on each agent host and inherit the hosted environment. There is no public remote HTTP MCP endpoint.
+
+D1 is authoritative for shared intent, activity, and Worker records. Cloudflare remains authoritative for live resources; the deployed Worker configuration supplies operator policy exceptions. `dashboard` opens the hosted URL, where deployment policy determines write access. A hosted URL selects hosted mode without silent local fallback; local file flags are rejected. Use `CLOUDFLARE_FLEET_BACKEND=local` deliberately for standalone work or export. Without a hosted URL, standalone mode remains the default. Standalone files are not synchronized replicas and should not be used as a second production authority.
+
+Before upgrading, back up both stores, apply all D1 migrations, and deploy the matching Worker and client versions. `0004_shared_control_state.sql` adds account-scoped recovery archives; the Worker diagnostics migration supplies the shared execution lease. `doctor --live` checks authentication, account binding, the command protocol, and required D1 tables.
+
+For populated stores, use reviewed reconciliation instead of a force import:
+
+```sh
+umask 077
+CLOUDFLARE_FLEET_BACKEND=local cloudflare-fleet state export > local-backup.json
+cloudflare-fleet state export > hosted-backup.json
+jq '{state: ., intentSource: "incoming"}' local-backup.json > reconciliation.json
+cloudflare-fleet state plan --input reconciliation.json --format json
+cloudflare-fleet state apply --input reconciliation.json --expect-plan REVIEWED_DIGEST
+```
+
+Review the complete plan before applying. `intentSource` must explicitly select `incoming` or `hosted` for zone intent and conflicting Worker intent. Distinct activity and incident histories are retained; conflicting record identities and pending operations block reconciliation. Apply rechecks the exact plan under the shared lock, archives the previous hosted state, atomically persists the merge, and verifies the result. Input is bounded to 2 MiB and each apply to 500 additional activities. Keep large histories in reviewed batches. Export `--archive-id ID` reads an earlier state without changing anything; reconcile that archive as incoming to restore intent while retaining newer history.
+
+Browser, CLI, and MCP mutations share an account-wide lease. A lost response is never automatically retried. Pending activity blocks subsequent writes even after lease expiration. Stop old clients, independently inspect affected live resources, and use `cloudflare-fleet recovery plan|apply --input FILE --expect-plan REVIEWED_DIGEST` (digest for apply only) with:
+
+```json
+{"activityId":"activity-ID","reason":"Stopped the old client and inspected the affected live resources","stoppedClientsAndInspectedResources":true}
+```
+
+Recovery preserves the original plan as a failed execution with an explicitly unknown outcome and no automatic inverse. Zero confirmed completions does not mean zero applied writes. Recovery does not retry, reverse, or verify Cloudflare changes.
+
+| Shared-state outcome | CLI | MCP |
+| --- | --- | --- |
+| Export state or inspect recovery archive | `state export` | `get_fleet_state` |
+| Review and reconcile stores | `state plan`, `state apply` | `plan_state_reconciliation`, `apply_state_reconciliation` |
+| Close an interrupted journal after investigation | `recovery plan`, `recovery apply` | `plan_activity_recovery`, `apply_activity_recovery` |
+
 ## Worker diagnostics and schedule recovery
 
 Open **Workers** in the dashboard, or use `cloudflare-fleet worker inspect --input FILE --format json` and MCP `inspect_worker`. Select one exact Worker name or a `deep.worker-scheduled-handler-missing:WORKER` finding ID. Inspection defaults to the preceding hour; explicit UTC `start` and `end` must describe a past window of at most 24 hours. Evidence pages contain at most 200 records. Continue with `nextCursor` and the original window; counts describe each page, not an account-wide total. Optional `zoneIds` narrow route reads to the supplied zones.
@@ -216,7 +263,7 @@ Every Cloudflare apply repeats fresh scoped planning inside the exclusive write 
 
 The stable exit contract is documented by `cloudflare-fleet --help`: success is `0`, runtime failure is `1`, invalid usage is `2`, a missing dependency is `3`, blocked or attention-required outcomes are `4`, a changed plan is `5`, a write failure is `6`, and a verification failure is `7`.
 
-The local stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy. It is part of the same installed package:
+The stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy. It uses the selected local or hosted backend and is part of the same installed package:
 
 ```sh
 cloudflare-fleet mcp
@@ -226,7 +273,7 @@ Start with `get_runtime_status` after connecting. It returns the same redacted p
 
 ### Codex
 
-Add the server to `~/.codex/config.toml` and explicitly forward the two credential variables from the environment that launches Codex:
+For standalone mode, add the server to `~/.codex/config.toml` and explicitly forward the account credential variables from the environment that launches Codex. For shared mode, forward the hosted URL, expected account, and chosen Access credential variables described above instead:
 
 ```toml
 [mcp_servers.cloudflare_fleet]
@@ -263,7 +310,7 @@ Use the standard stdio command-plus-arguments shape and arrange for the client p
 }
 ```
 
-For an explicit profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command.
+For an explicit standalone profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command. Omit these file arguments for shared hosted mode.
 
 The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, paginate oversized details, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
@@ -278,7 +325,7 @@ A short-lived, intent-revision-bound baseline avoids repeating the complete alig
 
 Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Both dashboard proxies preserve that delay. Concurrent reads through the same API client wait for the latest shared cooldown, including extensions received while they are waiting; cancellation stops a waiting read before it sends another request. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried. The same bounded retry behavior applies to CLI and MCP reads.
 
-The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Durable per-user state and policy paths are independent of the npm installation, so reinstalling the binary cannot replace operator data. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
+Standalone CLI and MCP processes inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; shared clients inherit the hosted configuration and scoped Access credentials instead. Keep secrets in the launching process environment instead of tracked or shared client configuration. Durable state is independent of the npm installation, so reinstalling the binary cannot replace operator data. Both backends can return sensitive fleet configuration in JSON, audits, plans, and activity.
 
 ## Daily operating loop
 

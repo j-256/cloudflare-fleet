@@ -25,11 +25,12 @@ import {
 } from "./cli-contract.mjs"
 import { isMainModule } from "./entrypoint.mjs"
 import {
-  createLocalFleetService,
   FLEET_SERVICE_SCHEMA_VERSION,
 } from "./fleet-service.mjs"
+import { createConfiguredFleetService } from "./configured-fleet-service.mjs"
 import {
   activityUndoInputSchema,
+  activityRecoverySchema,
   digestSchema,
   fleetChangeSchema,
   fleetIntentDocumentSchema,
@@ -535,7 +536,9 @@ function reviewedConfirmationForm(title, plan) {
   if (plan.activityId) summaryLines.push(`Activity: ${plan.activityId}`)
   summaryLines.push(...operationSummaryLines(operations.length))
   let reviewItems
-  if (operations.length > 0) {
+  if (plan.reviewItems) {
+    reviewItems = plan.reviewItems
+  } else if (operations.length > 0) {
     reviewItems = operationReviewItems(operations)
   } else if (plan.diff) {
     reviewItems = intentReviewItems(plan)
@@ -543,9 +546,9 @@ function reviewedConfirmationForm(title, plan) {
     reviewItems = [{
       lines: [
         "Cloudflare API writes: none",
-        "The plan digest binds the complete local request",
+        "The plan digest binds the complete selected-backend request",
       ],
-      title: "Review local change",
+      title: "Review persisted change",
     }]
   }
   return buildConfirmationForm({
@@ -685,11 +688,11 @@ function resultIsExecutionError(result) {
   ].includes(result.status)
 }
 
-function lazyLocalFleetService(options) {
+function lazyConfiguredFleetService(options) {
   let service
   return new Proxy({}, {
     get(_target, property) {
-      service ||= createLocalFleetService(options)
+      service ||= createConfiguredFleetService(options)
       return service[property]
     },
   })
@@ -698,7 +701,11 @@ function lazyLocalFleetService(options) {
 export function createFleetMcpServer(options = {}) {
   const environment = options.environment || process.env
   const stderr = options.stderr || process.stderr
-  const service = options.service || lazyLocalFleetService({
+  const hostedBackend = environment.CLOUDFLARE_FLEET_BACKEND !== "local"
+    && (environment.CLOUDFLARE_FLEET_BACKEND === "hosted" || Boolean(environment.CLOUDFLARE_FLEET_URL))
+  const stateReadAnnotations = hostedBackend ? READ_ONLY_EXTERNAL_ANNOTATIONS : READ_ONLY_LOCAL_ANNOTATIONS
+  const stateApplyAnnotations = { ...APPLY_LOCAL_ANNOTATIONS, openWorldHint: hostedBackend }
+  const service = options.service || lazyConfiguredFleetService({
     environment,
     policyFile: options.policyFile,
     stateFile: options.stateFile,
@@ -725,11 +732,11 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
-  const secrets = [environment.CLOUDFLARE_API_TOKEN]
+  const secrets = [environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET, environment.CLOUDFLARE_FLEET_ACCESS_TOKEN]
 
   function reviewedMutationHandler(configuration) {
     return safeToolHandler(async (input, context) => {
@@ -858,7 +865,7 @@ export function createFleetMcpServer(options = {}) {
     "get_runtime_status",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
-      description: "Inspect effective local paths, credential presence, private file modes, runtime and dashboard prerequisites, with an optional bounded live zone-list probe. Secret values are never returned.",
+      description: "Inspect the selected backend, endpoint or local paths, credential presence, runtime, and prerequisites. Optional live checks verify hosted API/D1 readiness or standalone zone access. Secret values are never returned.",
       inputSchema: runtimeStatusInputSchema,
       outputSchema: runtimeOutputSchema,
       title: "Diagnose Cloudflare Fleet runtime",
@@ -877,14 +884,66 @@ export function createFleetMcpServer(options = {}) {
       return toolResult(result, summary)
     }, secrets),
   )
+  const stateRequestSchema = z.strictObject({ state: z.json(), intentSource: z.enum(["incoming", "hosted"]) })
+  const stateOutputSchema = z.union([accountOutputSchema.extend({
+    state: z.json().optional(), archives: z.array(z.json()).optional(), archiveId: z.string().optional(),
+    archivesLimited: z.boolean().optional(), summary: z.json().optional(), planSet: z.json().optional(),
+    diff: z.array(z.json()).optional(), target: z.json().optional(), reviewItems: z.array(z.json()).optional(),
+    entry: z.json().optional(), activityId: identifierSchema.optional(), outcome: z.literal("unknown").optional(),
+  }), errorOutputSchema])
+  server.registerTool("get_fleet_state", {
+    title: "Export selected Fleet state or a hosted recovery archive",
+    description: "Read the complete account-scoped state for backup and reviewed reconciliation, plus bounded hosted archive metadata. Never writes Cloudflare configuration.",
+    annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+    inputSchema: z.strictObject({ archiveId: identifierSchema.optional() }), outputSchema: stateOutputSchema,
+  }, safeToolHandler(async ({ archiveId }) => {
+    const result = await service.getState(archiveId)
+    return toolResult(result, "Fleet state exported from the selected backend")
+  }, secrets))
+  server.registerTool("plan_state_reconciliation", {
+    title: "Plan shared Fleet state reconciliation",
+    description: "Compare incoming and hosted state. Explicitly choose incoming or hosted intent; preserve distinct activity and incident records, reject conflicting identities and pending operations, and bind both complete inputs to the review digest.",
+    annotations: READ_ONLY_EXTERNAL_ANNOTATIONS, inputSchema: stateRequestSchema, outputSchema: stateOutputSchema,
+  }, safeToolHandler(async (input) => {
+    const result = await service.planState(input)
+    return toolResult(result, "Reviewed state reconciliation prepared without changing either store")
+  }, secrets))
+  server.registerTool("apply_state_reconciliation", {
+    title: "Apply reviewed Fleet state reconciliation",
+    description: "After signed interactive approval, replan under hosted exclusion, reject changed revisions, preserve all history, archive the previous hosted state, and verify persisted documents. Does not modify Cloudflare resources.",
+    annotations: APPLY_ANNOTATIONS,
+    inputSchema: stateRequestSchema.extend({ planDigest: digestSchema }), outputSchema: stateOutputSchema,
+  }, reviewedMutationHandler({
+    action: "state-reconciliation-apply", toolName: "apply_state_reconciliation", title: "Fleet state reconciliation",
+    request: ({ planDigest: _digest, ...input }) => input,
+    plan: (input) => service.planState(input),
+    apply: (input, digest) => service.applyState(input, digest),
+  }))
+
+  server.registerTool("plan_activity_recovery", {
+    title: "Review an interrupted hosted activity",
+    description: "Requires an expired lease, the pending activity ID, an investigation reason, and confirmation that old clients are stopped and affected resources inspected. Preserves unknown outcomes without retrying or claiming verification.",
+    annotations: READ_ONLY_EXTERNAL_ANNOTATIONS, inputSchema: activityRecoverySchema, outputSchema: stateOutputSchema,
+  }, safeToolHandler(async (input) => toolResult(await service.planRecovery(input), "Interrupted activity recovery review prepared"), secrets))
+  server.registerTool("apply_activity_recovery", {
+    title: "Close an interrupted hosted activity after review",
+    description: "Signed approval binds the exact pending journal and operator acknowledgement. Requires an inactive lease, retains the original plans with an unknown-outcome failure and no automatic undo, verifies persistence, and unblocks subsequent reviewed writes. Does not change Cloudflare resources.",
+    annotations: APPLY_ANNOTATIONS,
+    inputSchema: activityRecoverySchema.extend({ planDigest: digestSchema }), outputSchema: stateOutputSchema,
+  }, reviewedMutationHandler({
+    action: "activity-recovery-apply", toolName: "apply_activity_recovery", title: "Interrupted Fleet activity",
+    request: ({ planDigest: _digest, ...input }) => input,
+    plan: (input) => service.planRecovery(input),
+    apply: (input, digest) => service.applyRecovery(input, digest),
+  }))
 
   const workerOutputSchema = z.union([accountOutputSchema, errorOutputSchema])
   for (const [name, method, schema, description, readOnly] of [
     ["inspect_worker", "inspect", workerInspectionSchema, "Inspect one exact Worker or Worker finding within a bounded past time window. Return redacted configuration, deployed versions, invocation-only page counts, separate HTTP statuses and explicit coverage. Pass the original start/end with the next cursor. Does not retrieve source or save an incident.", true],
-    ["record_worker_incident", "record", workerInspectionSchema, "Capture fresh scoped Worker evidence as an append-only local incident assessment, linking the prior assessment without erasing it. Does not change Cloudflare resources.", false],
+    ["record_worker_incident", "record", workerInspectionSchema, "Capture fresh scoped Worker evidence as an append-only selected-backend incident assessment, linking the prior assessment without erasing it. Does not change Cloudflare resources.", false],
     ["list_worker_incidents", "history", workerHistorySchema, "Read paginated incident history, supersession links and explicit schedule intent for one Worker.", true],
     ["verify_worker_incident", "verify", workerVerificationSchema, "Verify this Worker's recorded schedule change using only evidence after the propagation grace period, and save the new assessment. Distinguishes configuration acceptance, propagation pending, observed failures, awaiting evidence and observed health.", false],
-    ["plan_worker_intent", "planIntent", workerIntentInputSchema, "Plan revision-safe local schedule intent: disabled, exact desired set, or unmanaged. Include the owning configuration and reviewed reconciliation step; no arbitrary local file is edited.", true],
+    ["plan_worker_intent", "planIntent", workerIntentInputSchema, "Plan revision-safe selected-backend schedule intent: disabled, exact desired set, or unmanaged. Include the owning configuration and reviewed reconciliation step; no arbitrary local file is edited.", true],
   ]) {
     server.registerTool(name, {
       title: name.replaceAll("_", " "), description,
@@ -902,7 +961,7 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool("apply_worker_intent", {
     title: "Save reviewed Worker schedule intent",
     description: "Persist only the exact reviewed schedule intent after signed interactive confirmation and revision checking. Does not modify deployment files or Cloudflare schedules.",
-    annotations: { ...APPLY_ANNOTATIONS, openWorldHint: false },
+    annotations: stateApplyAnnotations,
     inputSchema: z.strictObject({ input: workerIntentInputSchema, planDigest: digestSchema }),
     outputSchema: workerOutputSchema,
   }, reviewedMutationHandler({
@@ -959,7 +1018,7 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "get_fleet_intent",
     {
-      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      annotations: stateReadAnnotations,
       description: "Read the complete revisioned fleet intent document for editing without reading or writing Cloudflare.",
       inputSchema: emptyInputSchema,
       outputSchema: intentOutputSchema,
@@ -974,7 +1033,7 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "plan_fleet_intent",
     {
-      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      annotations: stateReadAnnotations,
       description: "Validate a complete desired fleet intent document against its current account and revision, then return an exact digest-bound collection diff without persisting it.",
       inputSchema: intentInputSchema,
       outputSchema: planOutputSchema,
@@ -992,7 +1051,7 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "apply_fleet_intent",
     {
-      annotations: APPLY_LOCAL_ANNOTATIONS,
+      annotations: stateApplyAnnotations,
       description: "Persist only the exact reviewed complete fleet intent document after signed interactive confirmation, exclusive locking, fresh revision validation, and digest comparison.",
       inputSchema: intentApplyInputSchema,
       outputSchema: applyOutputSchema,
@@ -1341,8 +1400,8 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "list_activity",
     {
-      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
-      description: "List durable local operation activity newest first without reading or writing Cloudflare.",
+      annotations: stateReadAnnotations,
+      description: "List durable selected-backend operation activity newest first without reading or writing Cloudflare.",
       inputSchema: emptyInputSchema,
       outputSchema: activityOutputSchema,
       title: "List fleet operation activity",
@@ -1406,7 +1465,7 @@ export function createFleetMcpServer(options = {}) {
 export function runFleetMcpServer(options = {}) {
   const environment = options.environment || process.env
   const stderr = options.stderr || process.stderr
-  const secrets = [environment.CLOUDFLARE_API_TOKEN]
+  const secrets = [environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET, environment.CLOUDFLARE_FLEET_ACCESS_TOKEN]
   const server = createFleetMcpServer({ ...options, environment, stderr })
   stderr.write("[mcp] Cloudflare Fleet stdio server ready\n")
   return serveStdio(() => server, {

@@ -248,7 +248,9 @@ test("unified CLI serves namespace and leaf help without requiring operands", as
     [["schema", "--help"], /cloudflare-fleet schema/],
     [["schema", "change", "--help"], /machine-readable public input schemas/],
     [["help", "intent"], /cloudflare-fleet intent/],
-    [["help", "doctor"], /check local readiness/],
+    [["help", "doctor"], /check selected-backend readiness/],
+    [["state", "plan", "--help"], /intentSource/],
+    [["recovery", "apply", "--help"], /unknown-outcome/],
   ]
 
   for (const [argv, pattern] of cases) {

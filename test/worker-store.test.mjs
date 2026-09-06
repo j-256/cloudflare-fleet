@@ -34,7 +34,7 @@ test("hosted Worker writes exclude concurrent owners and release a failed operat
   const first = hostedWorkerStore(db, "example-account")
   const second = hostedWorkerStore(db, "example-account")
   await assert.rejects(first.withWriteLock(async () => {
-    await assert.rejects(second.withWriteLock(async () => {}), /in progress/)
+    await assert.rejects(second.withWriteLock(async () => {}), /Another Fleet operation/)
     throw new Error("test failure")
   }), /test failure/)
   await second.withWriteLock(async () => {})
@@ -57,6 +57,7 @@ test("hosted bounded Worker commands preserve projection, review, journal and ac
   const call = async (command, payload, overrides = {}, origin = "http://localhost:8787") => fetchHostedFleet(new Request(`http://localhost:8787/api/workers/${command}`, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin }, body: JSON.stringify(payload) }), { ...env, ...overrides })
   const report = await (await call("inspect", { worker: "example-worker" }, { FLEET_READ_ONLY: "true" })).json()
   assert.equal(report.result.assessment.status, "mismatch")
+  assert.equal(report.result.logs.status, "observed")
   assert.equal((await call("record", { worker: "example-worker" }, { FLEET_READ_ONLY: "true" })).status, 403)
   assert.equal((await call("record", { worker: "example-worker" }, {}, "https://attacker.example")).status, 403)
   assert.equal((await call("arbitrary", { method: "DELETE", path: "/anything" })).status, 400)

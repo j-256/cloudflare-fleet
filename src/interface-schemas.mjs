@@ -14,6 +14,11 @@ import {
 
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+export const activityRecoverySchema = z.strictObject({
+  activityId: identifierSchema,
+  reason: z.string().trim().min(10).max(1000),
+  stoppedClientsAndInspectedResources: z.literal(true),
+})
 const zoneIdsSchema = z.array(identifierSchema).min(1).max(100)
 const desiredSchema = z.json().describe("Desired bounded resource definition")
 const rulesetTargetSchema = {
@@ -387,6 +392,12 @@ const runtimeCheckSchema = z.strictObject({
 })
 
 export const runtimeStatusOutputSchema = z.looseObject({
+  backend: z.looseObject({
+    kind: z.enum(["local", "hosted"]),
+    endpoint: z.string().nullable(),
+    accountId: z.string().optional(),
+    fallback: z.boolean().optional(),
+  }).optional(),
   checkedAt: z.string(),
   checks: z.array(runtimeCheckSchema),
   credentials: z.strictObject({

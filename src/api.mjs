@@ -131,6 +131,9 @@ export class CloudflareApi {
     }
     if (this.usesBroker) headers[BROKER_SESSION_HEADER] = this.brokerSecret
     else if (!this.usesBackend) headers.Authorization = `Bearer ${this.apiToken}`
+    if (this.usesBackend && !this.usesBroker && this.executionId && method !== HTTP_METHOD.GET) {
+      headers["X-Fleet-Execution"] = this.executionId
+    }
     const request = {
       method,
       headers,
@@ -330,7 +333,7 @@ export class CloudflareApi {
       signal: options.signal,
     })
     const envelope = await response.json()
-    if (response.status === 409) {
+    if (response.status === 409 && envelope.result) {
       throw new FleetIntentApiConflictError(
         envelope.errors?.[0]?.message || "Fleet intent changed in another dashboard window",
         envelope.result,
@@ -358,11 +361,15 @@ export class CloudflareApi {
   }
 
   async appendOperationActivity(entry, options = {}) {
-    return this.persistOperationActivity(entry, HTTP_METHOD.POST, options)
+    const document = await this.persistOperationActivity(entry, HTTP_METHOD.POST, options)
+    this.executionId = entry.id
+    return document
   }
 
   async finalizeOperationActivity(entry, options = {}) {
-    return this.persistOperationActivity(entry, HTTP_METHOD.PATCH, options)
+    const document = await this.persistOperationActivity(entry, HTTP_METHOD.PATCH, options)
+    if (this.executionId === entry.id) this.executionId = null
+    return document
   }
 
   async persistOperationActivity(entry, method, options = {}) {
@@ -371,7 +378,10 @@ export class CloudflareApi {
     }
     const response = await this.fetchImpl(new URL("activity", this.backendBaseUrl), {
       body: JSON.stringify({ entry }),
-      headers: this.backendHeaders({ json: true }),
+      headers: {
+        ...this.backendHeaders({ json: true }),
+        ...(!this.usesBroker && method === HTTP_METHOD.PATCH && this.executionId ? { "X-Fleet-Execution": this.executionId } : {}),
+      },
       method,
       signal: options.signal,
     })

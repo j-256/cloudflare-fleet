@@ -161,21 +161,43 @@ cloudflare-fleet hosted configure ...</code></pre>
       <h2 id="state-import-heading">Import existing local intent, activity, and Worker records</h2>
       <p>When moving an established local fleet to hosted mode, apply all repository migrations first and import the ignored account-scoped state file once. Worker schedule intent and incident history are included when present; legacy state documents receive an empty Worker record document.</p>
       <pre><code>cloudflare-fleet hosted import-state</code></pre>
-      <p>The importer reads the D1 identifier from the ignored Wrangler configuration and refuses to replace populated hosted state. Use <code>--force</code> only after reviewing both local and remote data.</p>
+      <p>The importer reads the D1 identifier from the ignored Wrangler configuration and refuses to replace populated hosted state. For populated stores, use the reviewed, history-preserving reconciliation workflow below instead of a force import.</p>
+    </section>
+
+    <section class="section prose" aria-labelledby="shared-control-heading">
+      <h2 id="shared-control-heading">Use one shared control plane from every device</h2>
+      <p>Set <code>CLOUDFLARE_FLEET_URL</code> to the protected HTTPS origin and <code>CLOUDFLARE_FLEET_ACCOUNT_ID</code> to its expected account in each CLI or MCP process. D1 becomes authoritative for intent, activity, and Worker records; Cloudflare remains authoritative for live configuration, and the deployed Worker variables supply operator policy exceptions. The local state file is not a synchronized replica.</p>
+      <p>Load a dedicated Access service token through <code>CLOUDFLARE_FLEET_ACCESS_CLIENT_ID</code> and <code>CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET</code>. Add an application-specific Service Auth policy containing only that token, preserving the human login and MFA policies. Alternatively, provide an unexpired application JWT through <code>CLOUDFLARE_FLEET_ACCESS_TOKEN</code>. Do not combine credential methods. Follow Cloudflare's <a href="https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/">service-token instructions</a>; keep values in a private secret manager and process environment, never arguments, URLs, or shared configuration.</p>
+      <p>Remote clients do not need or forward the Cloudflare account API token. The stdio MCP process connects through the same bounded hosted command API as the CLI; it does not expose a remote HTTP MCP endpoint. A configured hosted URL has no silent local fallback, and local file flags are rejected. <code>cloudflare-fleet dashboard</code> opens that URL; deployment policy controls writes.</p>
+      <pre><code>export CLOUDFLARE_FLEET_URL="https://fleet.example.com"
+export CLOUDFLARE_FLEET_ACCOUNT_ID="your-account-id"
+cloudflare-fleet config show
+cloudflare-fleet doctor --live
+cloudflare-fleet mcp</code></pre>
+      <p>Before cutover, stop writers and back up both stores. Apply all repository D1 migrations before deploying matching Worker and client versions. <code>0004_shared_control_state.sql</code> adds account-scoped state archives, and the Worker diagnostics migration supplies the shared lease. The live doctor checks authenticated protocol, account binding, and required storage tables.</p>
+      <pre><code>umask 077
+CLOUDFLARE_FLEET_BACKEND=local cloudflare-fleet state export &gt; local-backup.json
+cloudflare-fleet state export &gt; hosted-backup.json
+jq '{state: ., intentSource: "incoming"}' local-backup.json &gt; reconciliation.json
+cloudflare-fleet state plan --input reconciliation.json --format json
+cloudflare-fleet state apply --input reconciliation.json --expect-plan REVIEWED_DIGEST</code></pre>
+      <p>Review the complete plan and choose incoming or hosted intent explicitly. Reconciliation preserves distinct activity and incident histories and rejects conflicting identities or pending operations. It rechecks revisions under exclusion, archives the prior state, atomically saves the merge, and verifies persistence. Inputs are bounded to 2 MiB and each apply to 500 additional activities. <code>state export --archive-id ID</code> reads a recovery copy; plan that copy as incoming to restore intent without deleting newer history. MCP provides <code>get_fleet_state</code>, <code>plan_state_reconciliation</code>, and <code>apply_state_reconciliation</code> with signed interactive approval for apply.</p>
+      <p>After cutover, keep standalone mode for deliberate offline inspection or recovery only. Do not alternate production writes between unsynchronized local and hosted stores. Revoke a lost device's Access token and issue a replacement limited to this application; a lost device does not require distributing the account API token.</p>
     </section>
 
     <section class="section prose" aria-labelledby="worker-recovery-heading">
       <h2 id="worker-recovery-heading">Recover Worker diagnostics and schedule management</h2>
       <p>Run <code>npm run db:migrate:remote</code> before deploying a version that uses Worker diagnostics. <code>0002_worker_diagnostics.sql</code> adds account-scoped intent and incident documents plus the Worker execution lease. Local state needs no manual migration: the optional <code>workers</code> section is created when intent or evidence is saved. Preserve it with the operation activity section in private backups.</p>
-      <p>Hosted Worker operations use a bounded command deadline and an account-scoped write lease. An interrupted operation can leave pending activity; lease expiry permits another owner but does not prove whether the original upstream write succeeded. Inspect activity and fresh Worker configuration before retrying. A verified inverse requires unchanged post-write schedules and deployment, not merely an available lease.</p>
+      <p>Hosted browser, CLI, and MCP operations share an account-scoped write lease. An interrupted operation can leave pending activity, which blocks writes even after lease expiration. Stop old clients and independently inspect affected live resources, then use <code>cloudflare-fleet recovery plan</code> and <code>recovery apply</code>, or MCP <code>plan_activity_recovery</code> and <code>apply_activity_recovery</code>. Input requires <code>activityId</code>, an investigation <code>reason</code>, and <code>stoppedClientsAndInspectedResources: true</code>; apply requires the exact reviewed digest. Recovery retains the original plans as a failed execution with an explicitly unknown outcome, zero confirmed completions, and no automatic inverse. It does not retry, reverse, or verify Cloudflare writes. A verified inverse requires unchanged post-write schedules and deployment, not merely an available lease.</p>
       <p>Online schedule edits do not change the owning Wrangler configuration. Record the configuration owner and reviewed reconciliation step in schedule intent, deliberately make that companion edit in its owning project, and review it again for rollback. Omitted Cron configuration preserves deployed schedules, while an explicit empty array removes them; Cloudflare documents both behavior and the propagation delay in <a href="https://developers.cloudflare.com/workers/configuration/cron-triggers/">Cron Triggers</a>.</p>
       <p>Use the dashboard's Workers panel, <code>cloudflare-fleet worker --help</code>, or the <a href="https://github.com/j-256/cloudflare-fleet#worker-diagnostics-and-schedule-recovery">CLI and MCP workflow</a> to inspect, review, apply, verify, and recover the same bounded operation. No recovery step implicitly redeploys code or changes routes, bindings, credentials, or databases.</p>
     </section>
 
     <section class="section prose" aria-labelledby="local-heading">
       <h2 id="local-heading">Keep the local interfaces</h2>
-      <p>Hosted deployment does not replace local mode. On macOS, provide the account token and identifier in the shell and launch the ordinary browser workflow. It shares the same UI, policy, intent schema, write planner, activity model, and verification code.</p>
-      <pre><code>export CLOUDFLARE_API_TOKEN="your-account-token"
+      <p>Standalone local mode remains available, but it is a separate authority, not a replica of hosted D1. Select it explicitly when a hosted URL is configured. On macOS, provide the account token and identifier in the shell and launch the ordinary browser workflow. It shares the same UI, policy, intent schema, write planner, activity model, and verification code.</p>
+      <pre><code>export CLOUDFLARE_FLEET_BACKEND=local
+export CLOUDFLARE_API_TOKEN="your-account-token"
 export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 cloudflare-fleet dashboard</code></pre>
       <p>Use <code>cloudflare-fleet dashboard --write</code> for the full local workflow. State defaults to <code>$XDG_STATE_HOME/cloudflare-fleet/state.json</code>, falling back to <code>~/.local/state/cloudflare-fleet/state.json</code>; policy uses the corresponding per-user configuration directory. Select another profile with <code>--state-file</code> or <code>--policy-file</code>. The checkout-local <code>./launch.sh</code> wrapper accepts the same dashboard options.</p>

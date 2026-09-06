@@ -153,6 +153,7 @@ export async function checkInstall() {
     delete environment.CLOUDFLARE_FLEET_POLICY_FILE
     delete environment.CLOUDFLARE_FLEET_STATE_FILE
     Object.assign(environment, {
+      CLOUDFLARE_FLEET_BACKEND: "local",
       CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
       CLOUDFLARE_API_TOKEN: "install-smoke-token",
       XDG_CONFIG_HOME: xdgConfig,
