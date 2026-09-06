@@ -13,6 +13,10 @@ import {
   normalizeZoneAliasIntentPolicy,
   zoneAliasIntentPolicyIsValid,
 } from "./zone-alias-intent.mjs"
+import {
+  hostnameScopedFreeRateLimitIntentPolicyIsValid,
+  normalizeHostnameScopedFreeRateLimitIntentPolicy,
+} from "./rate-limit-intent.mjs"
 
 export const FLEET_INTENT_SCHEMA_VERSION = 8
 export const FLEET_INTENT_DOCUMENT_GLOBAL = "__CLOUDFLARE_FLEET_INTENT__"
@@ -365,6 +369,7 @@ function normalizeFleetIntentPolicy(policy) {
   normalized = normalizeObservedEmailRoutingIntentPolicy(normalized)
   normalized = normalizeRedirectIntentPolicy(normalized)
   normalized = normalizeZoneAliasIntentPolicy(normalized)
+  normalized = normalizeHostnameScopedFreeRateLimitIntentPolicy(normalized)
   return normalized
 }
 
@@ -391,6 +396,7 @@ function isPolicy(policy, options = {}) {
     && Object.values(FLEET_INTENT_VALUE_CONSTRAINT).includes(valueConstraint)
     && expectedValid
     && zoneAliasIntentPolicyIsValid(policy)
+    && hostnameScopedFreeRateLimitIntentPolicyIsValid(policy)
     && (!options.requireNormalizedPresence
       || policy.presenceConstraint === presenceConstraint)
     && (!options.requireNormalizedDnssec

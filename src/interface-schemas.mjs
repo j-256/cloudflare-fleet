@@ -267,7 +267,7 @@ const fleetIntentGroupSchema = z.discriminatedUnion("mode", [
     ]),
   }),
 ])
-const fleetIntentExpectedValueSchema = z.json().describe("Desired bounded resource definition. Canonical web passthrough policies use the strict canonical-web-passthrough value returned by describe_zone_alias_policy and require exact value plus required presence.")
+const fleetIntentExpectedValueSchema = z.json().describe("Desired bounded resource definition. Canonical web passthrough and hostname-scoped Free rate-limit policies use the strict values returned by their descriptor tools and require exact value plus required presence.")
 const fleetIntentExpectedCommonShape = {
   canonical: fleetIntentLabelSchema(FLEET_INTENT_LONG_LABEL_LIMIT),
   display: z.string(),

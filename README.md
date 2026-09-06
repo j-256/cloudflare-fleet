@@ -17,6 +17,7 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Separates observed differences from saved fleet intent, acknowledged exceptions, and expected coverage gaps
 - Turns supported exact and forbidden intent into first-class cell, row, and policy alignment reviews
 - Models compatibility domains as strict canonical passthrough intent that rejects independent web behavior
+- Governs a Free zone's single rate rule and its complementary hostname WAF skip as one fail-safe posture
 - Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
 - Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
 - Displays targets, before and after values, methods, endpoints, and request bodies before a write
@@ -242,6 +243,7 @@ cloudflare-fleet alignment apply --policy POLICY_ID \
 umask 077
 cloudflare-fleet intent show > fleet-intent.json
 cloudflare-fleet intent aliases --format json
+cloudflare-fleet intent rate-limits --format json
 cloudflare-fleet intent plan --input fleet-intent.json --format json
 cloudflare-fleet intent apply --input fleet-intent.json \
   --expect-plan 'sha256:...' --format json
@@ -315,7 +317,7 @@ For an explicit standalone profile, append `--state-file /absolute/path/state.js
 The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview so one operation stays on a single review field, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
-- Read: `audit_fleet`, `describe_zone_alias_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
+- Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
 - Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_change`, and `plan_activity_undo`
 - Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_change`, and `apply_activity_undo`
 
@@ -366,6 +368,12 @@ Remove only the installed program with `npm uninstall --global cloudflare-fleet`
 Fleet intent defines presence and value constraints independently. Broader groups act as baselines, contained groups refine them, and partial overlaps remain peers. Exact acknowledgements bind one policy, zone, and observed normalized value, then become stale if that context changes. Saving intent evaluates drift but never writes Cloudflare.
 
 The typed `Zone aliases / canonical-web-passthrough` facet is an opt-in policy for compatibility domains. It is fixed to required presence and exact value: status, target scheme and host, path preservation, query preservation, subdomain matching, subdomain preservation, serving apex and wildcard DNS, and an empty unexpected-resource envelope all participate in equality. `cloudflare-fleet intent aliases --format json` and the MCP `describe_zone_alias_policy` tool return reusable values plus initial templates for `j256.dev`, `strangelaser.com`, and `strangelasers.net`; the dashboard loads the matching template when one of those zones is selected.
+
+The typed `Rate limiting / hostname-scoped-free-rate-limit` facet is also opt-in, required, and exact. It combines one `http_ratelimit` block rule with every custom WAF skip that targets that phase. The selected hostname set belongs to the composite value even though the Free rate-rule expression cannot match Host: Fleet derives one complementary skip in the earlier `http_request_firewall_custom` phase so every other host bypasses the zone's rate rule. Missing or extra skips, an unsupported rate expression, multiple rate rules, or incomplete reads make the posture unhealthy instead of silently widening protection.
+
+Cloudflare's documented Free envelope, verified 2026-09-06, is [one rate rule per zone with Path and Verified Bot match fields](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability), IP counting, a 10-second counting and mitigation period, and Block. The paired skip consumes one of the Free plan's [five custom WAF rules](https://developers.cloudflare.com/waf/custom-rules/#availability). Fleet's reusable values expose an intentionally unused slot and a 100 requests per 10 seconds API-path starter; that threshold is an example, not a workload claim, and should be replaced with a measured service baseline. If all five custom-rule slots are occupied, Fleet blocks creation of the required skip; the Free-compatible choices are to reclaim a custom-rule slot or leave the rate-limit slot unused, while an upgrade buys more custom-rule capacity. The starter uses the default Cloudflare block response. Cloudflare documents [custom rate-limit responses as Pro and above](https://developers.cloudflare.com/waf/rate-limiting-rules/create-zone-dashboard/#configure-a-custom-response-for-blocked-requests), so Fleet will preserve an identical response already observed on a Free zone but will not introduce one there. The Free fallback is Cloudflare's default block response; Pro is needed only when a tailored response is a service requirement.
+
+The relationship changes the write order. Fleet creates or restores the WAF skip before enabling the rate rule, disables an active rate rule before changing host scope, and removes the rate rule before its skip. If a later write fails, the remaining state is disabled or over-exempt rather than rate-limited on unintended hosts. Guarded inverse reverses those transitions in the corresponding safe order. `cloudflare-fleet intent rate-limits --format json` and MCP `describe_hostname_scoped_rate_limit_policy` return the strict facet, constraints, Free limits, relationship, and reusable values without reading or writing Cloudflare.
 
 The `canonicalization-dns-mail-security-v1` envelope allows proxied apex and wildcard DNS used by the redirect, non-web and mail or ownership-verification DNS, one canonical dynamic redirect, ordinary TLS and zone posture, and shared security rulesets. Additional web-serving DNS, redirects, application rules, Worker routes or custom domains, Pages domains, SSL for SaaS custom hostnames, load balancers, health checks, waiting rooms, Web3 hostnames, and snippets are reported individually with the canonical target as owner evidence. A failed relevant read blocks alignment. Legacy Page Rules remain an explicit coverage limitation because Cloudflare rejects that endpoint for account-owned tokens, so Fleet never presents their absence as proven.
 

@@ -134,15 +134,17 @@ cloudflare-fleet config show</code></pre>
       <pre><code>cloudflare-fleet doctor --live
 cloudflare-fleet audit --fail-on warning
 cloudflare-fleet dashboard
-cloudflare-fleet intent aliases --format json</code></pre>
+cloudflare-fleet intent aliases --format json
+cloudflare-fleet intent rate-limits --format json</code></pre>
       <p>The dashboard is read-only until launched with <code>--write</code>. Use <code>--fresh</code> when a launch should bypass cached inventory. After a reviewed mutation, inspect durable evidence with <code>cloudflare-fleet activity list</code>; begin recovery only with <code>cloudflare-fleet activity undo plan --id ACTIVITY_ID</code>, which blocks if live state no longer matches the verified operation.</p>
       <p>The noninteractive CLI follows the same plan and apply split. Generate a JSON plan, present it for approval, and pass its exact digest to the corresponding apply command. A changed digest exits distinctly before mutation.</p>
       <p><code>intent aliases</code> returns the strict canonical passthrough facet, its exact resource envelope, and initial compatibility-domain templates without reading or writing Cloudflare. Persist a selected value through the ordinary revisioned intent plan and apply commands, then remediate drift through alignment.</p>
+      <p><code>intent rate-limits</code> returns the required-and-exact Free-plan posture that pairs one path rate rule with the earlier custom WAF skip confining it to selected hostnames. It includes an unused value and an API-path starter. Alignment creates the skip before the rate rule, disables the rate rule before host-scope changes, and removes the rate rule before the skip.</p>
     </section>
 
     <section class="section prose" aria-labelledby="mcp-heading">
       <h2 id="mcp-heading">Connect a trusted MCP client</h2>
-      <p>The installed <code>cloudflare-fleet mcp</code> command is a stdio server with no network listener and no arbitrary Cloudflare API passthrough. Its first diagnostic tool, <code>get_runtime_status</code>, can explain missing setup before an agent attempts fleet work. <code>describe_zone_alias_policy</code> returns the same typed passthrough contract and templates as the CLI.</p>
+      <p>The installed <code>cloudflare-fleet mcp</code> command is a stdio server with no network listener and no arbitrary Cloudflare API passthrough. Its first diagnostic tool, <code>get_runtime_status</code>, can explain missing setup before an agent attempts fleet work. <code>describe_zone_alias_policy</code> and <code>describe_hostname_scoped_rate_limit_policy</code> return the same typed contracts and reusable values as the CLI.</p>
 
       <h3>Codex</h3>
       <p>Add the server to <code>~/.codex/config.toml</code> and explicitly forward the credential variables from the environment that launches Codex.</p>

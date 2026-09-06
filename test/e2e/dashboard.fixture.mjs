@@ -13,6 +13,7 @@ import {
 import {
   ACCOUNT_SURFACES,
   SURFACES,
+  WAF_PHASE,
 } from "../../src/constants.mjs"
 import {
   CACHE_MODE,
@@ -35,6 +36,13 @@ import {
   ok,
 } from "../fixtures.mjs"
 import {
+  materializeValue,
+} from "../../src/normalize.mjs"
+import {
+  createHostnameScopedFreeRateLimitIntentValue,
+  RATE_LIMIT_PHASE,
+} from "../../src/rate-limit-intent.mjs"
+import {
   buildZoneAliasRedirectRule,
   createZoneAliasIntentValue,
   ZONE_ALIAS_REDIRECT_PHASE,
@@ -53,7 +61,7 @@ const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
 const SESSION_SECRET = "e2e-session-secret"
 const ZONES_PATH = "zones"
 const DENSE_RULE_ZONE_COUNT = 12
-const DENSE_RULE_PHASE = "http_request_firewall_custom"
+const DENSE_RULE_PHASE = WAF_PHASE
 
 const ZONE_NAMES = Object.freeze([
   "alpha.example",
@@ -241,6 +249,53 @@ function zoneAliasIntentInventory() {
       name: ruleset.name,
       phase: ruleset.phase,
     }],
+  })
+  const inventory = makeInventory([zone])
+  inventory.account.id = ACCOUNT_ID
+  inventory.loadedAt = new Date().toISOString()
+  return inventory
+}
+
+function rateLimitIntentInventory() {
+  const zoneName = "limits.example"
+  const current = materializeValue(
+    createHostnameScopedFreeRateLimitIntentValue({
+      hosts: ["legacy.{zone}"],
+      rateDescription: "[fleet] Limit API requests by source",
+      rateExpression: "starts_with(http.request.uri.path, \"/api/\")",
+      requestsPerPeriod: 100,
+      skipDescription: "[fleet] Skip API rate limit on other hosts",
+    }),
+    zoneName,
+  )
+  const rateRuleset = {
+    id: "rate-limit-ruleset",
+    kind: "zone",
+    name: "default",
+    phase: RATE_LIMIT_PHASE,
+    rules: [{
+      id: "rate-limit-rule",
+      ...current.rateRules[0],
+    }],
+  }
+  const skipRuleset = {
+    id: "rate-limit-skip-ruleset",
+    kind: "zone",
+    name: "default",
+    phase: WAF_PHASE,
+    rules: [{
+      id: "rate-limit-skip-rule",
+      ...current.skipRules[0],
+    }],
+  }
+  const zone = makeDashboardZone(zoneName, {
+    ruleDetails: [ok(skipRuleset), ok(rateRuleset)],
+    rulesets: [skipRuleset, rateRuleset].map((ruleset) => ({
+      id: ruleset.id,
+      kind: ruleset.kind,
+      name: ruleset.name,
+      phase: ruleset.phase,
+    })),
   })
   const inventory = makeInventory([zone])
   inventory.account.id = ACCOUNT_ID
@@ -809,6 +864,11 @@ export const test = base.extend({
   zoneAliasDashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo, {
       inventory: zoneAliasIntentInventory(),
+    })
+  },
+  rateLimitDashboard: async ({ page }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, {
+      inventory: rateLimitIntentInventory(),
     })
   },
   readOnlyDashboard: async ({ page }, use, testInfo) => {

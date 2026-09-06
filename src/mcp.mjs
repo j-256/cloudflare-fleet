@@ -65,6 +65,10 @@ import {
   ZONE_ALIAS_INTENT_KIND,
   ZONE_ALIAS_RESOURCE_ENVELOPE,
 } from "./zone-alias-intent.mjs"
+import {
+  describeHostnameScopedFreeRateLimitPolicy,
+  HOSTNAME_SCOPED_RATE_LIMIT_KIND,
+} from "./rate-limit-intent.mjs"
 
 const MCP_SERVER_NAME = "cloudflare-fleet"
 const CONFIRMATION_KEY = "confirm_action"
@@ -352,6 +356,64 @@ const zoneAliasPolicyOutputSchema = z.strictObject({
     value: zoneAliasIntentValueOutputSchema,
   })),
   unexpectedResources: z.array(z.string()),
+})
+const hostnameScopedRateLimitValueOutputSchema = z.strictObject({
+  hosts: z.array(z.string()).max(20),
+  kind: z.literal(HOSTNAME_SCOPED_RATE_LIMIT_KIND),
+  rateRules: z.array(z.looseObject({
+    action: z.literal("block"),
+    description: z.string(),
+    enabled: z.literal(true),
+    expression: z.string(),
+    ratelimit: z.strictObject({
+      characteristics: z.array(z.string()).length(2),
+      mitigation_timeout: z.literal(10),
+      period: z.literal(10),
+      requests_per_period: z.number().int().positive(),
+    }),
+  })).max(1),
+  skipRules: z.array(z.looseObject({
+    action: z.literal("skip"),
+    action_parameters: z.strictObject({
+      phases: z.tuple([z.literal("http_ratelimit")]),
+    }),
+    description: z.string(),
+    enabled: z.literal(true),
+    expression: z.string(),
+  })).max(1),
+})
+const hostnameScopedRateLimitPolicyOutputSchema = z.strictObject({
+  facet: z.strictObject({
+    category: z.string(),
+    description: z.string(),
+    key: z.string(),
+    label: z.string(),
+  }),
+  freePlanLimits: z.strictObject({
+    action: z.literal("block"),
+    characteristics: z.tuple([z.literal("cf.colo.id"), z.literal("ip.src")]),
+    mitigationTimeoutSeconds: z.literal(10),
+    periodSeconds: z.literal(10),
+    rulesPerZone: z.literal(1),
+    ruleExpressionFields: z.tuple([z.literal("Path"), z.literal("Verified Bot")]),
+    wafCustomRulesConsumed: z.literal(1),
+  }),
+  relationship: z.strictObject({
+    firstPhase: z.literal("http_request_firewall_custom"),
+    ratePhase: z.literal("http_ratelimit"),
+    safety: z.string(),
+  }),
+  portability: z.strictObject({
+    customResponse: z.string(),
+  }),
+  requiredConstraints: z.strictObject({
+    presenceConstraint: z.literal("required"),
+    valueConstraint: z.literal("exact"),
+  }),
+  templates: z.array(z.strictObject({
+    id: identifierSchema,
+    value: hostnameScopedRateLimitValueOutputSchema,
+  })),
 })
 
 const READ_ONLY_EXTERNAL_ANNOTATIONS = Object.freeze({
@@ -751,7 +813,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -1030,6 +1092,24 @@ export function createFleetMcpServer(options = {}) {
       return toolResult(
         result,
         `Canonical zone alias policy has ${result.templates.length} initial templates`,
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "describe_hostname_scoped_rate_limit_policy",
+    {
+      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      description: "Return the typed Free-plan rate rule and complementary custom WAF host-scope skip posture without reading or writing Cloudflare.",
+      inputSchema: emptyInputSchema,
+      outputSchema: hostnameScopedRateLimitPolicyOutputSchema,
+      title: "Describe hostname-scoped rate-limit policy",
+    },
+    safeToolHandler(async () => {
+      const result = describeHostnameScopedFreeRateLimitPolicy()
+      return toolResult(
+        result,
+        "Hostname-scoped Free rate-limit policy pairs one rate rule with one earlier WAF skip",
       )
     }, secrets),
   )

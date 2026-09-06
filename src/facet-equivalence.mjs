@@ -9,6 +9,9 @@ import {
 } from "./normalize.mjs"
 import { rulePhaseLabel } from "./rule-presentation.mjs"
 import { editableRulePayload } from "./policies.mjs"
+import {
+  HOSTNAME_SCOPED_RATE_LIMIT_CATEGORY,
+} from "./rate-limit-intent.mjs"
 
 const DNS_RECORD_CATEGORY = "DNS records"
 const DNSSEC_CATEGORY = "DNSSEC"
@@ -102,6 +105,9 @@ function facetIdentitySummary(facet, phaseLabel) {
   if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
     return "Zone aliases / canonical passthrough"
   }
+  if (category === HOSTNAME_SCOPED_RATE_LIMIT_CATEGORY) {
+    return "Rate limiting / rate rule and host-scope WAF skip"
+  }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return `Redirects / ${phaseLabel} / normalized match / occurrence`
   }
@@ -121,6 +127,9 @@ function facetEquivalenceSummary(facet) {
   const category = String(facet?.category || "")
   if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
     return "Canonical redirect behavior, serving DNS presence, and an exact empty accumulation envelope"
+  }
+  if (category === HOSTNAME_SCOPED_RATE_LIMIT_CATEGORY) {
+    return "Selected hosts, the Free-compatible rate rule, and every custom WAF skip targeting the rate phase"
   }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return "Behavioral rule fields"
@@ -145,6 +154,9 @@ function facetNormalizationSummary(facet) {
   if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
     return "Hostnames are lowercased; zone names are not substituted"
   }
+  if (category === HOSTNAME_SCOPED_RATE_LIMIT_CATEGORY) {
+    return "Hosts are lowercased; zone domain becomes {zone}; equivalent one-host skips use the canonical complement expression"
+  }
   if (RULE_CATEGORIES.has(category)) {
     return "Zone domain becomes {zone}; array order counts"
   }
@@ -155,6 +167,9 @@ function facetIgnoredSummary(facet) {
   const category = String(facet?.category || "")
   if (category === MATRIX_CATEGORY.ZONE_ALIASES) {
     return "Allowed non-web DNS, mail, DNSSEC, TLS, settings, shared security resources, and serving-record identifiers"
+  }
+  if (category === HOSTNAME_SCOPED_RATE_LIMIT_CATEGORY) {
+    return "Rule IDs, timestamps, versions, generated refs, and custom WAF rules that do not skip rate limiting"
   }
   if (category === MATRIX_CATEGORY.REDIRECTS) {
     return "Absolute position, description, explicit ref, IDs, timestamps, versions, unsupported API fields"
