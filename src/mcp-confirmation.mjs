@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import { stableString } from "./normalize.mjs"
 
 export const CONFIRMATION_DECISION = Object.freeze({
@@ -6,9 +8,21 @@ export const CONFIRMATION_DECISION = Object.freeze({
 })
 
 const CONFIRMATION_LINE_WIDTH = 76
-const CONFIRMATION_LINES_PER_FIELD = 10
+// One operation should be one approval; with large values summarized, an
+// operation's line count is bounded by its field count rather than their
+// sizes, so this budget keeps a normal operation on a single review field
+// while still paginating a pathologically field-heavy operation
+const CONFIRMATION_LINES_PER_FIELD = 40
 const STRING_CHANGE_CONTEXT_LENGTH = 40
 const STRING_CHANGE_INLINE_LENGTH = 120
+// A leaf value longer than this renders as a summary (length, digest, head)
+// instead of its full text, so one large field such as a multi-KB rule
+// expression cannot explode an operation across many approval pages; the
+// plan digest still binds the exact bytes, and the per-value digest lets a
+// reviewer cross-check a specific value against the plan output
+const VALUE_SUMMARY_THRESHOLD = 120
+const VALUE_SUMMARY_PREVIEW_LENGTH = 48
+const VALUE_SUMMARY_DIGEST_LENGTH = 12
 const HTTP_METHOD = Object.freeze({
   CREATE: "POST",
   DELETE: "DELETE",
@@ -23,6 +37,20 @@ function isObject(value) {
 function jsonValue(value) {
   const serialized = JSON.stringify(value)
   return serialized === undefined ? String(value) : serialized
+}
+
+function summarizeValue(value) {
+  const serialized = jsonValue(value)
+  if (serialized.length <= VALUE_SUMMARY_THRESHOLD) return serialized
+  const digest = createHash("sha256")
+    .update(stableString(value))
+    .digest("hex")
+    .slice(0, VALUE_SUMMARY_DIGEST_LENGTH)
+  if (typeof value === "string") {
+    const head = value.slice(0, VALUE_SUMMARY_PREVIEW_LENGTH)
+    return `<large string, ${value.length} chars, sha256:${digest}, head: ${jsonValue(head)}>`
+  }
+  return `<large value, ${serialized.length} chars, sha256:${digest}>`
 }
 
 function sharedObjectKeys(current, desired) {
@@ -193,16 +221,16 @@ function compactStringChange(path, current, desired) {
 
 function formatChangeEntry(entry) {
   if (entry.kind === "add") {
-    return [`+ ${entry.path}: ${jsonValue(entry.value)}`]
+    return [`+ ${entry.path}: ${summarizeValue(entry.value)}`]
   }
   if (entry.kind === "remove") {
-    return [`- ${entry.path}: ${jsonValue(entry.value)}`]
+    return [`- ${entry.path}: ${summarizeValue(entry.value)}`]
   }
   if (typeof entry.current === "string" && typeof entry.desired === "string") {
     return compactStringChange(entry.path, entry.current, entry.desired)
   }
   return [
-    `${entry.path}: ${jsonValue(entry.current)} -> ${jsonValue(entry.desired)}`,
+    `${entry.path}: ${summarizeValue(entry.current)} -> ${summarizeValue(entry.desired)}`,
   ]
 }
 
@@ -228,12 +256,12 @@ function wrapLines(lines) {
 
 function snapshotLines(label, value) {
   if (!isObject(value) && !Array.isArray(value)) {
-    return [`${label}: ${jsonValue(value)}`]
+    return [`${label}: ${summarizeValue(value)}`]
   }
   return [
     `${label}:`,
     ...valueEntries(value).map((entry) => (
-      `  ${entry.path || "value"}: ${jsonValue(entry.value)}`
+      `  ${entry.path || "value"}: ${summarizeValue(entry.value)}`
     )),
   ]
 }
