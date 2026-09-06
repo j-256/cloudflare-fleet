@@ -1,5 +1,6 @@
 import {
   evaluateFleetIntent,
+  FLEET_INTENT_ALL_ZONES_GROUP_ID,
   FLEET_INTENT_CELL_STATUS,
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
@@ -211,6 +212,19 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
     (left, right) => left.category.localeCompare(right.category)
       || left.label.localeCompare(right.label),
   )
+}
+
+export function defaultAdoptionSelection(candidate, overrides = {}) {
+  return {
+    expectedCanonical: overrides.expectedCanonical
+      ?? candidate.recommendation.expectedCanonical,
+    groupId: overrides.groupId ?? FLEET_INTENT_ALL_ZONES_GROUP_ID,
+    policyId: overrides.policyId,
+    presenceConstraint: overrides.presenceConstraint
+      ?? FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED,
+    valueConstraint: overrides.valueConstraint
+      ?? candidate.recommendation.valueConstraint,
+  }
 }
 
 export function createIntentAdoptionPolicy(candidate, selection) {
