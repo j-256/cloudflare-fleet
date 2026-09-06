@@ -32,10 +32,14 @@ export function createHostedFleetService(env, options = {}) {
     const url = resolveCloudflareApiUrl(path)
     const parts = url.pathname.slice("/client/v4/".length).split("/").map(decodeURIComponent)
     const method = requestOptions.method || "GET"
+    const signal = requestOptions.signal
+      ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)])
+      : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+    signal.throwIfAborted()
     if (parts[0] === "accounts" && parts[1] !== accountId) throw new TypeError("Cloudflare account path is outside the hosted account")
     if (parts[0] === "zones" && !parts[1] && url.searchParams.get("account.id") !== accountId) throw new TypeError("Cloudflare zone listing requires the hosted account")
     if (parts[0] === "zones" && parts[1] && !verifiedZones.has(parts[1])) {
-      const membership = await request(`zones/${encodeURIComponent(parts[1])}`, { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) })
+      const membership = await request(`zones/${encodeURIComponent(parts[1])}`, { signal })
       if (membership.result?.account?.id !== accountId) throw new TypeError("Cloudflare zone is outside the hosted account")
       verifiedZones.add(parts[1])
     }
@@ -49,9 +53,7 @@ export function createHostedFleetService(env, options = {}) {
     if (owner) await lock.renew(owner)
     return request(path, {
       ...requestOptions,
-      signal: requestOptions.signal
-        ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)])
-        : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      signal,
     })
   }
   const withWriteLock = (operation) => lock.withWriteLock(async (leaseOwner) => {

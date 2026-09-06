@@ -6,8 +6,9 @@ import {
   assessIntentAlignment,
   buildIntentAlignmentPlans,
   intentAlignmentReadRequirement,
+  UnsupportedIntentAlignmentFacetError,
 } from "./intent-alignment.mjs"
-import { loadInventory } from "./inventory.mjs"
+import { alignmentCoverage, incompleteAlignmentReason } from "./alignment-coverage.mjs"
 import { buildMatrix } from "./matrix.mjs"
 import { stableString } from "./normalize.mjs"
 import { executeReadPlan } from "./read-composer.mjs"
@@ -116,11 +117,13 @@ function facetForSelector(intent, selector) {
     ? {
         category: policy.facet.category,
         key: policy.facet.key,
+        label: policy.facet.label,
         phase: policy.facet.phase || "",
       }
     : {
         category: selector.category,
         key: selector.key,
+        label: selector.key,
         phase: selector.phase,
       }
 }
@@ -244,6 +247,33 @@ export function listIntentAlignmentCandidates(inventory, intent) {
       selector: selectorForPolicy(policyState.policy),
     })
   }
+  for (const policy of intent.policies) {
+    const facet = { ...policy.facet, phase: policy.facet.phase || "" }
+    let requirement
+    try { requirement = intentAlignmentReadRequirement(facet) } catch (error) {
+      if (error instanceof UnsupportedIntentAlignmentFacetError) continue
+      throw error
+    }
+    const coverage = alignmentCoverage(inventory, requirement)
+    if (coverage.complete) continue
+    const reason = incompleteAlignmentReason(coverage)
+    const matching = candidates.filter((entry) => (
+      entry.facet.category === facet.category && entry.facet.key === facet.key
+        && entry.facet.phase === facet.phase
+    ))
+    if (!matching.some((entry) => entry.policyId === policy.id)) {
+      const entry = { facet, policyId: policy.id, scope: ALIGNMENT_SELECTOR_KIND.POLICY, selector: selectorForPolicy(policy) }
+      candidates.push(entry)
+      matching.push(entry)
+    }
+    for (const entry of matching) {
+      entry.coverage = coverage
+      entry.assessment = {
+        actionableCount: 0, available: false, blockers: [], reason,
+        targetCount: 0, targetZones: [],
+      }
+    }
+  }
   candidates.sort((left, right) => (
     left.facet.category.localeCompare(right.facet.category)
       || left.facet.label.localeCompare(right.facet.label)
@@ -278,54 +308,6 @@ function assertFleetMembership(baseline, liveInventory) {
     && [...loaded].every(([zoneId, zoneName]) => live.get(zoneId) === zoneName)
   if (!unchanged) {
     throw new Error("Fleet membership changed during live validation. Refresh the full fleet before aligning intent so no zone is omitted or evaluated under a stale name.")
-  }
-}
-
-function assertSurfaceReads(inventory, surfaceIds) {
-  const failures = inventory.zones.flatMap((zone) => surfaceIds
-    .filter((surfaceId) => !zone.surfaces[surfaceId]?.ok)
-    .map((surfaceId) => `${zone.meta.name}: ${surfaceId}`))
-  if (failures.length > 0) {
-    throw new Error(`Intent alignment live validation could not read ${failures.join(", ")}`)
-  }
-}
-
-function assertAccountSurfaceReads(inventory, surfaceIds = []) {
-  const failures = surfaceIds.filter(
-    (surfaceId) => !inventory.account?.surfaces?.[surfaceId]?.ok,
-  )
-  if (failures.length > 0) {
-    throw new Error(`Intent alignment live validation could not read account surfaces ${failures.join(", ")}`)
-  }
-}
-
-function assertRuleDetails(inventory, requirement) {
-  if (!requirement.includeRuleDetails) return
-  const phases = requirement.ruleDetailPhases
-    ? new Set(requirement.ruleDetailPhases)
-    : null
-  const kinds = requirement.ruleDetailKinds
-    ? new Set(requirement.ruleDetailKinds)
-    : null
-  const failures = []
-  for (const zone of inventory.zones) {
-    const expected = (zone.surfaces.rulesets?.result || []).filter(
-      (ruleset) => (phases === null || phases.has(ruleset.phase))
-        && (kinds === null || kinds.has(ruleset.kind)),
-    )
-    const actualIds = new Set(
-      zone.ruleDetails
-        .filter((detail) => detail.ok)
-        .map((detail) => detail.result?.id)
-        .filter(Boolean),
-    )
-    if (zone.ruleDetails.some((detail) => !detail.ok)
-      || expected.some((ruleset) => !actualIds.has(ruleset.id))) {
-      failures.push(zone.meta.name)
-    }
-  }
-  if (failures.length > 0) {
-    throw new Error(`Intent alignment live validation could not read complete ruleset details for ${failures.join(", ")}`)
   }
 }
 
@@ -474,43 +456,25 @@ function overlappingOperation(plansBySelector) {
   return null
 }
 
+function alignmentReadContext(intent, selector) {
+  const facet = facetForSelector(intent, selector)
+  try {
+    return { facet, requirement: intentAlignmentReadRequirement(facet), selector }
+  } catch (error) {
+    if (!(error instanceof UnsupportedIntentAlignmentFacetError)) throw error
+    return { facet, requirement: null, selector, reason: error.message }
+  }
+}
+
 export async function prepareIntentAlignments(api, intent, requestedSelectors, options = {}) {
   const selectors = normalizeAlignmentSelectors(requestedSelectors)
-  const baseline = options.baselineInventory || await (
-    options.loadInventory || loadInventory
-  )(api, {
-    onProgress: options.onProgress,
-    signal: options.signal,
-  })
-  const { matrix: baselineMatrix } = evaluatedIntent(baseline, intent)
-  const contexts = selectors.map((selector) => {
-    const facet = facetForSelector(intent, selector)
-    const row = rowForFacet(baselineMatrix, facet)
-    return {
-      facet,
-      requirement: row ? intentAlignmentReadRequirement(row) : null,
-      row,
-      selector,
-    }
-  })
-  const missing = contexts.filter((context) => !context.row)
-  if (missing.length > 0) {
-    const entries = contexts.map((context) => batchAlignmentEntry(
-      context.row,
-      context.selector,
-      null,
-      ALIGNMENT_PREPARATION_STATUS.BLOCKED,
-      context.row
-        ? "The selected scope was not evaluated because another batch facet is absent"
-        : "The selected intent facet is absent from the fleet",
+  const contexts = selectors.map((selector) => alignmentReadContext(intent, selector))
+  if (contexts.some((context) => !context.requirement)) {
+    const alignments = contexts.map((context) => batchAlignmentEntry(
+      context.facet, context.selector, null, ALIGNMENT_PREPARATION_STATUS.BLOCKED,
+      context.reason || "The selected scope was not evaluated because another batch facet is unsupported",
     ))
-    return {
-      alignments: entries,
-      planSet: null,
-      reason: batchReason(entries, ALIGNMENT_PREPARATION_STATUS.BLOCKED),
-      selectors,
-      status: ALIGNMENT_PREPARATION_STATUS.BLOCKED,
-    }
+    return { alignments, planSet: null, reason: batchReason(alignments, ALIGNMENT_PREPARATION_STATUS.BLOCKED), selectors, status: ALIGNMENT_PREPARATION_STATUS.BLOCKED }
   }
 
   const read = options.executeReadPlan || executeReadPlan
@@ -518,24 +482,26 @@ export async function prepareIntentAlignments(api, intent, requestedSelectors, o
     api,
     contexts.map((context) => context.requirement),
     {
+      loadInventory: options.loadInventory,
       onProgress: options.onProgress,
       signal: options.signal,
     },
   )
   const liveInventory = liveData.inventory
-  assertFleetMembership(baseline, liveInventory)
-  for (const context of contexts) {
-    assertSurfaceReads(liveInventory, context.requirement.surfaceIds)
-    assertAccountSurfaceReads(
-      liveInventory,
-      context.requirement.accountSurfaceIds,
-    )
-    assertRuleDetails(liveInventory, context.requirement)
-  }
+  if (options.baselineInventory) assertFleetMembership(options.baselineInventory, liveInventory)
 
   const plansBySelector = []
   const { matrix: liveMatrix } = evaluatedIntent(liveInventory, intent)
   const entries = contexts.map((context) => {
+    const coverage = alignmentCoverage(liveInventory, context.requirement)
+    if (!coverage.complete) {
+      plansBySelector.push([])
+      return {
+        ...batchAlignmentEntry(context.facet, context.selector, null,
+          ALIGNMENT_PREPARATION_STATUS.BLOCKED, incompleteAlignmentReason(coverage)),
+        coverage,
+      }
+    }
     const row = rowForFacet(liveMatrix, context.facet)
     if (!row) {
       plansBySelector.push([])
@@ -551,6 +517,10 @@ export async function prepareIntentAlignments(api, intent, requestedSelectors, o
       row,
       alignmentOptions(context.selector),
     )
+    if (row.intentState.unresolved) {
+      plansBySelector.push([])
+      return batchAlignmentEntry(row, context.selector, assessment, ALIGNMENT_PREPARATION_STATUS.BLOCKED, assessment.reason)
+    }
     if (assessment.actionableCount === 0) {
       plansBySelector.push([])
       return batchAlignmentEntry(
@@ -636,57 +606,24 @@ export async function prepareIntentAlignments(api, intent, requestedSelectors, o
 
 export async function prepareIntentAlignment(api, intent, requestedSelector, options = {}) {
   const selector = normalizeAlignmentSelector(requestedSelector)
-  const baseline = options.baselineInventory || await (
-    options.loadInventory || loadInventory
-  )(api, {
-    onProgress: options.onProgress,
-    signal: options.signal,
-  })
-  const facet = facetForSelector(intent, selector)
-  const loadedRow = scopedRow(baseline, intent, facet)
-  if (!loadedRow) {
-    return stoppedPreparation(
-      ALIGNMENT_PREPARATION_STATUS.BLOCKED,
-      selector,
-      null,
-      null,
-      "The selected intent facet is absent from the fleet",
-    )
-  }
-  const loadedAssessment = assessIntentAlignment(
-    loadedRow,
-    alignmentOptions(selector),
-  )
-  if (loadedAssessment.actionableCount === 0) {
-    return stoppedPreparation(
-      ALIGNMENT_PREPARATION_STATUS.ALIGNED,
-      selector,
-      loadedRow,
-      loadedAssessment,
-      "The selected scope already matches fleet intent",
-    )
-  }
-  if (!loadedAssessment.available) {
-    return stoppedPreparation(
-      ALIGNMENT_PREPARATION_STATUS.BLOCKED,
-      selector,
-      loadedRow,
-      loadedAssessment,
-      loadedAssessment.reason,
-    )
-  }
-
-  const requirement = intentAlignmentReadRequirement(loadedRow)
+  const { facet, requirement, reason } = alignmentReadContext(intent, selector)
+  if (!requirement) return stoppedPreparation(ALIGNMENT_PREPARATION_STATUS.BLOCKED, selector, facet, null, reason)
   const read = options.executeReadPlan || executeReadPlan
   const liveData = await read(api, [requirement], {
+    loadInventory: options.loadInventory,
     onProgress: options.onProgress,
     signal: options.signal,
   })
   const liveInventory = liveData.inventory
-  assertFleetMembership(baseline, liveInventory)
-  assertSurfaceReads(liveInventory, requirement.surfaceIds)
-  assertAccountSurfaceReads(liveInventory, requirement.accountSurfaceIds)
-  assertRuleDetails(liveInventory, requirement)
+  if (options.baselineInventory) assertFleetMembership(options.baselineInventory, liveInventory)
+  const coverage = alignmentCoverage(liveInventory, requirement)
+  if (!coverage.complete) {
+    return {
+      ...stoppedPreparation(ALIGNMENT_PREPARATION_STATUS.BLOCKED, selector, facet,
+        null, incompleteAlignmentReason(coverage)),
+      coverage,
+    }
+  }
   const liveRow = scopedRow(liveInventory, intent, facet)
   if (!liveRow) {
     return stoppedPreparation(
@@ -701,6 +638,9 @@ export async function prepareIntentAlignment(api, intent, requestedSelector, opt
     liveRow,
     alignmentOptions(selector),
   )
+  if (liveRow.intentState.unresolved) {
+    return stoppedPreparation(ALIGNMENT_PREPARATION_STATUS.BLOCKED, selector, liveRow, liveAssessment, liveAssessment.reason)
+  }
   if (liveAssessment.actionableCount === 0) {
     return stoppedPreparation(
       ALIGNMENT_PREPARATION_STATUS.ALIGNED,

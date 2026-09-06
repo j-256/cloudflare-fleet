@@ -64,6 +64,9 @@ export class CloudflareApiError extends Error {
     this.messages = options.messages ?? []
     this.path = options.path ?? ""
     this.method = options.method ?? HTTP_METHOD.GET
+    this.aborted = options.aborted === true
+    this.abortKind = this.aborted ? options.abortKind === "timeout" ? "timeout" : "cancelled" : null
+    this.elapsedMs = options.elapsedMs ?? null
   }
 }
 
@@ -121,6 +124,7 @@ export class CloudflareApi {
   }
 
   async request(path, options = {}) {
+    const startedAt = Date.now()
     const method = options.method || HTTP_METHOD.GET
     const cloudflareUrl = resolveCloudflareApiUrl(path)
     const url = this.usesBackend
@@ -163,6 +167,9 @@ export class CloudflareApi {
         throw new CloudflareApiError(`Network request failed for ${method} ${cloudflareUrl.pathname}`, {
           method,
           path: cloudflareUrl.pathname,
+          aborted: options.signal?.aborted,
+          abortKind: options.signal?.reason?.name === "TimeoutError" ? "timeout" : "cancelled",
+          elapsedMs: Date.now() - startedAt,
           errors: [{ message: error instanceof Error ? error.message : String(error) }],
         })
       }
@@ -193,6 +200,9 @@ export class CloudflareApi {
         method,
         path: cloudflareUrl.pathname,
         status: response.status,
+        aborted: options.signal?.aborted,
+        abortKind: options.signal?.reason?.name === "TimeoutError" ? "timeout" : "cancelled",
+        elapsedMs: Date.now() - startedAt,
       })
     }
 
@@ -205,6 +215,7 @@ export class CloudflareApi {
         status: response.status,
         errors: envelope.errors,
         messages: envelope.messages,
+        elapsedMs: Date.now() - startedAt,
       })
     }
 
@@ -539,5 +550,7 @@ export function serializeApiError(error) {
     messages: error.messages,
     path: error.path,
     method: error.method,
+    ...(error.aborted ? { aborted: true, abortKind: error.abortKind } : {}),
+    ...(error.elapsedMs !== null ? { elapsedMs: error.elapsedMs } : {}),
   }
 }

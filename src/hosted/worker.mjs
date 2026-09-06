@@ -3,6 +3,8 @@ import {
 } from "../api.mjs"
 import { runWorkerCommand, WORKER_READ_COMMANDS } from "../worker-command.mjs"
 import { createHostedFleetService } from "./fleet-service.mjs"
+import { FleetCommandError } from "../command-diagnostics.mjs"
+import { commandFailureResponse, withIncompleteInventoryDiagnostics } from "./command-response.mjs"
 import { FLEET_COMMAND_VERSION, runFleetServiceCommand, validateFleetCommand, fleetCommandIsReadOnly } from "../fleet-command.mjs"
 import { hostedExecutionLock, HostedExecutionConflictError, HOSTED_EXECUTION_HEADER } from "./execution-lock.mjs"
 import {
@@ -249,10 +251,17 @@ async function handleApi(request, env) {
     const value = validateFleetCommand(await readJsonBody(request))
     if (value.accountId !== env.FLEET_ACCOUNT_ID) return errorResponse(403, "Fleet command account mismatch")
     if (deploymentIsReadOnly(env) && !fleetCommandIsReadOnly(value.command)) return errorResponse(403, "Hosted Fleet writes are disabled")
+    const requestId = crypto.randomUUID()
+    const startedAt = Date.now()
     try {
       const result = await runFleetServiceCommand(createHostedFleetService(env), value, { readOnly: deploymentIsReadOnly(env), signal: request.signal })
-      return jsonResponse({ success: true, result, version: FLEET_COMMAND_VERSION, accountId: env.FLEET_ACCOUNT_ID })
+      return jsonResponse({
+        success: true,
+        result: withIncompleteInventoryDiagnostics(result, { requestId, command: value.command, elapsedMs: Date.now() - startedAt }, env),
+        version: FLEET_COMMAND_VERSION, accountId: env.FLEET_ACCOUNT_ID,
+      })
     } catch (error) {
+      if (error instanceof FleetCommandError) return commandFailureResponse(error, requestId, env)
       const changed = ["AlignmentPlanChangedError", "FleetIntentChangedError"].includes(error.name)
       if (changed || error instanceof HostedExecutionConflictError) {
         return jsonResponse({

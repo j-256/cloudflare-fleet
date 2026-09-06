@@ -85,6 +85,7 @@ function preparationResult(accountId, preparation) {
   return {
     accountId,
     assessment: preparation.assessment,
+    ...(preparation.coverage ? { coverage: preparation.coverage } : {}),
     facet: preparation.facet,
     planSet: preparation.planSet,
     reason: preparation.reason,
@@ -252,17 +253,13 @@ export function createFleetService(options) {
     return inventory
   }
 
-  async function baselineInventory(state, commandOptions) {
+  function baselineInventory(state) {
     if (baselineInventoryCache
       && baselineInventoryCache.intentRevision === state.intent.revision
       && baselineInventoryCache.expiresAt > now()) {
       return baselineInventoryCache.inventory
     }
-    const inventory = await dependencies.loadInventory(api, {
-      onProgress: commandOptions.onProgress,
-      signal: commandOptions.signal,
-    })
-    return cacheBaseline(inventory, state.intent.revision)
+    return null
   }
 
   function invalidateBaseline() {
@@ -375,13 +372,14 @@ export function createFleetService(options) {
 
   async function planAlignment(selector, commandOptions = {}) {
     const state = await dependencies.readState(stateFile, accountId)
-    const baseline = await baselineInventory(state, commandOptions)
+    const baseline = baselineInventory(state)
     const preparation = await dependencies.prepareAlignment(
       api,
       state.intent,
       selector,
       {
         baselineInventory: baseline,
+        loadInventory: dependencies.loadInventory,
         onProgress: commandOptions.onProgress,
         signal: commandOptions.signal,
         validatedAt: commandOptions.validatedAt,
@@ -392,13 +390,14 @@ export function createFleetService(options) {
 
   async function planAlignments(selectors, commandOptions = {}) {
     const state = await dependencies.readState(stateFile, accountId)
-    const baseline = await baselineInventory(state, commandOptions)
+    const baseline = baselineInventory(state)
     const preparation = await dependencies.prepareAlignments(
       api,
       state.intent,
       selectors,
       {
         baselineInventory: baseline,
+        loadInventory: dependencies.loadInventory,
         onProgress: commandOptions.onProgress,
         signal: commandOptions.signal,
         validatedAt: commandOptions.validatedAt,
@@ -585,13 +584,14 @@ export function createFleetService(options) {
     requiredString(expectedDigest, "Expected alignment plan digest")
     return dependencies.withWriteLock(async () => {
       const state = await dependencies.readState(stateFile, accountId)
-      const baseline = await baselineInventory(state, commandOptions)
+      const baseline = baselineInventory(state)
       const preparation = await dependencies.prepareAlignment(
         api,
         state.intent,
         selector,
         {
           baselineInventory: baseline,
+          loadInventory: dependencies.loadInventory,
           onProgress: commandOptions.onProgress,
           signal: commandOptions.signal,
           validatedAt: commandOptions.validatedAt,
@@ -610,13 +610,14 @@ export function createFleetService(options) {
     requiredString(expectedDigest, "Expected alignment plan digest")
     return dependencies.withWriteLock(async () => {
       const state = await dependencies.readState(stateFile, accountId)
-      const baseline = await baselineInventory(state, commandOptions)
+      const baseline = baselineInventory(state)
       const preparation = await dependencies.prepareAlignments(
         api,
         state.intent,
         selectors,
         {
           baselineInventory: baseline,
+          loadInventory: dependencies.loadInventory,
           onProgress: commandOptions.onProgress,
           signal: commandOptions.signal,
           validatedAt: commandOptions.validatedAt,
