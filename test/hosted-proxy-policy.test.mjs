@@ -146,3 +146,32 @@ test("hosted proxy rejects upstream redirects explicitly", async () => {
       && /redirects are not allowed/.test(error.message),
   )
 })
+
+test("hosted proxy preserves Retry-After without forwarding unrelated upstream headers", async () => {
+  const body = JSON.stringify({ errors: [{ message: "Rate limited" }], success: false })
+  for (const retryAfter of ["30", "Sun, 06 Sep 2026 12:00:00 GMT", null]) {
+    const response = await proxyCloudflareRequest(new Request(
+      `https://fleet.example/api/cloudflare/zones?account.id=${ACCOUNT_ID}`,
+    ), {
+      accountId: ACCOUNT_ID,
+      apiToken: "secret-token",
+      fetchImpl: async () => new Response(body, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(retryAfter === null ? {} : { "Retry-After": retryAfter }),
+          "Set-Cookie": "upstream-session=private",
+          "X-Upstream-Private": "private",
+        },
+        status: 429,
+      }),
+      readOnly: true,
+    })
+
+    assert.equal(response.status, 429)
+    assert.equal(response.headers.get("Retry-After"), retryAfter)
+    assert.equal(response.headers.get("Set-Cookie"), null)
+    assert.equal(response.headers.get("X-Upstream-Private"), null)
+    assert.equal(response.headers.get("Cache-Control"), "no-store")
+    assert.equal(await response.text(), body)
+  }
+})

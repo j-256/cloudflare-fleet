@@ -221,7 +221,7 @@ Read and plan tools work without interactive approval. Apply tools additionally 
 
 A short-lived, intent-revision-bound baseline avoids repeating the complete alignment candidate inventory, but fresh membership and selected surfaces are still reread. Protocol messages use stdout and diagnostics use stderr. The package version is reported consistently by the CLI, package metadata, and MCP server identity.
 
-Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried.
+Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Both dashboard proxies preserve that delay. Concurrent reads through the same API client wait for the latest shared cooldown, including extensions received while they are waiting; cancellation stops a waiting read before it sends another request. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried. The same bounded retry behavior applies to CLI and MCP reads.
 
 The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Durable per-user state and policy paths are independent of the npm installation, so reinstalling the binary cannot replace operator data. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
 

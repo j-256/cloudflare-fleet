@@ -15,6 +15,7 @@ import {
 } from "./activity-store.mjs"
 import {
   BROKER_SESSION_HEADER,
+  RETRY_AFTER_HEADER,
   resolveCloudflareApiUrl,
 } from "./api.mjs"
 import {
@@ -250,11 +251,13 @@ async function proxyCloudflare(
     abort.dispose()
   }
   if (response.destroyed) return
+  const retryAfter = upstream.headers.get(RETRY_AFTER_HEADER)
   response.writeHead(upstream.status, {
     "Cache-Control": "no-store",
     "Content-Length": responseBody.length,
     "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
+    ...(retryAfter === null ? {} : { [RETRY_AFTER_HEADER]: retryAfter }),
   })
   response.end(responseBody)
 }

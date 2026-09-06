@@ -2,6 +2,7 @@ import {
   HTTP_METHOD,
 } from "../constants.mjs"
 import {
+  RETRY_AFTER_HEADER,
   resolveCloudflareApiUrl,
 } from "../api.mjs"
 import {
@@ -164,6 +165,8 @@ export async function proxyCloudflareRequest(request, options) {
     "Content-Type",
     upstream.headers.get("Content-Type") || "application/json; charset=utf-8",
   )
+  const retryAfter = upstream.headers.get(RETRY_AFTER_HEADER)
+  if (retryAfter !== null) responseHeaders.set(RETRY_AFTER_HEADER, retryAfter)
   return withSecurityHeaders(new Response(await upstream.arrayBuffer(), {
     headers: responseHeaders,
     status: upstream.status,

@@ -207,6 +207,42 @@ test("session broker serves assets and proxies authorized same-origin API calls"
   }
 })
 
+test("session broker preserves Retry-After without forwarding unrelated upstream headers", async () => {
+  const body = JSON.stringify({ errors: [{ message: "Rate limited" }], success: false })
+  let retryAfter
+  const fixture = await brokerFixture({
+    cloudflareFetch: async () => new Response(body, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(retryAfter === null ? {} : { "Retry-After": retryAfter }),
+        "Set-Cookie": "upstream-session=private",
+        "X-Upstream-Private": "private",
+      },
+      status: 429,
+    }),
+    readOnly: true,
+  })
+  try {
+    for (retryAfter of ["30", "Sun, 06 Sep 2026 12:00:00 GMT", null]) {
+      const response = await fetch(new URL(
+        "api/cloudflare/zones/zone-id/settings/always_use_https",
+        fixture.broker.sessionUrl,
+      ), {
+        headers: { [BROKER_SESSION_HEADER]: "session-secret" },
+      })
+
+      assert.equal(response.status, 429)
+      assert.equal(response.headers.get("Retry-After"), retryAfter)
+      assert.equal(response.headers.get("Set-Cookie"), null)
+      assert.equal(response.headers.get("X-Upstream-Private"), null)
+      assert.equal(response.headers.get("Cache-Control"), "no-store")
+      assert.equal(await response.text(), body)
+    }
+  } finally {
+    await closeFixture(fixture)
+  }
+})
+
 test("session broker rejects proxy targets outside the Cloudflare API boundary", async () => {
   const fixture = await brokerFixture()
   try {
