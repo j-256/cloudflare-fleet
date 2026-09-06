@@ -78,10 +78,12 @@ function observedVariants(row, inventory) {
         sourceZoneId: zone.meta.id,
         sourceZoneName: zone.meta.name,
         value: jsonClone(cellIntentValue(cell)),
+        zones: [],
       })
     }
     const variant = variants.get(canonical)
     variant.count += 1
+    variant.zones.push(zone.meta.name)
     const currentSource = row.cells.get(variant.sourceZoneName)
     if (!currentSource?.resolutionSource && cell.resolutionSource) {
       variant.resolutionCanonical = cell.resolutionCanonical || null
@@ -156,6 +158,11 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
     if (variants.length === 0) continue
     const presentCount = variants.reduce((sum, variant) => sum + variant.count, 0)
     const missingCount = Math.max(0, inventory.zones.length - presentCount)
+    const presentZones = variants.flatMap((variant) => variant.zones)
+    const presentZoneSet = new Set(presentZones)
+    const missingZones = inventory.zones
+      .map((zone) => zone.meta.name)
+      .filter((name) => !presentZoneSet.has(name))
     const classification = classifyCandidate(variants, presentCount, missingCount)
     const presenceConstraint = missingCount > 0
       ? FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
@@ -177,7 +184,9 @@ export function buildIntentAdoptionCandidates(document, inventory, matrix) {
       label: row.label,
       phase: row.phase || "",
       missingCount,
+      missingZones,
       presentCount,
+      presentZones,
       recommendation: {
         expectedCanonical: valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
           ? variants[0].canonical
