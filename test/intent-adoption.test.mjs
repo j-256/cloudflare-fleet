@@ -5,6 +5,7 @@ import {
   buildAdoptionGapsView,
   buildIntentAdoptionCandidates,
   createIntentAdoptionPolicy,
+  defaultAdoptionSelection,
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
   intentAdoptionVisibleSummary,
@@ -398,4 +399,22 @@ test("adoption gaps view splits presence/value gaps, ranks them, tallies outlier
     "gamma.example": 2,
     "beta.example": 1,
   })
+})
+
+test("adoption selection defaults presence to required", () => {
+  const { document, inventory, matrix } = fixture()
+  const missing = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((candidate) => candidate.key === "missing")
+
+  // the engine's own recommendation for a missing-on-most facet is optional
+  assert.equal(
+    missing.recommendation.presenceConstraint,
+    FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL,
+  )
+
+  const selection = defaultAdoptionSelection(missing, { policyId: "gap-policy" })
+  assert.equal(selection.presenceConstraint, FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED)
+  assert.equal(selection.groupId, FLEET_INTENT_ALL_ZONES_GROUP_ID)
+  assert.equal(selection.policyId, "gap-policy")
+  assert.equal(selection.expectedCanonical, missing.recommendation.expectedCanonical)
 })
