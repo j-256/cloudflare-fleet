@@ -2,6 +2,7 @@ import {
   auditFinding,
   FLEET_AUDIT_SEVERITY,
 } from "./audit-report.mjs"
+import { scheduleSet, workerTriggerFinding } from "./worker-triggers.mjs"
 
 const ACCOUNT_READ_CONCURRENCY = 8
 const CURSOR_PAGE_SIZE = 50
@@ -325,37 +326,27 @@ async function readWorkerDetails(api, accountId, scripts, options) {
   return mapPool(
     scripts,
     async (script) => {
-      try {
-        const scriptId = encodeURIComponent(script.id)
-        const [settings, subdomain, schedules] = await Promise.all([
-          retryRead(() => api.request(
-            `accounts/${accountId}/workers/scripts/${scriptId}/settings`,
-          )),
-          retryRead(() => api.request(
-            `accounts/${accountId}/workers/scripts/${scriptId}/subdomain`,
-          )),
-          retryRead(() => api.request(
-            `accounts/${accountId}/workers/scripts/${scriptId}/schedules`,
-          )),
-        ])
-        const scheduleResult = schedules.result
-        return {
-          error: null,
-          schedules: Array.isArray(scheduleResult)
-            ? scheduleResult
-            : scheduleResult?.schedules || [],
-          script,
-          settings: settings.result || {},
-          workersDev: Boolean(subdomain.result?.enabled),
-        }
-      } catch (error) {
-        return {
-          error: errorMessage(error),
-          schedules: [],
-          script,
-          settings: null,
-          workersDev: null,
-        }
+      const scriptId = encodeURIComponent(script.id)
+      const [settings, subdomain, schedules] = await Promise.all([
+        safeRead(() => retryRead(() => api.request(
+          `accounts/${accountId}/workers/scripts/${scriptId}/settings`,
+        ))),
+        safeRead(() => retryRead(() => api.request(
+          `accounts/${accountId}/workers/scripts/${scriptId}/subdomain`,
+        ))),
+        safeRead(async () => scheduleSet((await retryRead(() => api.request(
+          `accounts/${accountId}/workers/scripts/${scriptId}/schedules`,
+        ))).result)),
+      ])
+      return {
+        error: [settings, subdomain, schedules].filter((read) => !read.ok)
+          .map((read) => read.error).join("; ") || null,
+        schedules: schedules.value || [],
+        scheduleCoverage: schedules.ok,
+        readAt: new Date().toISOString(),
+        script,
+        settings: settings.ok ? settings.value.result || {} : null,
+        workersDev: subdomain.ok ? Boolean(subdomain.value.result?.enabled) : null,
       }
     },
     options.concurrency,
@@ -659,6 +650,7 @@ function workerMetricFindings(read, scripts, details) {
     const detail = workerDetails.get(script)
     const handlers = detail?.script.handlers || []
     const eventOnlyWorkersDev = detail?.workersDev === true
+      && Array.isArray(detail?.script.handlers)
       && !handlers.includes("fetch")
     findings.push(auditFinding({
       category: "Workers",
@@ -1096,6 +1088,13 @@ export async function collectAccountAuditFindings(api, inventory, options = {}) 
   return [
     ...accountReadFindings(reads),
     ...workerFindings(reads, details, queueDetails, inventory),
+    ...details.map((detail) => workerTriggerFinding({
+      accountId: api.accountId,
+      worker: detail.script.id,
+      handlers: detail.script.handlers,
+      schedules: detail.scheduleCoverage ? detail.schedules : null,
+      readAt: detail.readAt,
+    })).filter(Boolean),
     ...workerMetricFindings(workerMetrics, scripts, details),
     ...d1MetricFindings(d1Metrics, reads.d1.ok ? reads.d1.value : []),
     ...storageFindings(reads, details, d1Metrics),
