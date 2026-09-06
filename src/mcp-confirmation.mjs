@@ -337,7 +337,7 @@ function operationValueLines(operation) {
 export function operationReviewItems(operations) {
   return operations.map((operation, index) => ({
     lines: wrapLines([
-      `Zone: ${operation.zoneName} (${operation.zoneId})`,
+      operation.worker ? `Worker: ${operation.worker} (account ${operation.accountId})` : `Zone: ${operation.zoneName} (${operation.zoneId})`,
       ...operationApiLines(operation),
       ...operationValueLines(operation),
     ]),

@@ -52,6 +52,12 @@ const CHANGE = Object.freeze({
 })
 const TOOL_NAMES = Object.freeze([
   "get_runtime_status",
+  "inspect_worker",
+  "record_worker_incident",
+  "list_worker_incidents",
+  "verify_worker_incident",
+  "plan_worker_intent",
+  "apply_worker_intent",
   "audit_fleet",
   "describe_zone_alias_policy",
   "get_fleet_intent",

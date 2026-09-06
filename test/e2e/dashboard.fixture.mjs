@@ -5,6 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { test as base, expect } from "@playwright/test"
+import { workerFixture } from "../worker.fixture.mjs"
 
 import {
   createCacheRecord,
@@ -293,7 +294,7 @@ function jsonResponse(status, payload, headers = {}) {
   })
 }
 
-function fakeCloudflareTransport(inventory) {
+function fakeCloudflareTransport(inventory, options = {}) {
   const requests = []
   const dnsByZone = new Map()
   const emailSettings = new Map()
@@ -320,6 +321,7 @@ function fakeCloudflareTransport(inventory) {
     ))
   }
 
+  const workers = workerFixture({ accountId: ACCOUNT_ID, now: options.now || Date.now() })
   const fetch = async (url, request = {}) => {
     const target = new URL(url)
     const method = request.method || "GET"
@@ -332,6 +334,15 @@ function fakeCloudflareTransport(inventory) {
       method,
       path: `${relativePath}${target.search}`,
     })
+    if (relativePath.startsWith(`accounts/${ACCOUNT_ID}/workers/scripts/example-worker/`)
+      || relativePath === `accounts/${ACCOUNT_ID}/workers/observability/telemetry/query`) {
+      try {
+        const response = await workers.api.request(relativePath, { method, body, signal: request.signal })
+        return jsonResponse(200, { result: response.result, success: true })
+      } catch (error) {
+        return jsonResponse(error.status || 500, { success: false, errors: [{ message: "Fixture Worker read failed" }] })
+      }
+    }
 
     const failureIndex = failures.findIndex((failure) => (
       failure.method === method
@@ -660,7 +671,7 @@ export async function createDashboardSession(options = {}) {
         fetch: options.cloudflareFetch,
         requests: options.requests || [],
       }
-    : fakeCloudflareTransport(inventory)
+    : fakeCloudflareTransport(inventory, options)
   await copyRuntimeAssets(runtimeDir)
   if (options.stateSourceFile) {
     await fs.copyFile(options.stateSourceFile, stateFile)

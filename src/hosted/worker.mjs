@@ -1,6 +1,10 @@
 import {
   FLEET_BOOTSTRAP_ERROR_GLOBAL,
+  CloudflareApi,
 } from "../api.mjs"
+import { createWorkerService } from "../worker-service.mjs"
+import { runWorkerCommand, WORKER_READ_COMMANDS } from "../worker-command.mjs"
+import { hostedWorkerStore } from "./worker-store.mjs"
 import {
   CACHE_RECORD_GLOBAL,
 } from "../cache.mjs"
@@ -238,6 +242,25 @@ async function handleCache(request, env) {
 
 async function handleApi(request, env) {
   const pathname = new URL(request.url).pathname
+  if (pathname.startsWith("/api/workers/")) {
+    if (request.method !== HTTP_METHOD.POST) return errorResponse(405, "Worker commands require POST")
+    const command = pathname.slice("/api/workers/".length)
+    if (deploymentIsReadOnly(env) && !WORKER_READ_COMMANDS.includes(command)) return errorResponse(403, "Worker writes are disabled")
+    const store = hostedWorkerStore(env.FLEET_DB, env.FLEET_ACCOUNT_ID)
+    const service = createWorkerService({
+      api: new CloudflareApi({ accountId: env.FLEET_ACCOUNT_ID, apiToken: env.CLOUDFLARE_API_TOKEN }),
+      store,
+      withWriteLock: store.withWriteLock,
+      activityStore: {
+        read: () => readHostedOperationActivity(env.FLEET_DB, env.FLEET_ACCOUNT_ID),
+        append: (entry) => appendHostedOperationActivity(env.FLEET_DB, env.FLEET_ACCOUNT_ID, entry),
+        finalize: (entry) => finalizeHostedOperationActivity(env.FLEET_DB, env.FLEET_ACCOUNT_ID, entry),
+      },
+    })
+    try {
+      return successResponse(await runWorkerCommand(service, command, await readJsonBody(request), { readOnly: deploymentIsReadOnly(env), signal: request.signal }))
+    } catch (error) { return errorResponse(error instanceof TypeError ? 400 : 409, error.message) }
+  }
   if (pathname === "/api/intent") return handleIntent(request, env)
   if (pathname === "/api/activity") return handleActivity(request, env)
   if (pathname === "/api/cache") return handleCache(request, env)

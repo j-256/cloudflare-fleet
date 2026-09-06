@@ -3,9 +3,11 @@ import { auditFinding, FLEET_AUDIT_SEVERITY } from "./audit-report.mjs"
 export const WORKER_SCHEDULE_KIND = "worker-schedules-update"
 export const CRON_PROPAGATION_MS = 15 * 60 * 1000
 export const WORKER_NAME_PATTERN = /^[a-z0-9_][a-z0-9_-]{0,127}$/
+export const WORKER_CRON_PATTERN = /^[A-Za-z0-9*?,/#LWs-]+(?: +[A-Za-z0-9*?,/#LWs-]+){4}$/
+export const WORKER_CRON_MAX_LENGTH = 256
 
 export function workerPath(accountId, worker, surface) {
-  if (!WORKER_NAME_PATTERN.test(worker)) throw new TypeError("Invalid Worker name")
+  if (typeof worker !== "string" || !WORKER_NAME_PATTERN.test(worker)) throw new TypeError("Invalid Worker name")
   return ["accounts", accountId, "workers", "scripts", worker, surface]
     .map(encodeURIComponent).join("/")
 }

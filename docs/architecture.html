@@ -143,7 +143,7 @@
         <article class="mode-card">
           <p class="card-accent">MCP</p>
           <h3>Interactive protocol confirmation</h3>
-          <p>The stdio server exposes a typed alias-policy description plus paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every mutation displays its exact request and plan, elicits one explicit approval through authenticated short-lived request state, and enters the same fresh locked apply path. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
+          <p>The stdio server exposes a typed alias-policy description plus paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every apply displays its exact request and plan, elicits one explicit approval through authenticated short-lived request state, and enters the same fresh locked apply path. Worker incident capture and verification save explicitly requested fresh evidence without a Cloudflare mutation. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
         </article>
       </div>
       <div class="callout">
@@ -154,6 +154,16 @@
         <strong>No raw control-plane tool</strong>
         <p>Neither interface accepts arbitrary Cloudflare methods or paths. Complete fleet intent replacement is a separate local persistence operation with account, schema, revision, diff, digest, and lock checks; it cannot smuggle a Cloudflare request. The direct local process holds the configured token, so its host environment and outputs remain part of the trusted operator boundary.</p>
       </div>
+    </section>
+
+    <section class="section prose" aria-labelledby="workers-heading">
+      <h2 id="workers-heading">Scoped Worker diagnostics</h2>
+      <p><code>src/worker-service.mjs</code> is shared by the dashboard's bounded backend commands, CLI, and MCP. Configuration reads are independent of log availability. Invocation-only evidence pages group event type, outcome, and version while retaining separate HTTP status counts. Projections expose binding names/types, resource links, and known fixed error signatures without source bundles or request payloads.</p>
+      <p>Schedule plans bind exact account and Worker identity, observed schedule sets, serving deployment, and saved intent revision. The shared executor persists the journal before the schedule-only write and verifies configuration before deriving an inverse. A separate fresh-evidence assessment accounts for Cron propagation, sampling, and retained schedule coverage. Incident supersession preserves previous assessments instead of erasing them.</p>
+      <figure class="screenshot-frame">
+        <img src="screenshots/worker-diagnostics.png" width="1440" height="1000" alt="Synthetic Worker inspection separating scheduled exceptions from successful serving-version HTTP requests and an old-version 503.">
+        <figcaption class="screenshot-caption">One resource, independent configuration coverage, and bounded invocation evidence.</figcaption>
+      </figure>
     </section>
 
     <section class="section" aria-labelledby="write-flow-heading">
@@ -184,6 +194,7 @@
           <tbody>
             <tr><td>Fleet intent</td><td>Zone scopes, desired-state policies, acknowledgements, and expected coverage</td><td>D1 with revision checks</td><td>Ignored state file with serialized atomic updates</td></tr>
             <tr><td>Operation activity</td><td>Reviewed plans, pending and terminal results, verification evidence, and eligible inverse plans</td><td>Transactional append and finalize operations</td><td>Independent state section under the same file lock</td></tr>
+            <tr><td>Worker records</td><td>Explicit schedule intent, owning configuration review, and append-only incident assessments with supersession</td><td>Account-scoped revision checks and a bounded execution lease</td><td>Optional workers section with serialized atomic updates</td></tr>
             <tr><td>Inventory snapshot</td><td>Last complete fleet reading plus newer scoped verification patches</td><td>D1 cache record</td><td>User cache directory</td></tr>
             <tr><td>Fleet policy</td><td>Typed operator exceptions that stay visible but do not become actionable drift</td><td>Validated Worker variable generated from an ignored file</td><td>Ignored JSON loaded into the session runtime</td></tr>
           </tbody>

@@ -7,6 +7,7 @@ import {
   createEmptyOperationActivityDocument,
   isOperationActivityDocument,
 } from "./operation-history.mjs"
+import { isWorkerRecords } from "./worker-records.mjs"
 
 export const FLEET_STATE_SCHEMA_VERSION = 1
 
@@ -38,6 +39,7 @@ export function isFleetStateDocument(value, accountId = null) {
     && accountMatches(value.accountId, accountId)
     && isOperationActivityDocument(value.activity)
     && isFleetIntentDocument(value.intent, value.accountId)
+    && (value.workers === undefined || isWorkerRecords(value.workers))
 }
 
 export function migrateFleetStateDocument(value, accountId = null) {

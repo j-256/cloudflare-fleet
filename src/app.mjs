@@ -276,6 +276,7 @@ import {
   WRITE_VERIFICATION_KIND,
 } from "./write-verification.mjs"
 import { executeVerifiedPlanSet } from "./write-executor.mjs"
+import { mountWorkerPanel } from "./worker-panel.mjs"
 import {
   isZoneAliasMatrixRow,
   zoneAliasPolicyTemplateForSourceHost,
@@ -312,6 +313,7 @@ application.hidden = false
 
 const api = new CloudflareApi(auth)
 const readOnly = Boolean(auth.readOnly)
+mountWorkerPanel({ api, readOnly })
 const cachedRecord = isCacheRecord(injectedCache, auth.accountId) ? injectedCache : null
 const initialIntent = isFleetIntentDocument(injectedIntent, auth.accountId)
   ? injectedIntent
@@ -9646,7 +9648,7 @@ function formatActivityTime(timestamp) {
 }
 
 function activityZoneNames(entry) {
-  return [...new Set(entry.plans.map((plan) => plan.zoneName).filter(Boolean))]
+  return [...new Set(entry.plans.map((plan) => plan.worker || plan.zoneName).filter(Boolean))]
 }
 
 function updateActivityButton() {
@@ -9749,7 +9751,7 @@ function operationChangeList(entry) {
     if (!change) return []
     const item = createElement("section", { className: "activity-operation-change" })
     item.append(
-      createElement("strong", { text: `${plan.zoneName}: ${operation.label}` }),
+      createElement("strong", { text: `${plan.worker || plan.zoneName}: ${operation.label}` }),
       change,
     )
     return [item]
@@ -9769,7 +9771,7 @@ function activityOperationList(entry) {
     const item = document.createElement("li")
     item.append(
       createElement("code", { text: operation.method }),
-      document.createTextNode(`${plan.zoneName}: ${operation.label}`),
+      document.createTextNode(`${plan.worker || plan.zoneName}: ${operation.label}`),
     )
     list.append(item)
   }
@@ -9789,7 +9791,7 @@ function activityVerificationList(entry) {
     }))
   } else {
     for (const guard of entry.verification) {
-      const zoneName = entry.plans.find(
+      const zoneName = guard.target.worker || entry.plans.find(
         (plan) => plan.zoneId === guard.target.zoneId,
       )?.zoneName || guard.target.zoneId
       list.append(createElement("li", {
@@ -9833,7 +9835,7 @@ function activityRawPreview(entry) {
     label: operation.label,
     method: operation.method,
     path: operation.path,
-    zone: plan.zoneName,
+    zone: plan.worker || plan.zoneName,
   })))
 }
 
@@ -10071,6 +10073,18 @@ async function readActivityVerification(entry, message) {
 
 async function undoOperationActivity(entry) {
   if (!activityUndoable(entry) || state.busy || readOnly) return
+  if (entry.plans.some((plan) => plan.worker)) {
+    if (elements.activityDialog.open) elements.activityDialog.close()
+    try {
+      const preparation = await api.workerCommand("undo-plan", { activityId: entry.id })
+      if (preparation.status !== "planned") { toast(preparation.reason, "error"); return }
+      if (!await confirmPlans(preparation.title, acceptPreparedPlanSet(preparation.planSet), { confirmationNote: preparation.reason })) return
+      const result = await api.workerCommand("undo-apply", { activityId: entry.id, planDigest: preparation.planSet.digest })
+      toast(result.health?.status || result.status)
+      await loadOperationActivity({ silent: true })
+    } catch (error) { toast(error.message, "error") }
+    return
+  }
   if (elements.activityDialog.open) elements.activityDialog.close()
   state.activityGuardFailures.delete(entry.id)
   setBusy(true)
@@ -10122,7 +10136,7 @@ function operationPreview(plans) {
       label: operation.label,
       method: operation.method,
       path: operation.path,
-      zone: plan.zoneName,
+      zone: plan.worker || plan.zoneName,
     }
     if (Object.hasOwn(operation, "currentValue")) {
       preview.currentValue = operation.currentValue
@@ -10179,7 +10193,7 @@ function confirmPlans(title, planSet, options = {}) {
   elements.confirmTitle.textContent = title
   const operations = operationPreview(actionable)
   const validationTime = new Date(planSet.validatedAt).toLocaleTimeString()
-  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} zone${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.${options.confirmationNote ? ` ${options.confirmationNote}` : ""}`
+  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} resource scope${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.${options.confirmationNote ? ` ${options.confirmationNote}` : ""}`
   elements.confirmOperations.replaceChildren()
   for (const operation of operations) {
     const item = createElement("div", { className: "operation" })

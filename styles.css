@@ -6011,6 +6011,12 @@ dialog details > summary {
     min-height: 34px;
   }
 
+  #show-worker-diagnostics {
+    grid-column: 1 / -1;
+    grid-row: 6;
+    min-height: 34px;
+  }
+
   #mobile-matrix-focus {
     display: block;
     grid-column: 4 / 7;
@@ -6057,7 +6063,7 @@ dialog details > summary {
   .toolbar-secondary {
     display: grid;
     grid-column: 1 / -1;
-    grid-row: 6;
+    grid-row: 7;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
     padding-top: 7px;
@@ -6382,4 +6388,59 @@ dialog details > summary {
     outline: 1px solid Highlight;
     outline-offset: -2px;
   }
+}
+#worker-diagnostics-dialog {
+  width: min(960px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.worker-diagnostics {
+  padding: 24px;
+}
+
+.worker-diagnostics-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.worker-diagnostics-fields label {
+  display: grid;
+  gap: 6px;
+}
+
+.worker-diagnostics-fields input,
+.worker-diagnostics-fields select,
+.worker-diagnostics-fields textarea {
+  min-width: 0;
+  width: 100%;
+}
+
+.worker-diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.worker-diagnostics pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.worker-diagnostics table {
+  width: 100%;
+  table-layout: fixed;
+  overflow-wrap: anywhere;
+  margin-bottom: 16px;
+}
+
+.worker-diagnostics th,
+.worker-diagnostics td {
+  min-width: 0;
+  padding: 6px;
+  text-align: left;
 }

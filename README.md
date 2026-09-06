@@ -129,6 +129,59 @@ The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it t
 
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
 
+## Worker diagnostics and schedule recovery
+
+Open **Workers** in the dashboard, or use `cloudflare-fleet worker inspect --input FILE --format json` and MCP `inspect_worker`. Select one exact Worker name or a `deep.worker-scheduled-handler-missing:WORKER` finding ID. Inspection defaults to the preceding hour; explicit UTC `start` and `end` must describe a past window of at most 24 hours. Evidence pages contain at most 200 records. Continue with `nextCursor` and the original window; counts describe each page, not an account-wide total. Optional `zoneIds` narrow route reads to the supplied zones.
+
+```json
+{"worker":"example-worker","limit":50,"zoneIds":["example-zone-id"]}
+```
+
+Reports separate configuration observations, inferred trigger cause, confidence, missing checks, and next actions. Serving deployments include traffic allocation and per-version handlers. Binding names/types and resource identifiers are projected without values. Invocation records are deduplicated within a page; console messages do not inflate counts. HTTP response statuses remain separate from event outcomes, and an old-version 503 does not establish a serving-version failure or prove a bootstrap cause. Denied logs leave configuration diagnosis available with unknown log coverage.
+
+Only allowlisted invocation fields and fixed known error signatures are returned. Fleet does not fetch source bundles or expose request headers, bodies, cookies, Access assertions, secret values, or arbitrary error messages. Narrow projection is not a promise that free-form error text can be perfectly redacted. The [sanitized console-event reproduction](docs/fixtures/observability-console-missing-outcome.json) preserves the heterogeneous record shape that exposed an upstream Workers Observability MCP validator's assumption that `$workers.outcome` is always present. It is not a Fleet defect; Fleet skips console records when counting invocations.
+
+| Operator outcome | CLI `worker` command | MCP tool |
+| --- | --- | --- |
+| Inspect scoped evidence | `inspect` | `inspect_worker` |
+| Save a fresh incident | `record` | `record_worker_incident` |
+| Read intent and incident history | `history` | `list_worker_incidents` |
+| Review and save schedule intent | `intent-plan`, `intent-apply` | `plan_worker_intent`, `apply_worker_intent` |
+| Review and change the exact schedule set | `schedules-plan`, `schedules-apply` | `plan_fleet_change`, `apply_fleet_change` |
+| Verify and save fresh post-change evidence | `verify` | `verify_worker_incident` |
+| Review and execute guarded inverse | `undo-plan`, `undo-apply` | `plan_activity_undo`, `apply_activity_undo` |
+
+Each CLI command takes `--input FILE|-`; apply additionally requires `--expect-plan DIGEST`. Use `cloudflare-fleet worker --help` for input fields. MCP apply requires signed interactive confirmation, and the dashboard requires an explicit unchecked review acknowledgement. Read-only dashboards allow inspection and planning but cannot save incidents, intent, verification records, or Cloudflare changes.
+
+Schedule intent is explicit: `disabled` means an empty set, `exact` names the desired set, and `unmanaged` authorizes no change. Managed intent requires `owner`, identifying the deployment configuration, and `reconciliation`, describing the reviewed companion edit. Use history's `revision` as `expectedRevision` when saving intent. Fleet stores this review, never patches an arbitrary local file, and never silently becomes a second deployment configuration authority. A saved conflicting intent blocks an online schedule plan.
+
+For an operator-confirmed obsolete trigger, the bounded change document is:
+
+```json
+{
+  "kind": "worker-schedules-update",
+  "worker": "example-worker",
+  "intent": {
+    "mode": "disabled",
+    "crons": [],
+    "owner": "example-project:wrangler.jsonc",
+    "reconciliation": "Set triggers.crons to [] in the owning environment before deployment"
+  }
+}
+```
+
+```sh
+cloudflare-fleet worker schedules-plan --input schedule-change.json --format json
+# Review the complete plan and reconcile the owning configuration before applying
+cloudflare-fleet worker schedules-apply --input schedule-change.json --expect-plan sha256:APPROVED_DIGEST --format json
+```
+
+The digest binds the account, Worker, exact observed and desired schedules, serving deployment, and saved intent revision. Apply locks, replans, journals the old schedule set before writing, changes only the schedules endpoint, and rereads schedules and deployment. Drift stops the operation. No route, binding, credential, database, or code deployment is changed. Guarded undo is offered only for verified writes whose saved post-change schedules and deployment still match; review the owning configuration again when restoring the prior set. A missing or failed journal prevents writing. After an uncertain write or verification failure, inspect activity and fresh configuration before preparing another plan; do not assume that retry or inverse is safe.
+
+Configuration acceptance is not runtime health. Cloudflare documents [up to 15 minutes for Cron propagation and the difference between omitted triggers and an explicit empty array](https://developers.cloudflare.com/workers/configuration/cron-triggers/): omission preserves schedules; an empty array removes them. Verification uses the recorded activity ID and excludes evidence before the propagation boundary. It reports `propagation-pending`, `awaiting-evidence`, `observed-failures`, `configuration-drift`, or `observed-healthy`. Healthy describes only fresh serving-version invocations, requires evidence for each retained Cron expression, and cannot prove universal success or permanent absence of a removed trigger. Historical aggregate errors and silence alone do not decide health.
+
+Incident capture and verification append bounded reports with supersession links, retaining earlier evidence. Local state stores optional `workers` intent/history alongside operation activity in the private state file. Hosted mode uses account-scoped D1 documents and a leased write lock. Apply all repository D1 migrations before upgrading a hosted instance or importing state; restore Worker records and operation activity together to preserve incident links and guarded recovery. See the [deployment recovery notes](docs/deployment.html#worker-recovery-heading).
+
 ## Operator CLI and MCP
 
 The fleet CLI exposes the dashboard's complete headless operator contract: audit, intent persistence, intent alignment, bounded direct changes, durable activity, guarded undo, hosted configuration, and state import. Text is the default for operators; `--format json` emits one structured JSON document on stdout while progress and diagnostics remain on stderr.
@@ -297,7 +350,7 @@ npx playwright install chromium
 npm run screenshots
 ```
 
-The capture script drives the real dashboard through its deterministic local test broker. It uses only `alpha.example`, `bravo.example`, `charlie.example`, documentation IP addresses, synthetic configuration, and a literal fake test token. It does not read shell Cloudflare credentials, ignored operator files, D1, the hosted Worker, or a live API endpoint.
+The capture script drives the real dashboard through its deterministic local test broker. It uses reserved example hostnames, documentation IP addresses, the synthetic `example-worker`, synthetic configuration, and a literal fake test token. It does not read shell Cloudflare credentials, ignored operator files, D1, the hosted Worker, or a live API endpoint.
 
 ## Development
 

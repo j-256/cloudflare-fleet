@@ -32,6 +32,7 @@ import {
 } from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 import { describeZoneAliasPolicy } from "./zone-alias-intent.mjs"
+import { runWorkerCommand, WORKER_COMMANDS } from "./worker-command.mjs"
 
 const CLI_FORMAT = Object.freeze({
   JSON: "json",
@@ -104,6 +105,7 @@ const HELP_COMMAND_BY_TOPIC = Object.freeze({
   intent: "intent-help",
   mcp: "mcp-help",
   schema: "schema-help",
+  worker: "worker-help",
 })
 
 export function fleetUsage() {
@@ -121,6 +123,7 @@ export function fleetUsage() {
     "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet intent aliases|show|plan|apply [OPTIONS]",
     "  cloudflare-fleet change plan|apply --input FILE|- [OPTIONS]",
+    "  cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
     "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet activity undo plan|apply --id ID [OPTIONS]",
     "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
@@ -160,6 +163,24 @@ export function fleetUsage() {
     "  5  The reviewed plan changed before apply",
     "  6  A Cloudflare write failed",
     "  7  Post-write verification failed",
+  ].join("\n")
+}
+
+export function fleetWorkerUsage() {
+  return [
+    "cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [--format text|json] [--state-file PATH]",
+    `Commands: ${WORKER_COMMANDS.join(", ")}`,
+    "Options: -i/--input JSON file or stdin; -e/--expect-plan exact approved digest for apply; -f/--format; -s/--state-file; -h/--help",
+    'Inspect/record input: {"worker":"example-worker","start":"2026-01-01T00:00:00Z","end":"2026-01-01T01:00:00Z","limit":50}',
+    "Inspection also accepts findingId, zoneIds (route scope), logs, and cursor with the original start/end; at most 24 past hours and 200 events",
+    'History input: {"worker":"example-worker","offset":0,"limit":20}; limit at most 50',
+    'Intent input: {"worker":"example-worker","expectedRevision":"","intent":{"mode":"disabled","crons":[],"owner":"repository:wrangler.jsonc","reconciliation":"Set triggers.crons to [] before the next deployment"}}',
+    "Intent modes: disabled (empty crons), exact (nonempty crons), unmanaged (empty crons); managed intent requires owner and reconciliation",
+    "Schedule input: worker-schedules-update fleet-change object (cloudflare-fleet schema change); uses the same guarded planner as change plan/apply",
+    'Undo input: {"activityId":"activity-ID"}; verify input: {"worker":"example-worker","activityId":"activity-ID"} with optional start/end/limit/zoneIds',
+    "Verify saves fresh evidence after the propagation grace period; record appends an incident; intent-apply saves local intent; schedules-apply and undo-apply write Cloudflare",
+    "Environment: CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN; optional CLOUDFLARE_FLEET_STATE_FILE selects private persistence",
+    "Exit statuses: 0 success, 1 runtime failure, 2 usage/precondition, 3 dependency, 4 blocked, 5 plan changed, 6 write failed, 7 verification failed",
   ].join("\n")
 }
 
@@ -564,6 +585,15 @@ export function parseFleetArguments(argv) {
       stateFile: options.statefile,
     }
   }
+  if (resource === "worker") {
+    if (!action || isHelpArgument(action)) return { command: "worker-help" }
+    if (!WORKER_COMMANDS.includes(action)) throw new CliUsageError("Unknown Worker command")
+    const options = parseOptions(rest, [...COMMON_OPTIONS, INPUT_OPTION, ...(action.endsWith("-apply") ? [EXPECT_PLAN_OPTION] : [])])
+    if (options.help) return { command: "worker-help" }
+    if (!options.input) throw new CliUsageError("Worker command requires --input")
+    if (action.endsWith("-apply") && !options.expectplan) throw new CliUsageError("Worker apply requires --expect-plan")
+    return { command: `worker-${action}`, workerCommand: action, input: options.input, expectedDigest: options.expectplan, format: options.format, stateFile: options.statefile }
+  }
   if (resource === "alignment") {
     if (!action || isHelpArgument(action)) return { command: "alignment-help" }
     if (!["list", "plan", "apply"].includes(action)) {
@@ -829,6 +859,7 @@ function renderRuntimeDoctor(result) {
 }
 
 function renderResult(command, result) {
+  if (command.startsWith("worker-")) return JSON.stringify(result, null, 2)
   if (command === "config-show") return renderRuntimeConfiguration(result)
   if (command === "doctor") return renderRuntimeDoctor(result)
   if (command === "alignment-list") return renderAlignmentList(result)
@@ -996,6 +1027,11 @@ export async function runFleetCommand(options = {}) {
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return null
   }
+  if (parsed.command === "worker-help") {
+    stdout.write(`${fleetWorkerUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
   if (parsed.command === "activity-help") {
     stdout.write(`${fleetActivityUsage()}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
@@ -1064,7 +1100,14 @@ export async function runFleetCommand(options = {}) {
     validatedAt: options.validatedAt,
   }
   let result
-  if (parsed.command === "alignment-list") {
+  if (parsed.workerCommand) {
+    const input = await readJsonInput(parsed.input, options)
+    const payload = parsed.workerCommand.endsWith("-apply")
+      ? parsed.workerCommand === "undo-apply" ? { ...input, planDigest: parsed.expectedDigest } : { input, planDigest: parsed.expectedDigest }
+      : input
+    try { result = await runWorkerCommand(service.workers, parsed.workerCommand, payload, commandOptions) }
+    catch (error) { if (error instanceof TypeError) throw new CliUsageError(error.message); throw error }
+  } else if (parsed.command === "alignment-list") {
     result = await service.listAlignments(commandOptions)
   } else if (parsed.command === "alignment-plan") {
     result = await service.planAlignment(parsed.selector, commandOptions)
