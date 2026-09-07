@@ -475,5 +475,29 @@ export function applyAdoptionFilters(result, filters = {}) {
     return true
   })
   if (filters.limit) candidates = candidates.slice(0, filters.limit)
-  return { ...result, candidates }
+  const survivingIds = new Set(candidates.map((candidate) => candidate.id))
+  const presenceGaps = result.gaps.presenceGaps.filter(
+    (gap) => survivingIds.has(gap.candidate.id),
+  )
+  const valueGaps = result.gaps.valueGaps.filter(
+    (gap) => survivingIds.has(gap.candidate.id),
+  )
+  const perZoneOutlierTally = {}
+  for (const gap of [...presenceGaps, ...valueGaps]) {
+    for (const zone of gap.outlierZones) {
+      perZoneOutlierTally[zone] = (perZoneOutlierTally[zone] || 0) + 1
+    }
+  }
+  const summary = {
+    ...result.summary,
+    candidates: candidates.length,
+    presenceGaps: presenceGaps.length,
+    valueGaps: valueGaps.length,
+  }
+  return {
+    ...result,
+    candidates,
+    gaps: { perZoneOutlierTally, presenceGaps, valueGaps },
+    summary,
+  }
 }
