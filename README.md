@@ -234,12 +234,17 @@ Incident capture and verification append bounded reports with supersession links
 
 ## Operator CLI and MCP
 
-The fleet CLI exposes the dashboard's complete headless operator contract: audit, intent persistence, intent alignment, bounded direct changes, durable activity, guarded undo, hosted configuration, and state import. Text is the default for operators; `--format json` emits one structured JSON document on stdout while progress and diagnostics remain on stderr.
+The fleet CLI exposes the dashboard's complete headless operator contract: audit, intent persistence, intent alignment, coverage-gap adoption, bounded direct changes, durable activity, guarded undo, hosted configuration, and state import. Text is the default for operators; `--format json` emits one structured JSON document on stdout while progress and diagnostics remain on stderr.
 
 ```sh
 cloudflare-fleet alignment list --format json
 cloudflare-fleet alignment plan --policy POLICY_ID --format json
 cloudflare-fleet alignment apply --policy POLICY_ID \
+  --expect-plan 'sha256:...' --format json
+
+cloudflare-fleet adoption list --lens gaps --format json
+cloudflare-fleet adoption plan --input adoption.json --format json
+cloudflare-fleet adoption apply --input adoption.json \
   --expect-plan 'sha256:...' --format json
 
 umask 077
@@ -316,12 +321,12 @@ Use the standard stdio command-plus-arguments shape and arrange for the client p
 
 For an explicit standalone profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command. Omit these file arguments for shared hosted mode.
 
-The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview so one operation stays on a single review field, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
+The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, coverage-gap adoption, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview so one operation stays on a single review field, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
-- Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
-- Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_change`, and `plan_activity_undo`
-- Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_change`, and `apply_activity_undo`
+- Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, `list_adoption_candidates`, and `list_activity`
+- Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_adoption`, `plan_fleet_change`, and `plan_activity_undo`
+- Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_adoption`, `apply_fleet_change`, and `apply_activity_undo`
 
 Read and plan tools work without interactive approval. Apply tools additionally require an MCP client that supports input elicitation; if the client does not present the elicitation, use the CLI or dashboard to review and apply the same bounded plan.
 
@@ -390,6 +395,25 @@ A row or policy review is all-or-nothing: every unacknowledged drift cell in tha
 Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, methods, endpoints, and focused current-to-desired deltas. The planner keeps the complete canonical request and payloads bound to the digest and signed confirmation state through apply. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
 
 Clearing or bypassing the inventory cache never removes intent or activity. Hosted sessions use transactional D1 state; local sessions use revisioned sections in the ignored account-scoped state file.
+
+## Adoption and coverage gaps
+
+Adoption inspects ungoverned configuration and turns observed values into saved fleet intent. It never writes Cloudflare; it only proposes and persists the intent that ordinary alignment later enforces. A candidate is any facet that differs across zones and is not already governed by a policy.
+
+`cloudflare-fleet adoption list` defaults to a coverage-gap lens that surfaces the present-on-most, missing-on-few pattern. A presence gap is a facet present on most zones and absent on a few outlier zones; a value gap is a facet whose leading value covers most zones while a minority of zones diverge. Zone-specific and tied variants are not treated as gaps. Each gap names its outlier zones, and a per-zone outlier tally counts how many gaps each zone is an outlier in, so the zones that most often fall outside the fleet consensus are visible at a glance. Use `--lens all` to list every candidate instead of only gaps, and narrow the view with `--zone HOSTNAME`, `--category`, `--confidence high|review`, `--classification`, `--search`, and `--limit`.
+
+A zone whose relevant surface could not be read is never reported as a missing gap. Incomplete inventory sets `coverageComplete` to false and names the affected zones, so absence is never inferred from an unread zone.
+
+```sh
+cloudflare-fleet adoption list --lens gaps --format json
+cloudflare-fleet adoption plan --input adoption.json --format json
+cloudflare-fleet adoption apply --input adoption.json \
+  --expect-plan 'sha256:...' --format json
+```
+
+`plan` and `apply` read an adoption request of the shape `{ adopt, exempt }`. Each `adopt` entry names one candidate to govern plus optional overrides; new presence defaults to required, so a governed facet's outlier zones surface as drift for later review. Each `exempt` entry names one or more zones and a reason and is recorded as an acknowledgement bound to the adopted policy; the acknowledgement clears the missing status for those zones so an intended exception is not repeatedly flagged. Adoption reuses the revision-guarded intent store: `plan` returns an exact digest-bound diff, and `apply` replans under the shared write lock and persists only when the digest and saved intent revision still match.
+
+The MCP tools mirror the CLI. `list_adoption_candidates` reads candidates and gaps with named outlier zones, `plan_fleet_adoption` returns the digest-bound intent diff, and `apply_fleet_adoption` persists the reviewed adoption after signed interactive confirmation. All three operate on fleet intent alone and perform no Cloudflare write.
 
 ## Documentation and screenshots
 
