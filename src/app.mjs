@@ -6610,6 +6610,22 @@ const INTENT_STATUS_ICON = Object.freeze({
   allowance: "absent",
 })
 
+// Custom hover/focus tooltip: a styled, near-instant, readable replacement for
+// the slow and tiny native title. The label stays on the host's aria-label for
+// assistive tech, so the tooltip element itself is aria-hidden. Positioned by
+// CSS (no inline styles, per the strict style-src CSP)
+function attachTooltip(element, text, options = {}) {
+  if (!text) return element
+  element.classList.add("tooltip-host")
+  const tip = createElement("span", {
+    className: `tooltip${options.below ? " tooltip--below" : ""}`,
+    text,
+  })
+  tip.setAttribute("aria-hidden", "true")
+  element.append(tip)
+  return element
+}
+
 function intentStatusBadge(text, status) {
   const badge = createElement("span", { className: `intent-status-badge ${status}` })
   const iconName = INTENT_STATUS_ICON[status]
@@ -6638,8 +6654,7 @@ function intentActionButton(label, action, options = {}) {
     ? contextualActionLabel(label, options.context)
     : label
   if (options.context || iconOnly) button.setAttribute("aria-label", accessibleName)
-  if (options.title) button.title = options.title
-  else if (iconOnly) button.title = accessibleName
+  attachTooltip(button, options.title || (iconOnly ? accessibleName : ""))
   button.addEventListener("click", action)
   return button
 }
@@ -6652,9 +6667,9 @@ function intentResultChip(iconName, count, label, tone = "", title = "") {
     className: `intent-result-chip${tone ? ` ${tone}` : ""}${count === 0 ? " zero" : ""}`,
   })
   const description = title || `${count} ${label}`
-  chip.title = description
   chip.setAttribute("aria-label", description)
   chip.append(icon(iconName), document.createTextNode(String(count)))
+  attachTooltip(chip, description)
   return chip
 }
 
@@ -7185,7 +7200,7 @@ function renderIntentPolicies() {
       INTENT_REMEDIATION_PRESENTATION[remediation.className].label,
       remediation.className,
     )
-    remediationBadge.title = remediation.text
+    attachTooltip(remediationBadge, remediation.text)
     badges.append(intentStatusBadge(statusLabel, status))
     if (stalledDnssecCount > 0) {
       badges.append(intentStatusBadge(
@@ -7210,38 +7225,43 @@ function renderIntentPolicies() {
           ? INTENT_REMEDIATION_KIND.REMEDIABLE
           : INTENT_REMEDIATION_KIND.MANUAL,
       )
-      alignmentBadge.title = alignment.reason
+      attachTooltip(alignmentBadge, alignment.reason)
       badges.append(alignmentBadge)
     }
     heading.append(
       createElement("h4", { text: policy.facet.label }),
       badges,
     )
-    item.append(
-      heading,
-      createElement("p", {
-        className: "intent-item-summary",
-        text: [
-          matrixCategoryLabel(policy.facet.category),
-          facetDescription.phase
-            ? `Phase: ${facetDescription.phaseLabel} (${facetDescription.phase})`
-            : "",
-          group
-            ? `Applies to ${intentGroupPrimaryText(group, groupScope)}`
-            : "Missing group",
-          group ? `Group: ${group.name}` : "",
-          intentPolicyLayerSummary(layer),
-          `Presence: ${intentPolicyPresenceLabel(policy)}`,
-          presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
-            ? `Values: ${intentPolicyValueConstraintLabel(policy)}`
-            : "",
-          presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
-            && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
-            ? intentExpectedSourceLabel(policy.expected)
-            : "",
-        ].filter(Boolean).join(" | "),
-      }),
-    )
+    const summaryPrimary = [
+      matrixCategoryLabel(policy.facet.category),
+      group
+        ? `Applies to ${intentGroupPrimaryText(group, groupScope)}`
+        : "Missing group",
+      `Presence: ${intentPolicyPresenceLabel(policy)}`,
+      presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        ? `Values: ${intentPolicyValueConstraintLabel(policy)}`
+        : "",
+    ].filter(Boolean).join(" | ")
+    const summaryDetail = [
+      facetDescription.phase ? `Phase: ${facetDescription.phaseLabel}` : "",
+      group ? `Group: ${group.name}` : "",
+      intentPolicyLayerSummary(layer),
+      presenceConstraint !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+        && valueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.EXACT
+        ? intentExpectedSourceLabel(policy.expected)
+        : "",
+    ].filter(Boolean).join(" · ")
+    const summary = createElement("p", { className: "intent-item-summary" })
+    summary.append(document.createTextNode(summaryPrimary))
+    if (summaryDetail) {
+      const detail = createElement("span", { className: "intent-help" })
+      detail.setAttribute("role", "img")
+      detail.setAttribute("aria-label", `Details: ${summaryDetail}`)
+      detail.append(icon("info"))
+      attachTooltip(detail, summaryDetail)
+      summary.append(detail)
+    }
+    item.append(heading, summary)
     const result = createElement("p", { className: "intent-item-result" })
     const attentionZones = problemCells.map((cell) => cell.zone.meta.name)
     const chips = createElement("span", { className: "intent-result-chips" })
@@ -8244,10 +8264,10 @@ function decorateIntentManagerSections() {
     const title = heading.querySelector("h3")
     if (!hint || !title || heading.querySelector(".intent-help")) continue
     const help = createElement("span", { className: "intent-help" })
-    help.title = hint.textContent
     help.setAttribute("role", "img")
     help.setAttribute("aria-label", `About ${title.textContent}: ${hint.textContent}`)
     help.append(icon("info"))
+    attachTooltip(help, hint.textContent, { below: true })
     title.append(help)
     hint.hidden = true
   }
