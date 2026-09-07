@@ -542,3 +542,30 @@ test("fleet service blocks guarded undo after live drift", async () => {
   assert.equal(result.planSet, null)
   assert.equal(result.differences.length, 1)
 })
+
+test("listAdoptionCandidates returns candidates, gaps, and coverage", async () => {
+  const service = createFleetService({
+    accountId: "account-one",
+    api: { fetch: async () => ({}) },
+    stateFile: "unused.json",
+    readState: async () => ({ intent: createEmptyFleetIntentDocument("account-one") }),
+    loadInventory: async () => ({ account: { id: "account-one" }, zones: [] }),
+    buildAdoptionReport: () => ({
+      candidates: [{ id: "settings/email", key: "email", missingZones: ["beta.example"] }],
+      coverageComplete: false,
+      gaps: {
+        perZoneOutlierTally: { "beta.example": 1 },
+        presenceGaps: [{ candidate: { key: "email" }, outlierZones: ["beta.example"] }],
+        valueGaps: [],
+      },
+      incompleteZones: ["gamma.example"],
+    }),
+  })
+
+  const result = await service.listAdoptionCandidates()
+
+  assert.equal(result.summary.presenceGaps, 1)
+  assert.equal(result.summary.valueGaps, 0)
+  assert.equal(result.coverageComplete, false)
+  assert.deepEqual(result.summary.incompleteZones, ["gamma.example"])
+})

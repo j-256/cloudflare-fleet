@@ -21,6 +21,11 @@ import {
 import { createEmptyFleetPolicyConfiguration } from "./fleet-policy.mjs"
 import { readFleetPolicyConfiguration } from "./fleet-policy-store.mjs"
 import {
+  buildAdoptionGapsView,
+  buildIntentAdoptionCandidates,
+  excludeUnreadZones,
+} from "./intent-adoption.mjs"
+import {
   persistFleetIntentDocument,
   readFleetIntentDocument,
 } from "./intent-store.mjs"
@@ -28,7 +33,11 @@ import {
   FLEET_INTENT_CHANGE_STATUS,
   prepareFleetIntentChange,
 } from "./intent-plan.mjs"
-import { loadInventory } from "./inventory.mjs"
+import {
+  coverageFor,
+  loadInventory,
+} from "./inventory.mjs"
+import { buildMatrix } from "./matrix.mjs"
 import {
   compareVerificationGuards,
   OPERATION_ACTIVITY_STATUS,
@@ -185,6 +194,18 @@ async function verifyTargets(api, targets, options, dependencies) {
     .map((entry) => entry.value)
 }
 
+function defaultAdoptionReport(intentDocument, inventory) {
+  const matrix = buildMatrix(inventory)
+  const raw = buildIntentAdoptionCandidates(intentDocument, inventory, matrix)
+  const { candidates, incompleteZones } = excludeUnreadZones(raw, coverageFor(inventory))
+  return {
+    candidates,
+    coverageComplete: incompleteZones.length === 0,
+    gaps: buildAdoptionGapsView(candidates),
+    incompleteZones,
+  }
+}
+
 export function createFleetService(options) {
   if (!options || typeof options !== "object") {
     throw new TypeError("Fleet service options are required")
@@ -201,6 +222,7 @@ export function createFleetService(options) {
   const policyFile = options.policyFile || null
   const dependencies = {
     appendActivity: options.appendActivity || appendOperationActivity,
+    buildAdoptionReport: options.buildAdoptionReport || defaultAdoptionReport,
     executePlanSet: options.executePlanSet || executeVerifiedPlanSet,
     finalizeActivity: options.finalizeActivity || finalizeOperationActivity,
     listCandidates: options.listCandidates || listIntentAlignmentCandidates,
@@ -367,6 +389,31 @@ export function createFleetService(options) {
       schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
       status: FLEET_SERVICE_STATUS.OK,
       summary: result.summary,
+    }
+  }
+
+  async function listAdoptionCandidates(commandOptions = {}) {
+    const state = await dependencies.readState(stateFile, accountId)
+    const inventory = await dependencies.loadInventory(api, {
+      onProgress: commandOptions.onProgress,
+      signal: commandOptions.signal,
+    })
+    cacheBaseline(inventory, state.intent.revision)
+    const report = dependencies.buildAdoptionReport(state.intent, inventory)
+    return {
+      accountId,
+      candidates: report.candidates,
+      coverageComplete: report.coverageComplete,
+      gaps: report.gaps,
+      intentRevision: state.intent.revision,
+      schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+      status: FLEET_SERVICE_STATUS.OK,
+      summary: {
+        candidates: report.candidates.length,
+        incompleteZones: report.incompleteZones,
+        presenceGaps: report.gaps.presenceGaps.length,
+        valueGaps: report.gaps.valueGaps.length,
+      },
     }
   }
 
@@ -835,6 +882,7 @@ export function createFleetService(options) {
     applyIntent,
     getIntent,
     listActivity,
+    listAdoptionCandidates,
     listAlignments,
     planActivityUndo,
     planAlignment,
