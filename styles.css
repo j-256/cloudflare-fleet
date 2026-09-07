@@ -4313,7 +4313,10 @@ dialog form > .intent-field-help {
 .intent-result-chip.zero {
   color: var(--muted);
   border-color: var(--line);
-  opacity: 0.5;
+}
+
+.intent-result-chip.zero .icon {
+  opacity: 0.75;
 }
 
 .intent-result-chip.zero .icon {
