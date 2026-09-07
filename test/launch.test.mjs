@@ -11,6 +11,24 @@ const execFileAsync = promisify(execFile)
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 const launcher = path.join(projectRoot, "launch.sh")
 
+test("launcher accepts an empty option list", async () => {
+  await assert.rejects(
+    execFileAsync("/bin/bash", [launcher], {
+      env: {
+        ...process.env,
+        CLOUDFLARE_ACCOUNT_ID: "",
+        CLOUDFLARE_API_TOKEN: "",
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, 2)
+      assert.match(error.stderr, /CLOUDFLARE_API_TOKEN is unset/)
+      assert.doesNotMatch(error.stderr, /_EXPANDED/)
+      return true
+    },
+  )
+})
+
 test("launcher accepts short option aliases", async () => {
   const readOnly = await execFileAsync(
     "/bin/bash",
