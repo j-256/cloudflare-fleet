@@ -52,6 +52,18 @@ const ICONS = Object.freeze({
     { tag: "path", d: "M1 8 3.5 8" },
     { tag: "path", d: "M12.5 8 15 8" },
   ],
+  active: [
+    { tag: "circle", cx: "8", cy: "8", r: "5.5" },
+    { tag: "circle", cx: "8", cy: "8", r: "2" },
+  ],
+  ack: [
+    { tag: "circle", cx: "8", cy: "8", r: "6" },
+    { tag: "path", d: "M5.5 8 7 9.5 10.5 6" },
+  ],
+  layers: [
+    { tag: "path", d: "M8 2.5 14 5.5 8 8.5 2 5.5Z" },
+    { tag: "path", d: "M2 9 8 12 14 9" },
+  ],
 })
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS))

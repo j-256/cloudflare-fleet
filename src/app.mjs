@@ -6644,6 +6644,20 @@ function intentActionButton(label, action, options = {}) {
   return button
 }
 
+// Compact "icon + number" chip for the policy row's effective-result counts. The
+// word (and, for need-attention, the affected zones) lives in the hover tooltip
+// and aria-label, so the counts read at a glance instead of as a pipe-run
+function intentResultChip(iconName, count, label, tone = "", title = "") {
+  const chip = createElement("span", {
+    className: `intent-result-chip${tone ? ` ${tone}` : ""}${count === 0 ? " zero" : ""}`,
+  })
+  const description = title || `${count} ${label}`
+  chip.title = description
+  chip.setAttribute("aria-label", description)
+  chip.append(icon(iconName), document.createTextNode(String(count)))
+  return chip
+}
+
 function intentPolicyMatrixButton(policy, row, context) {
   const available = Boolean(row)
   return intentActionButton(
@@ -7229,21 +7243,31 @@ function renderIntentPolicies() {
       }),
     )
     const result = createElement("p", { className: "intent-item-result" })
-    result.append(
-      createElement("strong", { text: "Effective result: " }),
-      document.createTextNode([
-        `${policyState?.targetCount || 0} targeted`,
-        `${policyState?.effectiveCount || 0} effective`,
-        `${policyState?.matchCount || 0} matching`,
-        `${policyState?.acknowledgementCount || 0} acknowledged`,
-        `${problemCells.length} ${problemCells.length === 1 ? "needs" : "need"} attention`,
-        `${policyState?.overriddenCount || 0} overridden`,
-        policyState?.reason || "",
+    const attentionZones = problemCells.map((cell) => cell.zone.meta.name)
+    const chips = createElement("span", { className: "intent-result-chips" })
+    chips.append(
+      intentResultChip("align", policyState?.targetCount || 0, "targeted"),
+      intentResultChip("active", policyState?.effectiveCount || 0, "effective"),
+      intentResultChip("ok", policyState?.matchCount || 0, "matching", "aligned"),
+      intentResultChip("ack", policyState?.acknowledgementCount || 0, "acknowledged"),
+      intentResultChip(
+        "drift",
+        problemCells.length,
+        "need attention",
+        problemCells.length > 0 ? "actionable" : "",
         problemCells.length > 0
-          ? `Zones: ${problemCells.map((cell) => cell.zone.meta.name).join(", ")}`
+          ? `${problemCells.length} need attention: ${attentionZones.join(", ")}`
           : "",
-      ].filter(Boolean).join(" | ")),
+      ),
+      intentResultChip("layers", policyState?.overriddenCount || 0, "overridden"),
     )
+    result.append(createElement("strong", { text: "Effective result" }), chips)
+    if (policyState?.reason) {
+      result.append(createElement("span", {
+        className: "intent-result-reason",
+        text: policyState.reason,
+      }))
+    }
     item.append(result)
     const value = createElement("div", { className: "intent-item-value" })
     if (presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) {
