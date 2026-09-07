@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { atomicWriteFile } from "../src/atomic-file.mjs"
 import {
@@ -18,6 +19,19 @@ const ACCOUNT_ID_PATTERN = /^[a-f0-9]{32}$/i
 const ACCESS_AUD_PATTERN = /^[a-f0-9]{64}$/i
 const DATABASE_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const WORKER_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/
+const PROJECT_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
+const HOSTED_WORKER_LIMITS = Object.freeze({
+  cpu_ms: 3000,
+  subrequests: 1000,
+})
+
+async function projectFileResolver(outputFile) {
+  const outputDirectory = await fs.realpath(path.dirname(outputFile))
+  return (relativePath) => path.relative(
+    outputDirectory,
+    path.join(PROJECT_ROOT, relativePath),
+  )
+}
 
 function configuredPolicyFile(environment) {
   const configured = environment.CLOUDFLARE_FLEET_POLICY_FILE
@@ -158,13 +172,15 @@ export async function hostedWranglerConfiguration(options) {
     "Worker name",
   )
   const policy = await readFleetPolicyConfiguration(options.policyFile)
+  const projectFile = await projectFileResolver(options.outputFile)
   return {
     $schema: "node_modules/wrangler/config-schema.json",
     name: workerName,
-    main: "src/hosted/worker.mjs",
+    main: projectFile("src/hosted/worker.mjs"),
     compatibility_date: "2026-08-11",
     workers_dev: false,
     preview_urls: false,
+    limits: HOSTED_WORKER_LIMITS,
     routes: [{
       pattern: normalizedHostname(options.hostname),
       custom_domain: true,
@@ -174,14 +190,14 @@ export async function hostedWranglerConfiguration(options) {
     },
     assets: {
       binding: "ASSETS",
-      directory: ".worker-assets",
+      directory: projectFile(".worker-assets"),
       run_worker_first: true,
     },
     d1_databases: [{
       binding: "FLEET_DB",
       database_name: "cloudflare-fleet",
       database_id: databaseId,
-      migrations_dir: "migrations",
+      migrations_dir: projectFile("migrations"),
     }],
     services: [],
     triggers: {

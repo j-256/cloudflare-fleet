@@ -128,6 +128,8 @@ npm run deploy -- --secrets-file .dev.vars.production
 
 The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. See the [deployment guide](docs/deployment.html) for Access setup, secret handling, verification, optional state import, and the deliberate `--write` opt-in.
 
+The generated Worker also carries bounded CPU and subrequest ceilings. These are Workers Standard safeguards rather than a claim of Free compatibility; the deployment guide records the measured headroom, exact Free fallback, and operational consequence.
+
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
 
 ### One shared fleet from every device

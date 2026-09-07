@@ -15,6 +15,7 @@ import {
 const CONFIGURE_SCRIPT = fileURLToPath(
   new URL("../scripts/configure-hosted.mjs", import.meta.url),
 )
+const PROJECT_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 
 function options(root) {
   return {
@@ -82,10 +83,27 @@ test("hosted configuration writes portable Wrangler bindings", async (context) =
   const configuration = await writeHostedWranglerConfiguration(configured)
   const persisted = JSON.parse(await fs.readFile(configured.outputFile, "utf8"))
   const mode = (await fs.stat(configured.outputFile)).mode & 0o777
+  const outputDirectory = await fs.realpath(root)
 
   assert.deepEqual(persisted, configuration)
   assert.equal(configuration.routes[0].pattern, "fleet.example.com")
   assert.equal(configuration.vars.FLEET_READ_ONLY, "true")
+  assert.equal(
+    configuration.main,
+    path.relative(outputDirectory, path.join(PROJECT_ROOT, "src/hosted/worker.mjs")),
+  )
+  assert.equal(
+    configuration.assets.directory,
+    path.relative(outputDirectory, path.join(PROJECT_ROOT, ".worker-assets")),
+  )
+  assert.equal(
+    configuration.d1_databases[0].migrations_dir,
+    path.relative(outputDirectory, path.join(PROJECT_ROOT, "migrations")),
+  )
+  assert.deepEqual(configuration.limits, {
+    cpu_ms: 3000,
+    subrequests: 1000,
+  })
   assert.deepEqual(configuration.triggers.crons, [])
   assert.deepEqual(configuration.services, [])
   assert.deepEqual(JSON.parse(configuration.vars.FLEET_POLICY_JSON), {
@@ -94,6 +112,21 @@ test("hosted configuration writes portable Wrangler bindings", async (context) =
   })
   assert.deepEqual(configuration.secrets.required, ["CLOUDFLARE_API_TOKEN"])
   assert.equal(mode, 0o600)
+})
+
+test("hosted configuration keeps project-local deployment paths portable", async (context) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "fleet-hosted-local-paths."))
+  context.after(() => fs.rm(root, { force: true, recursive: true }))
+  const configured = {
+    ...options(root),
+    outputFile: path.join(PROJECT_ROOT, "wrangler.jsonc"),
+  }
+
+  const configuration = await hostedWranglerConfiguration(configured)
+
+  assert.equal(configuration.main, "src/hosted/worker.mjs")
+  assert.equal(configuration.assets.directory, ".worker-assets")
+  assert.equal(configuration.d1_databases[0].migrations_dir, "migrations")
 })
 
 test("hosted configuration rejects incomplete deployment identity", async () => {
