@@ -509,3 +509,40 @@ test("applyAdoptionFilters gaps lens keeps only gap candidates", () => {
   const all = applyAdoptionFilters(result, { lens: "all" })
   assert.equal(all.candidates.length, candidates.length)
 })
+
+test("applyAdoptionFilters narrows gaps and summary counts, not just candidates", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidates = buildIntentAdoptionCandidates(document, inventory, matrix)
+  const gaps = buildAdoptionGapsView(candidates)
+  const result = {
+    accountId: "account-id",
+    candidates,
+    coverageComplete: true,
+    gaps,
+    summary: {
+      candidates: candidates.length,
+      incompleteZones: [],
+      presenceGaps: gaps.presenceGaps.length,
+      valueGaps: gaps.valueGaps.length,
+    },
+  }
+
+  // default gaps lens keeps missing (presence) plus strong/split (value)
+  const gapsView = applyAdoptionFilters(result, {})
+  assert.equal(gapsView.summary.candidates, 3)
+  assert.equal(gapsView.summary.presenceGaps, 1)
+  assert.equal(gapsView.summary.valueGaps, 2)
+
+  // a high-confidence predicate drops the presence gap and the split value gap
+  const highOnly = applyAdoptionFilters(result, { confidence: INTENT_ADOPTION_CONFIDENCE.HIGH })
+  assert.deepEqual(highOnly.candidates.map((candidate) => candidate.key), ["strong"])
+  assert.deepEqual(highOnly.gaps.presenceGaps, [])
+  assert.deepEqual(highOnly.gaps.valueGaps.map((gap) => gap.candidate.key), ["strong"])
+  assert.deepEqual(highOnly.gaps.perZoneOutlierTally, { "delta.example": 1 })
+  assert.equal(highOnly.summary.candidates, 1)
+  assert.equal(highOnly.summary.presenceGaps, 0)
+  assert.equal(highOnly.summary.valueGaps, 1)
+  // coverage facts stay as read, not recomputed from the filtered set
+  assert.equal(highOnly.coverageComplete, true)
+  assert.deepEqual(highOnly.summary.incompleteZones, [])
+})

@@ -855,7 +855,8 @@ function renderAlignmentList(result) {
 function renderAdoptionList(result) {
   const lines = [
     `Adoption candidates for account ${result.accountId}`,
-    `${result.summary.presenceGaps} presence gaps, ${result.summary.valueGaps} value gaps`
+    `${result.summary.candidates} candidates`
+      + ` | ${result.summary.presenceGaps} presence gaps, ${result.summary.valueGaps} value gaps`
       + `${result.coverageComplete ? "" : ` (coverage incomplete: ${result.summary.incompleteZones.join(", ")})`}`,
   ]
   for (const gap of result.gaps.presenceGaps) {
@@ -1361,14 +1362,21 @@ export async function runFleetCommand(options = {}) {
       await service.listAdoptionCandidates(commandOptions),
       parsed.filters,
     )
-  } else if (parsed.command === "adoption-plan") {
-    result = await service.planAdoption(adoptionRequest, commandOptions)
-  } else if (parsed.command === "adoption-apply") {
-    result = await service.applyAdoption(
-      adoptionRequest,
-      parsed.expectedDigest,
-      commandOptions,
-    )
+  } else if (["adoption-plan", "adoption-apply"].includes(parsed.command)) {
+    try {
+      result = parsed.command === "adoption-plan"
+        ? await service.planAdoption(adoptionRequest, commandOptions)
+        : await service.applyAdoption(
+            adoptionRequest,
+            parsed.expectedDigest,
+            commandOptions,
+          )
+    } catch (error) {
+      if (error instanceof TypeError) {
+        throw new CliUsageError(error.message)
+      }
+      throw error
+    }
   } else if (parsed.command === "activity-list") {
     result = await service.listActivity(commandOptions)
   } else if (parsed.command === "intent-show") {

@@ -593,6 +593,108 @@ test("unified CLI maps missing operator configuration to exit 2", async () => {
   assert.equal(JSON.parse(stdout.value()).status, "configuration-error")
 })
 
+function adoptionListReport() {
+  const missing = {
+    category: "Zone settings",
+    classification: "missing-coverage",
+    confidence: "review",
+    id: "settings:mail",
+    key: "mail",
+    missingZones: ["beta.example"],
+    presentZones: ["alpha.example"],
+    search: "zone settings mail",
+    variants: [],
+  }
+  const strong = {
+    category: "Zone settings",
+    classification: "strong-consensus",
+    confidence: "high",
+    id: "settings:tls",
+    key: "tls",
+    missingZones: [],
+    presentZones: ["alpha.example", "beta.example"],
+    search: "zone settings tls",
+    variants: [],
+  }
+  const perZone = {
+    category: "Zone settings",
+    classification: "zone-specific",
+    confidence: "review",
+    id: "settings:region",
+    key: "region",
+    missingZones: [],
+    presentZones: ["alpha.example", "beta.example"],
+    search: "zone settings region",
+    variants: [],
+  }
+  const gaps = {
+    perZoneOutlierTally: { "beta.example": 2 },
+    presenceGaps: [{ candidate: missing, gapKind: "presence", outlierZones: ["beta.example"] }],
+    valueGaps: [{ candidate: strong, gapKind: "value", outlierZones: ["beta.example"] }],
+  }
+  return {
+    accountId: "account-one",
+    candidates: [missing, strong, perZone],
+    coverageComplete: true,
+    gaps,
+    intentRevision: "intent-one",
+    schemaVersion: 1,
+    status: "ok",
+    summary: {
+      candidates: 3,
+      incompleteZones: [],
+      presenceGaps: 1,
+      valueGaps: 1,
+    },
+  }
+}
+
+test("adoption list surfaces candidate count and varies by lens in text mode", async () => {
+  const runLens = async (lens) => {
+    const stdout = outputStream()
+    await runFleetCommand({
+      argv: ["adoption", "list", "--lens", lens],
+      service: {
+        async listAdoptionCandidates() {
+          return adoptionListReport()
+        },
+      },
+      stderr: outputStream().stream,
+      stdout: stdout.stream,
+    })
+    return stdout.value()
+  }
+
+  const gapsText = await runLens("gaps")
+  const allText = await runLens("all")
+
+  // gaps lens keeps only the two gap candidates; all keeps the zone-specific one too
+  assert.match(gapsText, /2 candidates/)
+  assert.match(allText, /3 candidates/)
+  assert.notEqual(gapsText, allText)
+})
+
+test("adoption plan maps a malformed request TypeError to usage exit 2", async () => {
+  const exits = []
+  const stderr = outputStream()
+  await runFleetCli({
+    argv: ["adoption", "plan", "--input", "-"],
+    environment: {},
+    inputText: JSON.stringify({ adopt: [{ candidateId: "settings:missing" }] }),
+    onExitCode: (code) => exits.push(code),
+    service: {
+      async planAdoption() {
+        throw new TypeError("Unknown adoption candidate: settings:missing")
+      },
+    },
+    stderr: stderr.stream,
+    stdout: outputStream().stream,
+  })
+
+  assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.USAGE])
+  assert.match(stderr.value(), /Unknown adoption candidate/)
+})
+
 test("unified CLI delegates dashboard arguments through the canonical command", async () => {
   let arguments_
   const result = await runFleetCommand({
