@@ -283,6 +283,7 @@ import {
 } from "./write-verification.mjs"
 import { executeVerifiedPlanSet } from "./write-executor.mjs"
 import { mountWorkerPanel } from "./worker-panel.mjs"
+import { icon } from "./app-icons.mjs"
 import {
   isZoneAliasMatrixRow,
   zoneAliasPolicyTemplateForSourceHost,
@@ -323,6 +324,7 @@ application.hidden = false
 const api = new CloudflareApi(auth)
 const readOnly = Boolean(auth.readOnly)
 mountWorkerPanel({ api, readOnly })
+decorateIntentManagerSections()
 const cachedRecord = isCacheRecord(injectedCache, auth.accountId) ? injectedCache : null
 const initialIntent = isFleetIntentDocument(injectedIntent, auth.accountId)
   ? injectedIntent
@@ -8183,6 +8185,24 @@ async function saveIntentAdoption() {
     { saveButton: elements.intentAdoptionSave },
   )
   if (saved) completeIntentWorkflowScreen(elements.intentAdoptionDialog)
+}
+
+// Move each intent-manager section's helper sentence into a hover tooltip on an
+// info icon, trimming always-on prose while keeping the guidance reachable (the
+// text is mirrored to aria-label for assistive tech)
+function decorateIntentManagerSections() {
+  for (const heading of document.querySelectorAll("#intent-dialog .intent-section-heading")) {
+    const hint = heading.querySelector("p")
+    const title = heading.querySelector("h3")
+    if (!hint || !title || heading.querySelector(".intent-help")) continue
+    const help = createElement("span", { className: "intent-help" })
+    help.title = hint.textContent
+    help.setAttribute("role", "img")
+    help.setAttribute("aria-label", `About ${title.textContent}: ${hint.textContent}`)
+    help.append(icon("info"))
+    title.append(help)
+    hint.hidden = true
+  }
 }
 
 function renderIntentManager() {
