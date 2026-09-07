@@ -337,6 +337,27 @@ export function previewIntentAdoption(document, inventory, matrix, entries, exem
   }
 }
 
+export function excludeUnreadZones(candidates, coverage) {
+  const incompleteZones = new Set(
+    coverage.flatMap((entry) => entry.failed || [])
+      .map((failure) => failure.zoneName)
+      .filter(Boolean),
+  )
+  if (incompleteZones.size === 0) {
+    return { candidates, incompleteZones: [] }
+  }
+  const adjusted = candidates.map((candidate) => {
+    const unreadZones = candidate.missingZones.filter((zone) => incompleteZones.has(zone))
+    if (unreadZones.length === 0) return candidate
+    return {
+      ...candidate,
+      missingZones: candidate.missingZones.filter((zone) => !incompleteZones.has(zone)),
+      unreadZones,
+    }
+  })
+  return { candidates: adjusted, incompleteZones: [...incompleteZones] }
+}
+
 export const INTENT_ADOPTION_GAP_KIND = Object.freeze({
   PRESENCE: "presence",
   VALUE: "value",
