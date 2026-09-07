@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  buildAdoptionDocument,
   buildAdoptionGapsView,
   buildIntentAdoptionCandidates,
   createIntentAdoptionPolicy,
@@ -469,4 +470,28 @@ test("excludeUnreadZones returns candidates unchanged when coverage is complete"
   const result = excludeUnreadZones(candidates, [{ id: "settings", ok: true, failed: [] }])
   assert.equal(result.candidates, candidates)
   assert.deepEqual(result.incompleteZones, [])
+})
+
+test("buildAdoptionDocument adopts a candidate as required and acknowledges exempt zones", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidate = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((entry) => entry.key === "missing")
+
+  const preview = buildAdoptionDocument(document, inventory, matrix, {
+    adopt: [{ candidateId: candidate.id, policyId: "gap-policy" }],
+    exempt: [{
+      candidateId: candidate.id,
+      reason: "No mail on these zones",
+      zones: [
+        { id: "zone-2", name: "beta.example" },
+        { id: "zone-3", name: "gamma.example" },
+        { id: "zone-4", name: "delta.example" },
+      ],
+    }],
+  })
+
+  assert.equal(preview.document.policies.length, 1)
+  assert.equal(preview.document.policies[0].presenceConstraint, FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED)
+  assert.equal(preview.document.acknowledgements.length, 3)
+  assert.deepEqual(preview.policyIds, ["gap-policy"])
 })

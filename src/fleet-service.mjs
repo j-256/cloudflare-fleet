@@ -21,6 +21,7 @@ import {
 import { createEmptyFleetPolicyConfiguration } from "./fleet-policy.mjs"
 import { readFleetPolicyConfiguration } from "./fleet-policy-store.mjs"
 import {
+  buildAdoptionDocument,
   buildAdoptionGapsView,
   buildIntentAdoptionCandidates,
   excludeUnreadZones,
@@ -357,6 +358,30 @@ export function createFleetService(options) {
         status: "saved",
       }
     })
+  }
+
+  async function planAdoption(request, commandOptions = {}) {
+    const state = await dependencies.readState(stateFile, accountId)
+    const inventory = await dependencies.loadInventory(api, {
+      onProgress: commandOptions.onProgress,
+      signal: commandOptions.signal,
+    })
+    cacheBaseline(inventory, state.intent.revision)
+    const matrix = buildMatrix(inventory)
+    const preview = buildAdoptionDocument(state.intent, inventory, matrix, request)
+    const plan = await planIntent(preview.document, commandOptions)
+    return { ...plan, adoption: { impact: preview.summary, policyIds: preview.policyIds } }
+  }
+
+  async function applyAdoption(request, expectedDigest, commandOptions = {}) {
+    const state = await dependencies.readState(stateFile, accountId)
+    const inventory = await dependencies.loadInventory(api, {
+      onProgress: commandOptions.onProgress,
+      signal: commandOptions.signal,
+    })
+    const matrix = buildMatrix(inventory)
+    const preview = buildAdoptionDocument(state.intent, inventory, matrix, request)
+    return applyIntent(preview.document, expectedDigest, commandOptions)
   }
 
   async function prepareChange(change, commandOptions = {}) {
@@ -876,6 +901,7 @@ export function createFleetService(options) {
     accountId,
     workers,
     applyActivityUndo,
+    applyAdoption,
     applyAlignment,
     applyAlignments,
     applyChange,
@@ -885,6 +911,7 @@ export function createFleetService(options) {
     listAdoptionCandidates,
     listAlignments,
     planActivityUndo,
+    planAdoption,
     planAlignment,
     planAlignments,
     planChange,
