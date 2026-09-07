@@ -569,3 +569,31 @@ test("listAdoptionCandidates returns candidates, gaps, and coverage", async () =
   assert.equal(result.coverageComplete, false)
   assert.deepEqual(result.summary.incompleteZones, ["gamma.example"])
 })
+
+test("applyAdoption persists the built document through the revision guard", async () => {
+  const applied = []
+  const service = createFleetService({
+    accountId: "account-one",
+    api: { fetch: async () => ({}) },
+    stateFile: "unused.json",
+    readState: async () => ({ intent: createEmptyFleetIntentDocument("account-one") }),
+    readIntent: async () => createEmptyFleetIntentDocument("account-one"),
+    loadInventory: async () => ({ account: { id: "account-one" }, zones: [] }),
+    prepareIntentChange: async (accountId, current, desired) => ({
+      desired,
+      diff: {},
+      planSet: { digest: "sha256:approved" },
+      status: "changed",
+    }),
+    persistIntent: async (stateFile, accountId, revision, desired) => {
+      applied.push(desired)
+      return desired
+    },
+    withWriteLock: async (operation) => operation(),
+  })
+
+  const result = await service.applyAdoption({ adopt: [] }, "sha256:approved")
+
+  assert.equal(result.applied, true)
+  assert.equal(applied.length, 1)
+})

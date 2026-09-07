@@ -337,6 +337,47 @@ export function previewIntentAdoption(document, inventory, matrix, entries, exem
   }
 }
 
+export function buildAdoptionDocument(document, inventory, matrix, request) {
+  const byId = new Map(
+    buildIntentAdoptionCandidates(document, inventory, matrix)
+      .map((candidate) => [candidate.id, candidate]),
+  )
+  const policyIdByCandidate = new Map()
+  const entries = request.adopt.map((item) => {
+    const candidate = byId.get(item.candidateId)
+    if (!candidate) {
+      throw new TypeError(`Unknown adoption candidate: ${item.candidateId}`)
+    }
+    const policyId = item.policyId || `adopt-${item.candidateId}`
+    policyIdByCandidate.set(item.candidateId, policyId)
+    return {
+      candidate,
+      selection: defaultAdoptionSelection(candidate, { ...item.overrides, policyId }),
+    }
+  })
+  const exemptions = (request.exempt || []).flatMap((item) => {
+    const policyId = item.policyId || policyIdByCandidate.get(item.candidateId)
+    if (!policyId) {
+      throw new TypeError(
+        `Exemption needs an explicit policyId or a candidateId adopted in the same request`,
+      )
+    }
+    return item.zones.map((zone) => ({
+      observedCanonical: FLEET_INTENT_MISSING_CANONICAL,
+      policyId,
+      reason: item.reason,
+      zoneId: zone.id,
+      zoneName: zone.name,
+    }))
+  })
+  const preview = previewIntentAdoption(document, inventory, matrix, entries, exemptions)
+  return {
+    document: preview.document,
+    policyIds: [...policyIdByCandidate.values()],
+    summary: preview.summary,
+  }
+}
+
 export function excludeUnreadZones(candidates, coverage) {
   const incompleteZones = new Set(
     coverage.flatMap((entry) => entry.failed || [])
