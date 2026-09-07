@@ -897,3 +897,18 @@ test("reviews ungoverned drift through the summary-first adoption screen", async
   await firstRow.getByRole("checkbox").check()
   await expect(page.locator("#intent-adoption-save")).toBeEnabled()
 })
+
+test("shows a custom tooltip on hover over an intent section info icon", async ({ dashboard }) => {
+  const { page } = dashboard
+
+  await page.getByRole("button", { name: "Manage fleet intent" }).click()
+  const dialog = page.getByRole("dialog", { name: "Fleet intent" })
+  await expect(dialog).toBeVisible()
+
+  const help = dialog.locator(".intent-help").first()
+  await expect(help).toBeVisible()
+  const tooltip = help.locator(".tooltip")
+  await expect(tooltip).toBeHidden()
+  await help.hover()
+  await expect(tooltip).toBeVisible()
+})
