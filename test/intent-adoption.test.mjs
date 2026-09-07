@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  applyAdoptionFilters,
   buildAdoptionDocument,
   buildAdoptionGapsView,
   buildIntentAdoptionCandidates,
@@ -494,4 +495,17 @@ test("buildAdoptionDocument adopts a candidate as required and acknowledges exem
   assert.equal(preview.document.policies[0].presenceConstraint, FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED)
   assert.equal(preview.document.acknowledgements.length, 3)
   assert.deepEqual(preview.policyIds, ["gap-policy"])
+})
+
+test("applyAdoptionFilters gaps lens keeps only gap candidates", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidates = buildIntentAdoptionCandidates(document, inventory, matrix)
+  const result = { candidates, gaps: buildAdoptionGapsView(candidates) }
+
+  const gapsOnly = applyAdoptionFilters(result, { lens: "gaps" })
+  const keys = gapsOnly.candidates.map((candidate) => candidate.key).sort()
+  assert.deepEqual(keys, ["missing", "split", "strong"]) // tied + unique excluded
+
+  const all = applyAdoptionFilters(result, { lens: "all" })
+  assert.equal(all.candidates.length, candidates.length)
 })

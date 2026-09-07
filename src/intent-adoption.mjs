@@ -453,3 +453,27 @@ export function buildAdoptionGapsView(candidates) {
   ))
   return { perZoneOutlierTally, presenceGaps, valueGaps }
 }
+
+export function applyAdoptionFilters(result, filters = {}) {
+  const lens = filters.lens || "gaps"
+  let candidates = result.candidates
+  if (lens === "gaps") {
+    const gapIds = new Set([
+      ...result.gaps.presenceGaps.map((gap) => gap.candidate.id),
+      ...result.gaps.valueGaps.map((gap) => gap.candidate.id),
+    ])
+    candidates = candidates.filter((candidate) => gapIds.has(candidate.id))
+  }
+  candidates = candidates.filter((candidate) => {
+    if (filters.category && candidate.category !== filters.category) return false
+    if (filters.confidence && candidate.confidence !== filters.confidence) return false
+    if (filters.classification && candidate.classification !== filters.classification) return false
+    if (filters.zone
+      && !candidate.missingZones.includes(filters.zone)
+      && !candidate.presentZones.includes(filters.zone)) return false
+    if (filters.search && !candidate.search.includes(filters.search.toLowerCase())) return false
+    return true
+  })
+  if (filters.limit) candidates = candidates.slice(0, filters.limit)
+  return { ...result, candidates }
+}

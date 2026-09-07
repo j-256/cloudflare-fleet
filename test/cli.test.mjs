@@ -237,6 +237,9 @@ test("unified CLI serves namespace and leaf help without requiring operands", as
   const cases = [
     [["alignment", "--help"], /cloudflare-fleet alignment/],
     [["alignment", "plan", "--help"], /SELECTOR/],
+    [["adoption", "--help"], /cloudflare-fleet adoption/],
+    [["adoption", "list", "--help"], /FILTER OPTIONS/],
+    [["help", "adoption"], /cloudflare-fleet adoption/],
     [["intent", "--help"], /cloudflare-fleet intent/],
     [["change", "--help"], /cloudflare-fleet change/],
     [["config", "--help"], /cloudflare-fleet config/],
@@ -270,6 +273,7 @@ test("unified CLI serves namespace and leaf help without requiring operands", as
 test("unified CLI help documents the bounded agent surface", () => {
   const usage = fleetUsage()
   assert.match(usage, /alignment apply/)
+  assert.match(usage, /adoption list/)
   assert.match(usage, /--expect-plan DIGEST/)
   assert.match(usage, /activity list/)
   assert.match(usage, /cloudflare-fleet mcp/)
@@ -655,5 +659,18 @@ test("unified CLI keeps command-scoped short options equivalent", () => {
   assert.throws(
     () => parseFleetArguments(["alignment", "plan", "-P", "policy-one"]),
     /Unknown option: -P/,
+  )
+})
+
+test("adoption list defaults to the gaps lens", () => {
+  const parsed = parseFleetArguments(["adoption", "list"])
+  assert.equal(parsed.command, "adoption-list")
+  assert.equal(parsed.filters.lens, "gaps")
+})
+
+test("adoption apply requires an expected plan digest", () => {
+  assert.throws(
+    () => parseFleetArguments(["adoption", "apply", "--input", "req.json"]),
+    /requires --expect-plan/,
   )
 })
