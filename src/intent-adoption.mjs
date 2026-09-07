@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import {
   evaluateFleetIntent,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
@@ -348,6 +350,20 @@ export function previewIntentAdoption(document, inventory, matrix, entries, exem
   }
 }
 
+// Default policy id when a caller adopts a candidate without supplying one. A
+// candidate id is a JSON-array string (see fleetIntentFacetId) whose brackets,
+// quotes, and commas fail IDENTIFIER_PATTERN, so a raw `adopt-${candidateId}`
+// would be rejected by replaceFleetIntentPolicy. A sha256 hex prefix is
+// identifier-safe and a pure function of the candidate id, so the same facet
+// yields the same policy id across the plan and apply passes and the
+// reviewed-plan digest stays stable
+const ADOPTION_POLICY_ID_HASH_LENGTH = 40
+
+function defaultAdoptionPolicyId(candidateId) {
+  const digest = createHash("sha256").update(candidateId).digest("hex")
+  return `adopt-${digest.slice(0, ADOPTION_POLICY_ID_HASH_LENGTH)}`
+}
+
 export function buildAdoptionDocument(document, inventory, matrix, request) {
   const byId = new Map(
     buildIntentAdoptionCandidates(document, inventory, matrix)
@@ -359,7 +375,7 @@ export function buildAdoptionDocument(document, inventory, matrix, request) {
     if (!candidate) {
       throw new TypeError(`Unknown adoption candidate: ${item.candidateId}`)
     }
-    const policyId = item.policyId || `adopt-${item.candidateId}`
+    const policyId = item.policyId || defaultAdoptionPolicyId(item.candidateId)
     policyIdByCandidate.set(item.candidateId, policyId)
     return {
       candidate,
