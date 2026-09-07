@@ -215,6 +215,27 @@ export async function capturePublicationScreenshots(options = {}) {
       "mobile-dashboard.png",
     ))
 
+    const adoptionPage = await openDashboardPage(
+      context,
+      session,
+      DESKTOP_VIEWPORT,
+      browserErrors,
+    )
+    await adoptionPage.getByRole("button", { name: "Manage fleet intent" }).click()
+    await adoptionPage.getByRole("dialog", { name: "Fleet intent" }).waitFor()
+    await adoptionPage.locator("#intent-review-ungoverned").click()
+    const adoptionReview = adoptionPage.getByRole("dialog", {
+      name: "Review ungoverned drift",
+    })
+    await adoptionReview.waitFor()
+    await adoptionReview.locator(".intent-adoption-row-config").first()
+      .locator("> summary").click()
+    screenshots.push(await capture(
+      adoptionPage,
+      outputDirectory,
+      "adoption-review.png",
+    ))
+
     await context.close()
   } finally {
     if (browser) await browser.close()
