@@ -21,6 +21,7 @@ import {
   FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
+  isFleetIntentDocument,
   replaceFleetIntentPolicy,
 } from "../src/fleet-intent.mjs"
 
@@ -495,6 +496,34 @@ test("buildAdoptionDocument adopts a candidate as required and acknowledges exem
   assert.equal(preview.document.policies[0].presenceConstraint, FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED)
   assert.equal(preview.document.acknowledgements.length, 3)
   assert.deepEqual(preview.policyIds, ["gap-policy"])
+})
+
+test("buildAdoptionDocument generates an identifier-safe policy id when none is supplied", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidate = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((entry) => entry.key === "missing")
+
+  // A candidate id is a JSON-array string whose brackets/quotes/comma fail
+  // IDENTIFIER_PATTERN. Before the generated default, adopting without an explicit
+  // policyId threw "Fleet intent policy is invalid" at replaceFleetIntentPolicy
+  // (isPolicy -> isIdentifier rejecting the raw `adopt-${candidateId}` id)
+  assert.equal(candidate.id, '["Zone settings","missing"]')
+
+  const preview = buildAdoptionDocument(document, inventory, matrix, {
+    adopt: [{ candidateId: candidate.id }],
+    exempt: [{
+      candidateId: candidate.id,
+      reason: "No mail on this zone",
+      zones: [{ id: "zone-2", name: "beta.example" }],
+    }],
+  })
+
+  // (a) the built document is valid and the generated policy id is identifier-safe
+  assert.equal(isFleetIntentDocument(preview.document, "account-id"), true)
+  assert.match(preview.policyIds[0], /^adopt-[0-9a-f]{40}$/)
+  // (c) the candidateId-only exemption resolves to the same generated policy id
+  assert.equal(preview.document.acknowledgements.length, 1)
+  assert.equal(preview.document.acknowledgements[0].policyId, preview.policyIds[0])
 })
 
 test("buildAdoptionDocument builds an identical document across passes for a fixed base", () => {

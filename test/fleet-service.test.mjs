@@ -666,3 +666,69 @@ test("adoption plan and apply agree on the real digest and persist an exemption"
   assert.equal(persisted[0].acknowledgements.length, 1)
   assert.equal(persisted[0].acknowledgements[0].policyId, "gap-policy")
 })
+
+test("adoption plan and apply succeed for a candidateId-only adopt with a generated policy id", async () => {
+  // Same missing-coverage setup as the explicit-policyId round trip, but neither
+  // the adopt nor the exempt entry supplies a policyId. The candidate id is a
+  // JSON-array string that fails IDENTIFIER_PATTERN raw, so buildAdoptionDocument
+  // must derive a deterministic, identifier-safe id (equal across plan and apply)
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      dns: [],
+      settings: [
+        { editable: true, id: "always_use_https", value: "on" },
+        { editable: true, id: "brotli", value: "on" },
+      ],
+    }),
+    makeZone("beta.example", {
+      dns: [],
+      settings: [{ editable: true, id: "always_use_https", value: "on" }],
+    }),
+  ])
+  const betaZoneId = "zone-beta"
+  inventory.zones[0].meta.id = "zone-alpha"
+  inventory.zones[1].meta.id = betaZoneId
+  const intent = createEmptyFleetIntentDocument("account-id")
+  const brotli = buildIntentAdoptionCandidates(intent, inventory, buildMatrix(inventory))
+    .find((candidate) => candidate.key === "brotli")
+  assert.ok(brotli, "expected a missing-coverage candidate to adopt")
+
+  const request = {
+    adopt: [{ candidateId: brotli.id }],
+    exempt: [{
+      candidateId: brotli.id,
+      reason: "No brotli on this zone",
+      zones: [{ id: betaZoneId, name: "beta.example" }],
+    }],
+  }
+
+  const persisted = []
+  const service = createFleetService({
+    accountId: "account-id",
+    api: { fetch: async () => ({}) },
+    stateFile: "unused.json",
+    readState: async () => ({ intent }),
+    readIntent: async () => intent,
+    loadInventory: async () => inventory,
+    persistIntent: async (_stateFile, _accountId, _revision, desired) => {
+      persisted.push(desired)
+      return { ...desired, revision: "a".repeat(64), updatedAt: "2026-09-07T00:00:00.000Z" }
+    },
+    withWriteLock: async (operation) => operation(),
+  })
+
+  const plan = await service.planAdoption(request)
+  assert.match(plan.planSet.digest, /^sha256:[0-9a-f]{64}$/)
+  assert.equal(plan.adoption.impact.actionableCells, 0)
+
+  // Pre-fix, buildAdoptionDocument threw on the invalid default id before a plan
+  // could even be produced
+  const result = await service.applyAdoption(request, plan.planSet.digest)
+
+  assert.equal(result.applied, true)
+  assert.equal(persisted.length, 1)
+  const [policy] = persisted[0].policies
+  assert.match(policy.id, /^adopt-[0-9a-f]{40}$/)
+  assert.equal(persisted[0].acknowledgements.length, 1)
+  assert.equal(persisted[0].acknowledgements[0].policyId, policy.id)
+})
