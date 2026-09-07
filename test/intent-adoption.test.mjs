@@ -6,6 +6,7 @@ import {
   buildIntentAdoptionCandidates,
   createIntentAdoptionPolicy,
   defaultAdoptionSelection,
+  excludeUnreadZones,
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
   intentAdoptionVisibleSummary,
@@ -442,4 +443,30 @@ test("adopting a missing facet as required surfaces gaps that exemptions acknowl
   assert.equal(exempted.summary.actionableCells, 0)
   assert.equal(exempted.summary.missingCells, 0)
   assert.equal(exempted.document.acknowledgements.length, 3)
+})
+
+test("excludeUnreadZones moves unread outliers off missingZones", () => {
+  const candidates = [{
+    key: "email",
+    missingZones: ["alpha.example", "beta.example"],
+    presentZones: ["gamma.example"],
+    variants: [],
+  }]
+  const coverage = [
+    { id: "settings", ok: true, failed: [] },
+    { id: "email", ok: false, failed: [{ zoneName: "beta.example" }] },
+  ]
+
+  const result = excludeUnreadZones(candidates, coverage)
+
+  assert.deepEqual(result.incompleteZones, ["beta.example"])
+  assert.deepEqual(result.candidates[0].missingZones, ["alpha.example"])
+  assert.deepEqual(result.candidates[0].unreadZones, ["beta.example"])
+})
+
+test("excludeUnreadZones returns candidates unchanged when coverage is complete", () => {
+  const candidates = [{ key: "email", missingZones: ["alpha.example"], variants: [] }]
+  const result = excludeUnreadZones(candidates, [{ id: "settings", ok: true, failed: [] }])
+  assert.equal(result.candidates, candidates)
+  assert.deepEqual(result.incompleteZones, [])
 })
