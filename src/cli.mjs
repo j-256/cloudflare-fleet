@@ -18,6 +18,7 @@ import {
 import { CliUsageError, parseCliOptions } from "./cli-options.mjs"
 import { isMainModule } from "./entrypoint.mjs"
 import { normalizeFleetChange } from "./fleet-change.mjs"
+import { applyAdoptionFilters } from "./intent-adoption.mjs"
 import {
   FLEET_SERVICE_SCHEMA_VERSION,
 } from "./fleet-service.mjs"
@@ -103,6 +104,7 @@ const HELP_COMMAND_BY_TOPIC = Object.freeze({
   state: "state-help",
   recovery: "recovery-help",
   activity: "activity-help",
+  adoption: "adoption-help",
   alignment: "alignment-help",
   change: "change-help",
   config: "config-help",
@@ -127,6 +129,8 @@ export function fleetUsage() {
     "  cloudflare-fleet alignment list [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment plan SELECTOR_OPTIONS [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet adoption list [FILTER_OPTIONS] [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet adoption plan|apply --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
     "  cloudflare-fleet intent aliases|rate-limits|show|plan|apply [OPTIONS]",
     "  cloudflare-fleet change plan|apply --input FILE|- [OPTIONS]",
     "  cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
@@ -287,6 +291,36 @@ export function fleetAlignmentUsage() {
     "  -f, --format text|json   Select operator text or structured JSON output",
     "  -s, --state-file PATH    Select a fleet state profile",
     "  -h, --help               Show this help",
+  ].join("\n")
+}
+
+export function fleetAdoptionUsage() {
+  return [
+    "NAME",
+    "  cloudflare-fleet adoption - inspect coverage gaps and adopt observed values as intent",
+    "",
+    "SYNOPSIS",
+    "  cloudflare-fleet adoption list [FILTER_OPTIONS] [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet adoption plan --input FILE|- [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet adoption apply --input FILE|- --expect-plan DIGEST [--format text|json] [--state-file PATH]",
+    "",
+    "FILTER OPTIONS",
+    "  --lens gaps|all          Show only coverage gaps (default) or every candidate",
+    "  --zone HOSTNAME          Keep candidates present on or missing from a zone",
+    "  --category CATEGORY --confidence high|review --classification CLASSIFICATION",
+    "  --search TEXT --limit N",
+    "",
+    "OPTIONS",
+    "  -i, --input FILE|-       Read an adoption request {adopt, exempt} from FILE or stdin",
+    "  -e, --expect-plan DIGEST Require the exact reviewed plan digest before writes",
+    "  -f, --format text|json   Select operator text or structured JSON output",
+    "  -s, --state-file PATH    Select a fleet state profile",
+    "  -h, --help               Show this help",
+    "",
+    "WORKFLOW",
+    "  list ranks present-on-most, missing-on-few coverage gaps and names outlier zones",
+    "  plan previews adopting observed values as intent with acknowledgement-based exemptions",
+    "  apply replans under the shared write lock and persists only an exact digest match",
   ].join("\n")
 }
 
@@ -687,6 +721,55 @@ export function parseFleetArguments(argv) {
       stateFile: options.statefile,
     }
   }
+  if (resource === "adoption") {
+    if (!action || isHelpArgument(action)) return { command: "adoption-help" }
+    if (!["list", "plan", "apply"].includes(action)) {
+      throw new CliUsageError("Adoption command must be list, plan, or apply")
+    }
+    const definitions = action === "list"
+      ? [
+          ...COMMON_OPTIONS,
+          { name: "lens", value: true },
+          { name: "zone", value: true },
+          { name: "category", value: true },
+          { name: "confidence", value: true },
+          { name: "classification", value: true },
+          { name: "search", value: true },
+          { name: "limit", value: true },
+        ]
+      : action === "apply"
+        ? [...COMMON_OPTIONS, INPUT_OPTION, EXPECT_PLAN_OPTION]
+        : [...COMMON_OPTIONS, INPUT_OPTION]
+    const options = parseOptions(rest, definitions)
+    if (options.help) return { command: "adoption-help" }
+    if (action === "list") {
+      return {
+        command: "adoption-list",
+        filters: {
+          category: options.category ?? null,
+          classification: options.classification ?? null,
+          confidence: options.confidence ?? null,
+          lens: options.lens ?? "gaps",
+          limit: options.limit ? Number(options.limit) : null,
+          search: options.search ?? null,
+          zone: options.zone ?? null,
+        },
+        format: options.format,
+        stateFile: options.statefile,
+      }
+    }
+    if (!options.input) throw new CliUsageError(`adoption ${action} requires --input`)
+    if (action === "apply" && !options.expectplan) {
+      throw new CliUsageError("adoption apply requires --expect-plan")
+    }
+    return {
+      command: `adoption-${action}`,
+      expectedDigest: options.expectplan ?? null,
+      format: options.format,
+      input: options.input,
+      stateFile: options.statefile,
+    }
+  }
   if (resource === "activity") {
     if (!action || isHelpArgument(action)) return { command: "activity-help" }
     if (action === "list") {
@@ -766,6 +849,25 @@ function renderAlignmentList(result) {
     }
   }
   if (result.candidates.length === 0) lines.push("No alignment candidates")
+  return lines.join("\n")
+}
+
+function renderAdoptionList(result) {
+  const lines = [
+    `Adoption candidates for account ${result.accountId}`,
+    `${result.summary.presenceGaps} presence gaps, ${result.summary.valueGaps} value gaps`
+      + `${result.coverageComplete ? "" : ` (coverage incomplete: ${result.summary.incompleteZones.join(", ")})`}`,
+  ]
+  for (const gap of result.gaps.presenceGaps) {
+    lines.push(`  gap ${gap.candidate.category}/${gap.candidate.key}`
+      + ` - missing on ${gap.outlierZones.join(", ")}`)
+  }
+  const tally = Object.entries(result.gaps.perZoneOutlierTally)
+    .sort((left, right) => right[1] - left[1])
+  if (tally.length > 0) {
+    lines.push("Outlier zones: "
+      + tally.map(([zone, count]) => `${zone} (${count})`).join(", "))
+  }
   return lines.join("\n")
 }
 
@@ -934,6 +1036,7 @@ function renderResult(command, result) {
   if (command === "alignment-list") return renderAlignmentList(result)
   if (command === "alignment-plan") return renderAlignmentPlan(result)
   if (command === "alignment-apply") return renderAlignmentApply(result)
+  if (command === "adoption-list") return renderAdoptionList(result)
   if (command === "activity-list") return renderActivity(result)
   if (command === "intent-show") return JSON.stringify(result.document, null, 2)
   if (command === "intent-aliases") return [
@@ -955,8 +1058,8 @@ function renderResult(command, result) {
       `- ${template.id}: ${template.value.rateRules.length === 0 ? "unused" : template.value.hosts.join(", ")}`
     )),
   ].join("\n")
-  if (command === "intent-plan") return renderIntentPlan(result)
-  if (command === "intent-apply") {
+  if (command === "intent-plan" || command === "adoption-plan") return renderIntentPlan(result)
+  if (command === "intent-apply" || command === "adoption-apply") {
     return result.applied
       ? `Fleet intent saved at revision ${result.document.revision}\nPlan: ${result.planDigest}`
       : renderIntentPlan(result)
@@ -1120,6 +1223,11 @@ export async function runFleetCommand(options = {}) {
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return null
   }
+  if (parsed.command === "adoption-help") {
+    stdout.write(`${fleetAdoptionUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
   if (parsed.command === "config-help") {
     stdout.write(`${fleetConfigUsage()}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
@@ -1195,9 +1303,12 @@ export async function runFleetCommand(options = {}) {
   }
   let intentDocument
   let change
+  let adoptionRequest
   if (["intent-plan", "intent-apply"].includes(parsed.command)) {
     const input = await readJsonInput(parsed.input, options)
     intentDocument = input?.document || input
+  } else if (["adoption-plan", "adoption-apply"].includes(parsed.command)) {
+    adoptionRequest = await readJsonInput(parsed.input, options)
   } else if (["change-plan", "change-apply"].includes(parsed.command)) {
     try {
       change = normalizeFleetChange(await readJsonInput(parsed.input, options))
@@ -1242,6 +1353,19 @@ export async function runFleetCommand(options = {}) {
   } else if (parsed.command === "alignment-apply") {
     result = await service.applyAlignment(
       parsed.selector,
+      parsed.expectedDigest,
+      commandOptions,
+    )
+  } else if (parsed.command === "adoption-list") {
+    result = applyAdoptionFilters(
+      await service.listAdoptionCandidates(commandOptions),
+      parsed.filters,
+    )
+  } else if (parsed.command === "adoption-plan") {
+    result = await service.planAdoption(adoptionRequest, commandOptions)
+  } else if (parsed.command === "adoption-apply") {
+    result = await service.applyAdoption(
+      adoptionRequest,
       parsed.expectedDigest,
       commandOptions,
     )
