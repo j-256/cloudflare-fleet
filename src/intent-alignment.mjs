@@ -47,6 +47,15 @@ import {
   buildZoneAliasAlignmentPlan,
   zoneAliasAlignmentBlocker,
 } from "./zone-alias-remediation.mjs"
+import {
+  isHostnameScopedFreeRateLimitMatrixRow,
+  RATE_LIMIT_REQUIRED_RULE_PHASES,
+  RATE_LIMIT_REQUIRED_SURFACE_IDS,
+} from "./rate-limit-intent.mjs"
+import {
+  buildHostnameScopedFreeRateLimitAlignmentPlan,
+  hostnameScopedFreeRateLimitAlignmentBlocker,
+} from "./rate-limit-remediation.mjs"
 
 const DNS_RECORD_CATEGORY = "DNS records"
 const EMAIL_CATCH_ALL_KEY = "catch-all"
@@ -79,8 +88,16 @@ export const INTENT_ALIGNMENT_TARGET_KIND = Object.freeze({
   FILL_DNS_RECORDS: "fill-dns-records",
   FILL_RULE: "fill-rule",
   SET_DNSSEC_STATUS: "set-dnssec-status",
+  HOSTNAME_SCOPED_FREE_RATE_LIMIT: "hostname-scoped-free-rate-limit",
   ZONE_ALIAS: "zone-alias",
 })
+
+export class UnsupportedIntentAlignmentFacetError extends Error {
+  constructor(message = "This facet has no scoped live read for intent alignment") {
+    super(message)
+    this.name = "UnsupportedIntentAlignmentFacetError"
+  }
+}
 
 function cloneJsonValue(value) {
   return value === undefined ? undefined : structuredClone(value)
@@ -270,6 +287,20 @@ function emailRoutingSettingTarget(row, cell, exact) {
 }
 
 function editTarget(row, cell, currentCell, exact) {
+  if (isHostnameScopedFreeRateLimitMatrixRow(row)) {
+    const desiredValue = materializeValue(exact.value, cell.zone.meta.name)
+    const reason = hostnameScopedFreeRateLimitAlignmentBlocker(
+      cell.zone,
+      currentCell?.alignmentAction,
+      desiredValue,
+    )
+    return reason
+      ? blocker(cell, reason)
+      : target(cell, INTENT_ALIGNMENT_TARGET_KIND.HOSTNAME_SCOPED_FREE_RATE_LIMIT, {
+          action: currentCell.alignmentAction,
+          expected: exact,
+        })
+  }
   if (isZoneAliasMatrixRow(row)) {
     const desiredValue = materializeValue(exact.value, cell.zone.meta.name)
     const reason = zoneAliasAlignmentBlocker(
@@ -373,8 +404,8 @@ function alignmentForCell(row, cell) {
 }
 
 function alignmentReason(targets, blockers, actionableCount, unresolved) {
-  if (actionableCount === 0) return "No unacknowledged fleet intent drift is present"
   if (unresolved) return "One or more policies reference zones or facets outside the loaded fleet"
+  if (actionableCount === 0) return "No unacknowledged fleet intent drift is present"
   if (blockers.length > 0) {
     const details = blockers
       .map((entry) => `${entry.zoneName}: ${entry.reason}`)
@@ -414,6 +445,15 @@ export function assessIntentAlignment(row, options = {}) {
 }
 
 export function intentAlignmentReadRequirement(row) {
+  if (isHostnameScopedFreeRateLimitMatrixRow(row)) {
+    return inventoryRead({
+      includeEmailAddresses: false,
+      includeRuleDetails: true,
+      ruleDetailKinds: [RULESET_KIND.ZONE],
+      ruleDetailPhases: RATE_LIMIT_REQUIRED_RULE_PHASES,
+      surfaceIds: RATE_LIMIT_REQUIRED_SURFACE_IDS,
+    })
+  }
   if (isZoneAliasMatrixRow(row)) {
     return inventoryRead({
       accountSurfaceIds: ZONE_ALIAS_REQUIRED_ACCOUNT_SURFACE_IDS,
@@ -460,6 +500,7 @@ export function intentAlignmentReadRequirement(row) {
     })
   }
   if (RULE_CATEGORIES.has(row.category)) {
+    if (!row.phase) throw new UnsupportedIntentAlignmentFacetError("Ruleset intent alignment requires an explicit phase")
     return inventoryRead({
       includeEmailAddresses: false,
       includeRuleDetails: true,
@@ -468,7 +509,7 @@ export function intentAlignmentReadRequirement(row) {
       surfaceIds: ["rulesets"],
     })
   }
-  throw new Error("This facet has no scoped live read for intent alignment")
+  throw new UnsupportedIntentAlignmentFacetError()
 }
 
 function resultFor(zone, surfaceId) {
@@ -524,6 +565,18 @@ function requiredDnsRecords(zone, recordIds) {
 
 function targetPlans(targetDefinition, zonesById) {
   const zone = requiredZone(zonesById, targetDefinition.zoneId)
+  if (targetDefinition.kind
+    === INTENT_ALIGNMENT_TARGET_KIND.HOSTNAME_SCOPED_FREE_RATE_LIMIT) {
+    const desired = materializeValue(
+      targetDefinition.expected.value,
+      zone.meta.name,
+    )
+    return [buildHostnameScopedFreeRateLimitAlignmentPlan(
+      zone,
+      targetDefinition.action,
+      desired,
+    )]
+  }
   if (targetDefinition.kind === INTENT_ALIGNMENT_TARGET_KIND.ZONE_ALIAS) {
     const desired = materializeValue(
       targetDefinition.expected.value,

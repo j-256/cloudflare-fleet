@@ -7,6 +7,7 @@ import {
 
 export const BROKER_SESSION_HEADER = "X-Cloudflare-Fleet-Session"
 export const FLEET_BOOTSTRAP_ERROR_GLOBAL = "__CLOUDFLARE_FLEET_BOOTSTRAP_ERROR__"
+export const RETRY_AFTER_HEADER = "Retry-After"
 
 const API_BASE = new URL(API_BASE_URL)
 const DEFAULT_READ_THROTTLE_DELAY_MS = 1000
@@ -63,6 +64,9 @@ export class CloudflareApiError extends Error {
     this.messages = options.messages ?? []
     this.path = options.path ?? ""
     this.method = options.method ?? HTTP_METHOD.GET
+    this.aborted = options.aborted === true
+    this.abortKind = this.aborted ? options.abortKind === "timeout" ? "timeout" : "cancelled" : null
+    this.elapsedMs = options.elapsedMs ?? null
   }
 }
 
@@ -120,6 +124,7 @@ export class CloudflareApi {
   }
 
   async request(path, options = {}) {
+    const startedAt = Date.now()
     const method = options.method || HTTP_METHOD.GET
     const cloudflareUrl = resolveCloudflareApiUrl(path)
     const url = this.usesBackend
@@ -130,6 +135,9 @@ export class CloudflareApi {
     }
     if (this.usesBroker) headers[BROKER_SESSION_HEADER] = this.brokerSecret
     else if (!this.usesBackend) headers.Authorization = `Bearer ${this.apiToken}`
+    if (this.usesBackend && !this.usesBroker && this.executionId && method !== HTTP_METHOD.GET) {
+      headers["X-Fleet-Execution"] = this.executionId
+    }
     const request = {
       method,
       headers,
@@ -144,24 +152,30 @@ export class CloudflareApi {
     let response
     let throttleRetries = 0
     while (true) {
-      if (method === HTTP_METHOD.GET) {
-        await abortableDelay(
-          Math.max(0, this.readThrottleUntil - Date.now()),
-          options.signal,
-        )
-      }
       try {
+        if (method === HTTP_METHOD.GET) {
+          while (this.readThrottleUntil > Date.now() && !options.signal?.aborted) {
+            await abortableDelay(
+              this.readThrottleUntil - Date.now(),
+              options.signal,
+            )
+          }
+        }
+        options.signal?.throwIfAborted()
         response = await this.fetchImpl(url, request)
       } catch (error) {
         throw new CloudflareApiError(`Network request failed for ${method} ${cloudflareUrl.pathname}`, {
           method,
           path: cloudflareUrl.pathname,
+          aborted: options.signal?.aborted,
+          abortKind: options.signal?.reason?.name === "TimeoutError" ? "timeout" : "cancelled",
+          elapsedMs: Date.now() - startedAt,
           errors: [{ message: error instanceof Error ? error.message : String(error) }],
         })
       }
       if (method !== HTTP_METHOD.GET || response.status !== 429) break
       const retryAt = Date.now()
-        + retryAfterDelay(response.headers.get("Retry-After"))
+        + retryAfterDelay(response.headers.get(RETRY_AFTER_HEADER))
       this.readThrottleUntil = Math.max(this.readThrottleUntil, retryAt)
       if (throttleRetries >= MAX_READ_THROTTLE_RETRIES) break
       throttleRetries += 1
@@ -186,6 +200,9 @@ export class CloudflareApi {
         method,
         path: cloudflareUrl.pathname,
         status: response.status,
+        aborted: options.signal?.aborted,
+        abortKind: options.signal?.reason?.name === "TimeoutError" ? "timeout" : "cancelled",
+        elapsedMs: Date.now() - startedAt,
       })
     }
 
@@ -198,6 +215,7 @@ export class CloudflareApi {
         status: response.status,
         errors: envelope.errors,
         messages: envelope.messages,
+        elapsedMs: Date.now() - startedAt,
       })
     }
 
@@ -299,6 +317,19 @@ export class CloudflareApi {
     return envelope.result
   }
 
+  async workerCommand(command, payload, options = {}) {
+    if (!this.usesBackend) throw new Error("Worker diagnostics require a protected backend")
+    const response = await this.fetchImpl(new URL(`workers/${encodeURIComponent(command)}`, this.backendBaseUrl), {
+      headers: this.backendHeaders({ json: true }),
+      method: HTTP_METHOD.POST,
+      body: JSON.stringify(payload),
+      signal: options.signal,
+    })
+    const envelope = await response.json()
+    if (!response.ok || envelope.success !== true) throw new Error(envelope.errors?.[0]?.message || `Worker operation returned HTTP ${response.status}`)
+    return envelope.result
+  }
+
   async persistFleetIntent(document, options = {}) {
     if (!this.usesBackend) {
       throw new Error("Fleet intent persistence requires a protected backend")
@@ -313,7 +344,7 @@ export class CloudflareApi {
       signal: options.signal,
     })
     const envelope = await response.json()
-    if (response.status === 409) {
+    if (response.status === 409 && envelope.result) {
       throw new FleetIntentApiConflictError(
         envelope.errors?.[0]?.message || "Fleet intent changed in another dashboard window",
         envelope.result,
@@ -341,11 +372,15 @@ export class CloudflareApi {
   }
 
   async appendOperationActivity(entry, options = {}) {
-    return this.persistOperationActivity(entry, HTTP_METHOD.POST, options)
+    const document = await this.persistOperationActivity(entry, HTTP_METHOD.POST, options)
+    this.executionId = entry.id
+    return document
   }
 
   async finalizeOperationActivity(entry, options = {}) {
-    return this.persistOperationActivity(entry, HTTP_METHOD.PATCH, options)
+    const document = await this.persistOperationActivity(entry, HTTP_METHOD.PATCH, options)
+    if (this.executionId === entry.id) this.executionId = null
+    return document
   }
 
   async persistOperationActivity(entry, method, options = {}) {
@@ -354,7 +389,10 @@ export class CloudflareApi {
     }
     const response = await this.fetchImpl(new URL("activity", this.backendBaseUrl), {
       body: JSON.stringify({ entry }),
-      headers: this.backendHeaders({ json: true }),
+      headers: {
+        ...this.backendHeaders({ json: true }),
+        ...(!this.usesBroker && method === HTTP_METHOD.PATCH && this.executionId ? { "X-Fleet-Execution": this.executionId } : {}),
+      },
       method,
       signal: options.signal,
     })
@@ -512,5 +550,7 @@ export function serializeApiError(error) {
     messages: error.messages,
     path: error.path,
     method: error.method,
+    ...(error.aborted ? { aborted: true, abortKind: error.abortKind } : {}),
+    ...(error.elapsedMs !== null ? { elapsedMs: error.elapsedMs } : {}),
   }
 }

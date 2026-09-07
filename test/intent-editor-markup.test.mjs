@@ -161,7 +161,7 @@ test("intent editors behave as one routed workspace", () => {
   assert.match(html, /data-intent-workflow-back/)
   assert.match(html, /data-intent-workflow-path/)
   assert.match(html, /data-intent-workflow-close/)
-  assert.match(styles, /\.intent-workflow-dialog \{[\s\S]+height: min\(860px, calc\(100dvh - 34px\)\);/)
+  assert.match(styles, /\.intent-workflow-dialog \{[^}]+height: var\(--dialog-workspace-height\);/)
   assert.match(styles, /\.intent-workflow-dialog \.dialog-close \{[\s\S]+z-index: 5;/)
   assert.match(appSource, /presentIntentWorkflowScreen\(/)
   assert.match(appSource, /suspendIntentWorkflowEntry\(active\)/)

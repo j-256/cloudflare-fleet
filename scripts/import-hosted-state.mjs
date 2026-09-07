@@ -10,6 +10,7 @@ import {
 } from "../src/cli-contract.mjs"
 import { CliUsageError, parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
+import { emptyWorkerRecords } from "../src/worker-records.mjs"
 import {
   defaultFleetStateFile,
   defaultWranglerConfigurationFile,
@@ -152,12 +153,13 @@ async function readState(stateFile, accountId) {
 
 async function hostedStateCounts(accountId, apiToken, databaseId) {
   const [query] = await cloudflareRequest(accountId, apiToken, databaseId, {
-    params: [accountId, accountId, accountId],
+    params: [accountId, accountId, accountId, accountId],
     sql: `
       SELECT
         (SELECT count(*) FROM fleet_intent WHERE account_id = ?) AS intent_count,
         (SELECT count(*) FROM activity_meta WHERE account_id = ?) AS activity_count,
-        (SELECT count(*) FROM operation_activity WHERE account_id = ?) AS entry_count
+        (SELECT count(*) FROM operation_activity WHERE account_id = ?) AS entry_count,
+        (SELECT count(*) FROM worker_diagnostics WHERE account_id = ?) AS worker_count
     `,
   })
   return query.results?.[0] || {
@@ -182,6 +184,10 @@ function importBatch(state, force) {
       {
         params: [state.accountId],
         sql: "DELETE FROM fleet_intent WHERE account_id = ?",
+      },
+      {
+        params: [state.accountId],
+        sql: "DELETE FROM worker_diagnostics WHERE account_id = ?",
       },
     )
   }
@@ -217,6 +223,8 @@ function importBatch(state, force) {
       `,
     },
   )
+  const workers = state.workers || emptyWorkerRecords()
+  batch.push({ params: [state.accountId, JSON.stringify(workers), workers.revision], sql: "INSERT INTO worker_diagnostics (account_id, document_json, revision) VALUES (?, ?, ?)" })
   for (const entry of state.activity.entries) {
     batch.push({
       params: [
@@ -267,6 +275,7 @@ export async function importHostedState(options = {}) {
   })
   const imported = await hostedStateCounts(accountId, apiToken, databaseId)
   if (Number(imported.intent_count) !== 1
+    || Number(imported.worker_count) !== 1
     || Number(imported.activity_count) !== 1
     || Number(imported.entry_count) !== state.activity.entries.length) {
     throw new Error("Hosted Fleet state verification did not match the source document")

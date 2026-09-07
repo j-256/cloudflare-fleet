@@ -9,7 +9,7 @@ The same browser application runs in two modes:
 - An Access-protected Cloudflare Worker with D1 persistence for hosted access
 - An ephemeral local loopback broker on macOS for a complete local workflow
 
-Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted configuration defaults to read-only, and local capabilities remain available after a hosted deployment.
+Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted configuration defaults to read-only. CLI and stdio MCP clients can use the hosted Worker and its shared D1 state, while standalone local mode remains available explicitly.
 
 ## What Fleet does
 
@@ -17,6 +17,7 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Separates observed differences from saved fleet intent, acknowledged exceptions, and expected coverage gaps
 - Turns supported exact and forbidden intent into first-class cell, row, and policy alignment reviews
 - Models compatibility domains as strict canonical passthrough intent that rejects independent web behavior
+- Governs a Free zone's single rate rule and its complementary hostname WAF skip as one fail-safe posture
 - Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
 - Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
 - Displays targets, before and after values, methods, endpoints, and request bodies before a write
@@ -98,6 +99,8 @@ cloudflare-fleet audit --deep --fail-on warning
 
 Core findings cover inventory gaps, fleet intent, canonical alias behavior and attachments, DNSSEC transitions, Email Routing policy, shared WAF rules, editable settings, TLS and certificate posture, duplicate DNS, mail policy, and ruleset health. Deep mode adds bounded public DNS, endpoint, Registrar, Pages, Workers, storage, binding, route, and dependency evidence. Use `--state-file` or `--policy-file` to select explicit documents.
 
+Deep Worker checks independently flag Cron triggers without an exported `scheduled` handler, even when invocation logs or other account reads are unavailable. Findings include the Worker identity, observed schedules and handlers, read time, and explicit coverage. Missing metadata produces an unknown assessment. Review whether to restore an intended handler or remove an obsolete trigger; a mismatch alone does not establish that removal is safe. Invocation exception metrics describe all event paths and do not establish the HTTP failure rate.
+
 `--fail-on` exits with a distinct policy status after rendering the complete report. Authentication, inventory, argument, and rendering failures remain operational errors. The deep audit is a point-in-time review of every proxied exact hostname; it does not schedule probes or retain endpoint state.
 
 ## Hosted deployment
@@ -125,7 +128,109 @@ npm run deploy -- --secrets-file .dev.vars.production
 
 The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. See the [deployment guide](docs/deployment.html) for Access setup, secret handling, verification, optional state import, and the deliberate `--write` opt-in.
 
+The generated Worker also carries bounded CPU and subrequest ceilings. These are Workers Standard safeguards rather than a claim of Free compatibility; the deployment guide records the measured headroom, exact Free fallback, and operational consequence.
+
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.
+
+### One shared fleet from every device
+
+Configure each CLI or MCP process with the same hosted origin and expected account:
+
+```sh
+export CLOUDFLARE_FLEET_URL="https://fleet.example.com"
+export CLOUDFLARE_FLEET_ACCOUNT_ID="your-account-id"
+cloudflare-fleet config show
+cloudflare-fleet doctor --live
+cloudflare-fleet dashboard
+```
+
+Load `CLOUDFLARE_FLEET_ACCESS_CLIENT_ID` and `CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET` from a private secret manager into that process environment. Use a dedicated, expiring Access service token and an application-specific **Service Auth** policy that includes only that token. Preserve human login and MFA policies. Alternatively, supply an unexpired Access application JWT through `CLOUDFLARE_FLEET_ACCESS_TOKEN`, not both methods. See Cloudflare's [service-token authentication](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/). Credential values never belong in arguments, URLs, public files, or shared MCP configuration.
+
+The hosted Worker holds the account API token. Remote clients do not need it and never forward it. All ordinary CLI commands and MCP tools use the selected hosted backend, including audits, intent, alignment, bounded changes, activity, Worker records, and guarded undo. The MCP transport is still stdio: install the CLI on each agent host and inherit the hosted environment. There is no public remote HTTP MCP endpoint.
+
+D1 is authoritative for shared intent, activity, and Worker records. Cloudflare remains authoritative for live resources; the deployed Worker configuration supplies operator policy exceptions. `dashboard` opens the hosted URL, where deployment policy determines write access. A hosted URL selects hosted mode without silent local fallback; local file flags are rejected. Use `CLOUDFLARE_FLEET_BACKEND=local` deliberately for standalone work or export. Without a hosted URL, standalone mode remains the default. Standalone files are not synchronized replicas and should not be used as a second production authority.
+
+Before upgrading, back up both stores, apply all D1 migrations, and deploy the matching Worker and client versions. `0004_shared_control_state.sql` adds account-scoped recovery archives; the Worker diagnostics migration supplies the shared execution lease. `doctor --live` checks authentication, account binding, the command protocol, and required D1 tables.
+
+For populated stores, use reviewed reconciliation instead of a force import:
+
+```sh
+umask 077
+CLOUDFLARE_FLEET_BACKEND=local cloudflare-fleet state export > local-backup.json
+cloudflare-fleet state export > hosted-backup.json
+jq '{state: ., intentSource: "incoming"}' local-backup.json > reconciliation.json
+cloudflare-fleet state plan --input reconciliation.json --format json
+cloudflare-fleet state apply --input reconciliation.json --expect-plan REVIEWED_DIGEST
+```
+
+Review the complete plan before applying. `intentSource` must explicitly select `incoming` or `hosted` for zone intent and conflicting Worker intent. Distinct activity and incident histories are retained; conflicting record identities and pending operations block reconciliation. Apply rechecks the exact plan under the shared lock, archives the previous hosted state, atomically persists the merge, and verifies the result. Input is bounded to 2 MiB and each apply to 500 additional activities. Keep large histories in reviewed batches. Export `--archive-id ID` reads an earlier state without changing anything; reconcile that archive as incoming to restore intent while retaining newer history.
+
+Browser, CLI, and MCP mutations share an account-wide lease. A lost response is never automatically retried. Pending activity blocks subsequent writes even after lease expiration. Stop old clients, independently inspect affected live resources, and use `cloudflare-fleet recovery plan|apply --input FILE --expect-plan REVIEWED_DIGEST` (digest for apply only) with:
+
+```json
+{"activityId":"activity-ID","reason":"Stopped the old client and inspected the affected live resources","stoppedClientsAndInspectedResources":true}
+```
+
+Recovery preserves the original plan as a failed execution with an explicitly unknown outcome and no automatic inverse. Zero confirmed completions does not mean zero applied writes. Recovery does not retry, reverse, or verify Cloudflare changes.
+
+| Shared-state outcome | CLI | MCP |
+| --- | --- | --- |
+| Export state or inspect recovery archive | `state export` | `get_fleet_state` |
+| Review and reconcile stores | `state plan`, `state apply` | `plan_state_reconciliation`, `apply_state_reconciliation` |
+| Close an interrupted journal after investigation | `recovery plan`, `recovery apply` | `plan_activity_recovery`, `apply_activity_recovery` |
+
+## Worker diagnostics and schedule recovery
+
+Open **Workers** in the dashboard, or use `cloudflare-fleet worker inspect --input FILE --format json` and MCP `inspect_worker`. Select one exact Worker name or a `deep.worker-scheduled-handler-missing:WORKER` finding ID. Inspection defaults to the preceding hour; explicit UTC `start` and `end` must describe a past window of at most 24 hours. Evidence pages contain at most 200 records. Continue with `nextCursor` and the original window; counts describe each page, not an account-wide total. Optional `zoneIds` narrow route reads to the supplied zones.
+
+```json
+{"worker":"example-worker","limit":50,"zoneIds":["example-zone-id"]}
+```
+
+Reports separate configuration observations, inferred trigger cause, confidence, missing checks, and next actions. Serving deployments include traffic allocation and per-version handlers. Binding names/types and resource identifiers are projected without values. Invocation records are deduplicated within a page; console messages do not inflate counts. HTTP response statuses remain separate from event outcomes, and an old-version 503 does not establish a serving-version failure or prove a bootstrap cause. Denied logs leave configuration diagnosis available with unknown log coverage.
+
+Only allowlisted invocation fields and fixed known error signatures are returned. Fleet does not fetch source bundles or expose request headers, bodies, cookies, Access assertions, secret values, or arbitrary error messages. Narrow projection is not a promise that free-form error text can be perfectly redacted. The [sanitized console-event reproduction](docs/fixtures/observability-console-missing-outcome.json) preserves the heterogeneous record shape that exposed an upstream Workers Observability MCP validator's assumption that `$workers.outcome` is always present. It is not a Fleet defect; Fleet skips console records when counting invocations.
+
+| Operator outcome | CLI `worker` command | MCP tool |
+| --- | --- | --- |
+| Inspect scoped evidence | `inspect` | `inspect_worker` |
+| Save a fresh incident | `record` | `record_worker_incident` |
+| Read intent and incident history | `history` | `list_worker_incidents` |
+| Review and save schedule intent | `intent-plan`, `intent-apply` | `plan_worker_intent`, `apply_worker_intent` |
+| Review and change the exact schedule set | `schedules-plan`, `schedules-apply` | `plan_fleet_change`, `apply_fleet_change` |
+| Verify and save fresh post-change evidence | `verify` | `verify_worker_incident` |
+| Review and execute guarded inverse | `undo-plan`, `undo-apply` | `plan_activity_undo`, `apply_activity_undo` |
+
+Each CLI command takes `--input FILE|-`; apply additionally requires `--expect-plan DIGEST`. Use `cloudflare-fleet worker --help` for input fields. MCP apply requires signed interactive confirmation, and the dashboard requires an explicit unchecked review acknowledgement. Read-only dashboards allow inspection and planning but cannot save incidents, intent, verification records, or Cloudflare changes.
+
+Schedule intent is explicit: `disabled` means an empty set, `exact` names the desired set, and `unmanaged` authorizes no change. Managed intent requires `owner`, identifying the deployment configuration, and `reconciliation`, describing the reviewed companion edit. Use history's `revision` as `expectedRevision` when saving intent. Fleet stores this review, never patches an arbitrary local file, and never silently becomes a second deployment configuration authority. A saved conflicting intent blocks an online schedule plan.
+
+For an operator-confirmed obsolete trigger, the bounded change document is:
+
+```json
+{
+  "kind": "worker-schedules-update",
+  "worker": "example-worker",
+  "intent": {
+    "mode": "disabled",
+    "crons": [],
+    "owner": "example-project:wrangler.jsonc",
+    "reconciliation": "Set triggers.crons to [] in the owning environment before deployment"
+  }
+}
+```
+
+```sh
+cloudflare-fleet worker schedules-plan --input schedule-change.json --format json
+# Review the complete plan and reconcile the owning configuration before applying
+cloudflare-fleet worker schedules-apply --input schedule-change.json --expect-plan sha256:APPROVED_DIGEST --format json
+```
+
+The digest binds the account, Worker, exact observed and desired schedules, serving deployment, and saved intent revision. Apply locks, replans, journals the old schedule set before writing, changes only the schedules endpoint, and rereads schedules and deployment. Drift stops the operation. No route, binding, credential, database, or code deployment is changed. Guarded undo is offered only for verified writes whose saved post-change schedules and deployment still match; review the owning configuration again when restoring the prior set. A missing or failed journal prevents writing. After an uncertain write or verification failure, inspect activity and fresh configuration before preparing another plan; do not assume that retry or inverse is safe.
+
+Configuration acceptance is not runtime health. Cloudflare documents [up to 15 minutes for Cron propagation and the difference between omitted triggers and an explicit empty array](https://developers.cloudflare.com/workers/configuration/cron-triggers/): omission preserves schedules; an empty array removes them. Verification uses the recorded activity ID and excludes evidence before the propagation boundary. It reports `propagation-pending`, `awaiting-evidence`, `observed-failures`, `configuration-drift`, or `observed-healthy`. Healthy describes only fresh serving-version invocations, requires evidence for each retained Cron expression, and cannot prove universal success or permanent absence of a removed trigger. Historical aggregate errors and silence alone do not decide health.
+
+Incident capture and verification append bounded reports with supersession links, retaining earlier evidence. Local state stores optional `workers` intent/history alongside operation activity in the private state file. Hosted mode uses account-scoped D1 documents and a leased write lock. Apply all repository D1 migrations before upgrading a hosted instance or importing state; restore Worker records and operation activity together to preserve incident links and guarded recovery. See the [deployment recovery notes](docs/deployment.html#worker-recovery-heading).
 
 ## Operator CLI and MCP
 
@@ -140,6 +245,7 @@ cloudflare-fleet alignment apply --policy POLICY_ID \
 umask 077
 cloudflare-fleet intent show > fleet-intent.json
 cloudflare-fleet intent aliases --format json
+cloudflare-fleet intent rate-limits --format json
 cloudflare-fleet intent plan --input fleet-intent.json --format json
 cloudflare-fleet intent apply --input fleet-intent.json \
   --expect-plan 'sha256:...' --format json
@@ -161,7 +267,7 @@ Every Cloudflare apply repeats fresh scoped planning inside the exclusive write 
 
 The stable exit contract is documented by `cloudflare-fleet --help`: success is `0`, runtime failure is `1`, invalid usage is `2`, a missing dependency is `3`, blocked or attention-required outcomes are `4`, a changed plan is `5`, a write failure is `6`, and a verification failure is `7`.
 
-The local stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy. It is part of the same installed package:
+The stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy. It uses the selected local or hosted backend and is part of the same installed package:
 
 ```sh
 cloudflare-fleet mcp
@@ -171,7 +277,7 @@ Start with `get_runtime_status` after connecting. It returns the same redacted p
 
 ### Codex
 
-Add the server to `~/.codex/config.toml` and explicitly forward the two credential variables from the environment that launches Codex:
+For standalone mode, add the server to `~/.codex/config.toml` and explicitly forward the account credential variables from the environment that launches Codex. For shared mode, forward the hosted URL, expected account, and chosen Access credential variables described above instead:
 
 ```toml
 [mcp_servers.cloudflare_fleet]
@@ -208,22 +314,30 @@ Use the standard stdio command-plus-arguments shape and arrange for the client p
 }
 ```
 
-For an explicit profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command.
+For an explicit standalone profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command. Omit these file arguments for shared hosted mode.
 
-The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Mutation tools display the exact request, digest, and operations through MCP input elicitation, require explicit approval, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
+The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview so one operation stays on a single review field, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
-- Read: `audit_fleet`, `describe_zone_alias_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
+- Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, and `list_activity`
 - Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_change`, and `plan_activity_undo`
 - Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_change`, and `apply_activity_undo`
 
 Read and plan tools work without interactive approval. Apply tools additionally require an MCP client that supports input elicitation; if the client does not present the elicitation, use the CLI or dashboard to review and apply the same bounded plan.
 
-A short-lived, intent-revision-bound baseline avoids repeating the complete alignment candidate inventory, but fresh membership and selected surfaces are still reread. Protocol messages use stdout and diagnostics use stderr. The package version is reported consistently by the CLI, package metadata, and MCP server identity.
+Alignment plan and apply derive their read requirements from the selected facets before requesting inventory. Each preparation reads fresh account membership and only the required surfaces and ruleset phases; batches compose shared reads. A short-lived candidate inventory supplies an optional membership guard, never evidence that a facet is absent or aligned. Cross-zone reads remain deliberate: overlapping policies and portable copy sources need the complete account membership, even for a cell or fixed-group selector. Protocol messages use stdout and diagnostics use stderr. The package version is reported consistently by the CLI, package metadata, and MCP server identity.
 
-Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried.
+Failed or omitted required reads return `blocked` with `coverage.complete: false`, bounded `coverage.failures`, the total `failureCount`, and a `truncated` flag. Failures identify the affected zone, surface and ruleset when applicable, HTTP status, and whether the read failed, timed out, was cancelled, or was not performed. No plan is emitted for incomplete coverage, and one blocked scope withholds the complete batch plan. A successful exact read and an absent resource are distinct from an unsuccessful read. Candidate listing also marks incomplete coverage as unavailable instead of treating it as confirmed drift.
 
-The CLI and MCP process inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Keep the token in the launching process environment instead of a tracked or shared client configuration. Durable per-user state and policy paths are independent of the npm installation, so reinstalling the binary cannot replace operator data. These direct local processes hold the token's authority, and their JSON, audit, plan, and activity output can contain sensitive fleet configuration.
+Commands aborted at their deadline and propagated upstream timeouts return HTTP 504 with a server-generated `error.diagnostics.requestId`, the command, elapsed time, deadline, last reported progress, bounded error source locations, and bounded upstream method, path, status and abort classification when available. Other propagated upstream errors return HTTP 502; command cancellation returns HTTP 408. A per-resource timeout retained by inventory instead returns blocked coverage, not HTTP 504. The remote CLI's JSON output and MCP structured errors preserve these diagnostics; text errors include the request ID.
+
+[Structured Worker log objects](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#logging-structured-json-objects) `fleet.command.failed` and `fleet.command.incomplete-inventory` correlate with the response, without raw provider error messages, query strings, request bodies or credentials. Coverage logs are bounded and emitted once per affected command, using the deployment's Workers Logs sampling and retention.
+
+The deadline is cooperative cancellation, not a guarantee that every storage operation stops at that instant. A read-only command failure can be retried; a failed write may have an unknown outcome and requires activity and resource inspection before further action. Commands are not automatically retried.
+
+Cloudflare GET requests honor `Retry-After` when the API returns HTTP 429. Both dashboard proxies preserve that delay. Concurrent reads through the same API client wait for the latest shared cooldown, including extensions received while they are waiting; cancellation stops a waiting read before it sends another request. Exhausted throttling fails the inventory operation instead of presenting partial coverage as trustworthy drift, and mutating requests are never automatically retried. The same bounded retry behavior applies to CLI and MCP reads.
+
+Standalone CLI and MCP processes inherit `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; shared clients inherit the hosted configuration and scoped Access credentials instead. Keep secrets in the launching process environment instead of tracked or shared client configuration. Durable state is independent of the npm installation, so reinstalling the binary cannot replace operator data. Both backends can return sensitive fleet configuration in JSON, audits, plans, and activity.
 
 ## Daily operating loop
 
@@ -257,6 +371,12 @@ Fleet intent defines presence and value constraints independently. Broader group
 
 The typed `Zone aliases / canonical-web-passthrough` facet is an opt-in policy for compatibility domains. It is fixed to required presence and exact value: status, target scheme and host, path preservation, query preservation, subdomain matching, subdomain preservation, serving apex and wildcard DNS, and an empty unexpected-resource envelope all participate in equality. `cloudflare-fleet intent aliases --format json` and the MCP `describe_zone_alias_policy` tool return reusable values plus initial templates for `j256.dev`, `strangelaser.com`, and `strangelasers.net`; the dashboard loads the matching template when one of those zones is selected.
 
+The typed `Rate limiting / hostname-scoped-free-rate-limit` facet is also opt-in, required, and exact. It combines one `http_ratelimit` block rule with every custom WAF skip that targets that phase. The selected hostname set belongs to the composite value even though the Free rate-rule expression cannot match Host: Fleet derives one complementary skip in the earlier `http_request_firewall_custom` phase so every other host bypasses the zone's rate rule. Missing or extra skips, an unsupported rate expression, multiple rate rules, or incomplete reads make the posture unhealthy instead of silently widening protection.
+
+Cloudflare's documented Free envelope, verified 2026-09-06, is [one rate rule per zone with Path and Verified Bot match fields](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability), IP counting, a 10-second counting and mitigation period, and Block. The paired skip consumes one of the Free plan's [five custom WAF rules](https://developers.cloudflare.com/waf/custom-rules/#availability). Fleet's reusable values expose an intentionally unused slot and a 100 requests per 10 seconds API-path starter; that threshold is an example, not a workload claim, and should be replaced with a measured service baseline. If all five custom-rule slots are occupied, Fleet blocks creation of the required skip; the Free-compatible choices are to reclaim a custom-rule slot or leave the rate-limit slot unused, while an upgrade buys more custom-rule capacity. The starter uses the default Cloudflare block response. Cloudflare documents [custom rate-limit responses as Pro and above](https://developers.cloudflare.com/waf/rate-limiting-rules/create-zone-dashboard/#configure-a-custom-response-for-blocked-requests), so Fleet will preserve an identical response already observed on a Free zone but will not introduce one there. The Free fallback is Cloudflare's default block response; Pro is needed only when a tailored response is a service requirement.
+
+The relationship changes the write order. Fleet creates or restores the WAF skip before enabling the rate rule, disables an active rate rule before changing host scope, and removes the rate rule before its skip. If a later write fails, the remaining state is disabled or over-exempt rather than rate-limited on unintended hosts. Guarded inverse reverses those transitions in the corresponding safe order. `cloudflare-fleet intent rate-limits --format json` and MCP `describe_hostname_scoped_rate_limit_policy` return the strict facet, constraints, Free limits, relationship, and reusable values without reading or writing Cloudflare.
+
 The `canonicalization-dns-mail-security-v1` envelope allows proxied apex and wildcard DNS used by the redirect, non-web and mail or ownership-verification DNS, one canonical dynamic redirect, ordinary TLS and zone posture, and shared security rulesets. Additional web-serving DNS, redirects, application rules, Worker routes or custom domains, Pages domains, SSL for SaaS custom hostnames, load balancers, health checks, waiting rooms, Web3 hostnames, and snippets are reported individually with the canonical target as owner evidence. A failed relevant read blocks alignment. Legacy Page Rules remain an explicit coverage limitation because Cloudflare rejects that endpoint for account-owned tokens, so Fleet never presents their absence as proven.
 
 Alias cleanup reuses the ordinary alignment state machine. Fleet can edit or create the canonical redirect and remove only extra DNS records or rules that have lossless inverse adapters. Required serving DNS and the selected canonical rule are never collateral cleanup targets; unsupported attachments block the complete alignment and direct the operator to the product-specific workflow.
@@ -267,7 +387,7 @@ A row or policy review is all-or-nothing: every unacknowledged drift cell in tha
 
 ![Cloudflare Fleet intent alignment review using a synthetic example fleet](docs/screenshots/intent-alignment.png)
 
-Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, current and desired values, methods, endpoints, and payloads. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
+Endpoint adapters strip server fields, preserve target-specific identity, and refuse unsupported shapes. The confirmation contains the live validation time, affected zones, methods, endpoints, and focused current-to-desired deltas. The planner keeps the complete canonical request and payloads bound to the digest and signed confirmation state through apply. A pending activity record is durable before execution. Verification rereads exact affected resources and patches the matrix and persistent snapshot once.
 
 Clearing or bypassing the inventory cache never removes intent or activity. Hosted sessions use transactional D1 state; local sessions use revisioned sections in the ignored account-scoped state file.
 
@@ -295,7 +415,7 @@ npx playwright install chromium
 npm run screenshots
 ```
 
-The capture script drives the real dashboard through its deterministic local test broker. It uses only `alpha.example`, `bravo.example`, `charlie.example`, documentation IP addresses, synthetic configuration, and a literal fake test token. It does not read shell Cloudflare credentials, ignored operator files, D1, the hosted Worker, or a live API endpoint.
+The capture script drives the real dashboard through its deterministic local test broker. It uses reserved example hostnames, documentation IP addresses, the synthetic `example-worker`, synthetic configuration, and a literal fake test token. It does not read shell Cloudflare credentials, ignored operator files, D1, the hosted Worker, or a live API endpoint.
 
 ## Development
 

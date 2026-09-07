@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { promises as fs } from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import process from "node:process"
 import test from "node:test"
 
@@ -13,6 +16,8 @@ import {
   runFleetMcpMain,
 } from "../src/mcp.mjs"
 import { createEmptyFleetIntentDocument } from "../src/fleet-intent.mjs"
+import { CloudflareApi } from "../src/api.mjs"
+import { collectFleetAudit } from "../src/audit.mjs"
 
 const DIGEST = `sha256:${"a".repeat(64)}`
 const DIFFERENT_DIGEST = `sha256:${"b".repeat(64)}`
@@ -47,8 +52,20 @@ const CHANGE = Object.freeze({
 })
 const TOOL_NAMES = Object.freeze([
   "get_runtime_status",
+  "get_fleet_state",
+  "plan_state_reconciliation",
+  "apply_state_reconciliation",
+  "plan_activity_recovery",
+  "apply_activity_recovery",
+  "inspect_worker",
+  "record_worker_incident",
+  "list_worker_incidents",
+  "verify_worker_incident",
+  "plan_worker_intent",
+  "apply_worker_intent",
   "audit_fleet",
   "describe_zone_alias_policy",
+  "describe_hostname_scoped_rate_limit_policy",
   "get_fleet_intent",
   "plan_fleet_intent",
   "apply_fleet_intent",
@@ -514,6 +531,21 @@ async function connectedFixture(context, options = {}) {
   }
 }
 
+function approvedElicitation(request) {
+  return {
+    action: "accept",
+    content: Object.fromEntries(
+      request.params.requestedSchema.required.map((key) => [key, "approve"]),
+    ),
+  }
+}
+
+function elicitationReviewText(request) {
+  return Object.values(request.params.requestedSchema.properties)
+    .map((field) => `${field.title}\n${field.description}`)
+    .join("\n")
+}
+
 test("MCP server advertises the bounded fleet tools and accurate annotations", async (context) => {
   const { client } = await connectedFixture(context)
 
@@ -557,10 +589,68 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   assert.match(JSON.stringify(aliases.outputSchema), /canonicalization-dns-mail-security-v1/)
   assert.match(JSON.stringify(aliases.outputSchema), /includeSubdomains/)
   assert.match(JSON.stringify(aliases.outputSchema), /unreadSurfaces/)
+  const rateLimits = result.tools.find(
+    (entry) => entry.name === "describe_hostname_scoped_rate_limit_policy",
+  )
+  assert.equal(rateLimits.annotations.readOnlyHint, true)
+  assert.match(JSON.stringify(rateLimits.outputSchema), /hostname-scoped-free-rate-limit/)
+  assert.match(JSON.stringify(rateLimits.outputSchema), /http_request_firewall_custom/)
+  assert.match(JSON.stringify(rateLimits.outputSchema), /http_ratelimit/)
   const runtime = result.tools.find((entry) => entry.name === "get_runtime_status")
   assert.equal(runtime.annotations.readOnlyHint, true)
   assert.match(JSON.stringify(runtime.outputSchema), /"checks"/)
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
+})
+
+test("MCP audit recovers from throttling and reports exhausted retries as an error", async (context) => {
+  for (const exhausted of [false, true]) {
+    await context.test(exhausted ? "exhausted" : "recovered", async (subcontext) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "fleet-mcp-throttle-"))
+      subcontext.after(() => fs.rm(root, { force: true, recursive: true }))
+      let zoneReads = 0
+      const api = new CloudflareApi({
+        accountId: "account-one",
+        apiToken: SECRET,
+        fetchImpl: async (url, request) => {
+          assert.equal(request.method, "GET")
+          const zones = new URL(url).pathname === "/client/v4/zones"
+          if (zones) zoneReads += 1
+          const limited = zones && (exhausted || zoneReads === 1)
+          return new Response(JSON.stringify(limited
+            ? { errors: [{ message: "Rate limited" }], success: false }
+            : { result: [], success: true }), {
+            headers: { "Content-Type": "application/json", "Retry-After": "0" },
+            status: limited ? 429 : 200,
+          })
+        },
+      })
+      const { client } = await connectedFixture(subcontext, {
+        auditFleet: (options) => collectFleetAudit({
+          ...options,
+          api,
+          environment: {},
+          policyFile: path.join(root, "policy.json"),
+          stateFile: path.join(root, "state.json"),
+        }),
+      })
+      const result = await client.callTool({ arguments: {}, name: "audit_fleet" })
+
+      assert.equal(zoneReads, exhausted ? 4 : 2)
+      if (exhausted) {
+        assert.equal(result.isError, true)
+        assert.equal(result.structuredContent.status, "error")
+        assert.equal(result.structuredContent.error.name, "CloudflareApiError")
+        assert.match(result.structuredContent.error.message, /Rate limited/)
+        assert.equal(Object.hasOwn(result.structuredContent, "report"), false)
+      } else {
+        assert.notEqual(result.isError, true)
+        assert.equal(result.structuredContent.status, "ok")
+        assert.equal(result.structuredContent.report.accountId, "account-one")
+        assert.equal(result.structuredContent.report.summary.zones, 0)
+      }
+      assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET))
+    })
+  }
 })
 
 test("MCP read tools return structured service and audit results", async (context) => {
@@ -569,6 +659,7 @@ test("MCP read tools return structured service and audit results", async (contex
   const [
     audit,
     aliases,
+    rateLimits,
     intent,
     intentPlan,
     candidates,
@@ -585,6 +676,10 @@ test("MCP read tools return structured service and audit results", async (contex
     client.callTool({
       arguments: {},
       name: "describe_zone_alias_policy",
+    }),
+    client.callTool({
+      arguments: {},
+      name: "describe_hostname_scoped_rate_limit_policy",
     }),
     client.callTool({
       arguments: {},
@@ -628,6 +723,12 @@ test("MCP read tools return structured service and audit results", async (contex
     aliases.structuredContent.templates[0].value.kind,
     "canonical-web-passthrough",
   )
+  assert.equal(
+    rateLimits.structuredContent.templates[1].value.kind,
+    "hostname-scoped-free-rate-limit",
+  )
+  assert.equal(rateLimits.structuredContent.templates[0].value.rateRules.length, 0)
+  assert.equal(rateLimits.structuredContent.templates[1].value.skipRules.length, 1)
   assert.equal(intent.structuredContent.document.accountId, "account-one")
   assert.equal(intentPlan.structuredContent.planSet.digest, DIGEST)
   assert.equal(candidates.structuredContent.status, "ok")
@@ -687,12 +788,7 @@ test("MCP apply elicits one explicit plan approval before invoking the write ser
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async (incoming) => {
       request = incoming
-      return {
-        action: "accept",
-        content: {
-          approve: true,
-        },
-      }
+      return approvedElicitation(incoming)
     },
   })
 
@@ -711,12 +807,20 @@ test("MCP apply elicits one explicit plan approval before invoking the write ser
     digest: DIGEST,
     selector: { kind: "policy", policyId: "policy-one" },
   }])
-  assert.match(request.params.message, /account account-one/)
+  const review = elicitationReviewText(request)
+  assert.match(request.params.message, /Account: account-one/)
   assert.match(request.params.message, new RegExp(DIGEST))
-  assert.match(request.params.message, /PATCH zones\/zone-one\/settings\/always_use_https/)
-  assert.match(request.params.message, /Body: \{"value":"on"\}/)
-  assert.match(request.params.message, /Current: \{"value":"off"\}/)
-  assert.deepEqual(request.params.requestedSchema.required, ["approve"])
+  assert.match(review, /API: PATCH settings\/always_use_https/)
+  assert.match(review, /value: "off" -> "on"/)
+  assert.doesNotMatch(review, /Body:|Current:/)
+  assert.deepEqual(request.params.requestedSchema.required, ["review_1"])
+  assert.deepEqual(
+    request.params.requestedSchema.properties.review_1.oneOf,
+    [
+      { const: "decline", title: "Do not apply" },
+      { const: "approve", title: "Approve this change" },
+    ],
+  )
   assert.equal(
     Object.hasOwn(request.params.requestedSchema.properties, "confirmDigest"),
     false,
@@ -741,13 +845,33 @@ test("MCP apply stops cleanly when confirmation is declined", async (context) =>
   assert.equal(calls.apply.length, 0)
 })
 
+test("MCP apply stops cleanly when a review field rejects the plan", async (context) => {
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async (request) => {
+      const response = approvedElicitation(request)
+      response.content.review_1 = "decline"
+      return response
+    },
+  })
+
+  const result = await client.callTool({
+    arguments: {
+      planDigest: DIGEST,
+      selector: SELECTOR,
+    },
+    name: "apply_alignment",
+  })
+
+  assert.equal(result.structuredContent.status, "confirmation-declined")
+  assert.equal(result.isError, undefined)
+  assert.equal(calls.apply.length, 0)
+})
+
 test("MCP apply refuses an unchecked confirmation", async (context) => {
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async () => ({
       action: "accept",
-      content: {
-        approve: false,
-      },
+      content: {},
     }),
   })
 
@@ -802,10 +926,7 @@ test("MCP batch apply elicits one combined review and fresh apply", async (conte
     elicitationHandler: async (incoming) => {
       elicitations += 1
       request = incoming
-      return {
-        action: "accept",
-        content: { approve: true },
-      }
+      return approvedElicitation(incoming)
     },
   })
 
@@ -822,12 +943,17 @@ test("MCP batch apply elicits one combined review and fresh apply", async (conte
     digest: DIGEST,
     selectors: NORMALIZED_BATCH_SELECTORS,
   }])
+  const review = elicitationReviewText(request)
   assert.match(request.params.message, /alignment batch/)
-  assert.match(request.params.message, /Always Use HTTPS: planned/)
-  assert.match(request.params.message, /Early Hints: planned/)
-  assert.match(request.params.message, /settings\/always_use_https/)
-  assert.match(request.params.message, /settings\/early_hints/)
-  assert.deepEqual(request.params.requestedSchema.required, ["approve"])
+  assert.match(request.params.message, /Scopes: 2/)
+  assert.match(review, /Enable Always Use HTTPS/)
+  assert.match(review, /Enable Early Hints/)
+  assert.match(review, /settings\/always_use_https/)
+  assert.match(review, /settings\/early_hints/)
+  assert.deepEqual(
+    request.params.requestedSchema.required,
+    ["review_1", "review_2"],
+  )
 })
 
 test("MCP batch apply stops without writing when confirmation is declined", async (context) => {
@@ -844,15 +970,30 @@ test("MCP batch apply stops without writing when confirmation is declined", asyn
   assert.equal(calls.applyBatch.length, 0)
 })
 
+test("MCP batch apply rejects a partially reviewed operation set", async (context) => {
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async () => ({
+      action: "accept",
+      content: { review_1: "approve" },
+    }),
+  })
+
+  const result = await client.callTool({
+    arguments: { selectors: BATCH_SELECTORS },
+    name: "apply_alignments",
+  })
+
+  assert.equal(result.structuredContent.status, "confirmation-invalid")
+  assert.equal(result.isError, true)
+  assert.equal(calls.applyBatch.length, 0)
+})
+
 test("MCP reviewed mutation tools bind intent, direct changes, and undo to signed confirmation", async (context) => {
-  const messages = []
+  const requests = []
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async (request) => {
-      messages.push(request.params.message)
-      return {
-        action: "accept",
-        content: { approve: true },
-      }
+      requests.push(request)
+      return approvedElicitation(request)
     },
   })
 
@@ -884,11 +1025,11 @@ test("MCP reviewed mutation tools bind intent, direct changes, and undo to signe
   assert.equal(calls.applyIntent.length, 1)
   assert.equal(calls.applyChange.length, 1)
   assert.equal(calls.applyUndo.length, 1)
-  assert.equal(messages.length, 3)
-  assert.match(messages[0], /Exact request:/)
-  assert.match(messages[0], /No Cloudflare API writes/)
-  assert.match(messages[1], /zone-setting-update/)
-  assert.match(messages[2], /activity-one/)
+  assert.equal(requests.length, 3)
+  assert.doesNotMatch(requests[0].params.message, /Exact request:/)
+  assert.match(elicitationReviewText(requests[0]), /Cloudflare API writes: none/)
+  assert.match(elicitationReviewText(requests[1]), /value: "off" -> "on"/)
+  assert.match(requests[2].params.message, /Activity: activity-one/)
 })
 
 test("MCP tool errors redact the Cloudflare API token", async (context) => {

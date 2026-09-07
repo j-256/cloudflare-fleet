@@ -191,6 +191,16 @@ export async function capturePublicationScreenshots(options = {}) {
       outputDirectory,
       "reviewed-write.png",
     ))
+    await overview.getByRole("dialog", { name: "Update zone setting" }).getByRole("button", { name: "Cancel" }).click()
+    await overview.getByRole("button", { name: "Workers", exact: true }).click()
+    const workerDialog = overview.getByRole("dialog", { name: "Worker diagnostics" })
+    await workerDialog.getByLabel("Worker name or finding ID").fill("example-worker")
+    await workerDialog.getByLabel("Window start (UTC ISO, optional)").fill("2026-08-12T11:00:00.000Z")
+    await workerDialog.getByLabel("Window end (UTC ISO, optional)").fill(FIXED_TIME)
+    await workerDialog.getByRole("button", { name: "Inspect Worker" }).click()
+    await workerDialog.getByRole("status").filter({ hasText: "Trigger compatibility: mismatch" }).waitFor()
+    screenshots.push(await capture(overview, outputDirectory, "worker-diagnostics.png"))
+    await workerDialog.getByRole("button", { name: "Close", exact: true }).click()
 
     const mobile = await openDashboardPage(
       context,

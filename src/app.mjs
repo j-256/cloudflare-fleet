@@ -276,10 +276,14 @@ import {
   WRITE_VERIFICATION_KIND,
 } from "./write-verification.mjs"
 import { executeVerifiedPlanSet } from "./write-executor.mjs"
+import { mountWorkerPanel } from "./worker-panel.mjs"
 import {
   isZoneAliasMatrixRow,
   zoneAliasPolicyTemplateForSourceHost,
 } from "./zone-alias-intent.mjs"
+import {
+  isHostnameScopedFreeRateLimitMatrixRow,
+} from "./rate-limit-intent.mjs"
 
 const auth = window.__CLOUDFLARE_FLEET_AUTH__
 delete window.__CLOUDFLARE_FLEET_AUTH__
@@ -312,6 +316,7 @@ application.hidden = false
 
 const api = new CloudflareApi(auth)
 const readOnly = Boolean(auth.readOnly)
+mountWorkerPanel({ api, readOnly })
 const cachedRecord = isCacheRecord(injectedCache, auth.accountId) ? injectedCache : null
 const initialIntent = isFleetIntentDocument(injectedIntent, auth.accountId)
   ? injectedIntent
@@ -324,6 +329,7 @@ const EMAIL_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.EMAIL_ALIGN
 const WAF_PREFLIGHT_SURFACE_IDS = READ_ACTION_SURFACES[READ_ACTION.WAF_ALIGNMENT]
 const DEFAULT_INTENT_POLICY_CONSTRAINT_HELP = "Choose these independently: Presence decides whether absence is drift. Value when present compares only zones where the facet exists."
 const ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP = "Canonical passthrough intent is always Required and Exact so independent behavior cannot be silently tolerated."
+const RATE_LIMIT_INTENT_POLICY_CONSTRAINT_HELP = "Hostname-scoped Free rate-limit intent is always Required and Exact because the rate rule and its earlier WAF skip are one safety posture."
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = ".matrix-zone-select, summary, .cell-action"
 const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
@@ -5427,6 +5433,10 @@ function seedIntentPolicyCustomDraft() {
 
 function renderIntentPolicyValueMode() {
   const strictAlias = isZoneAliasMatrixRow(state.intentPolicyDraft?.row)
+  const strictRateLimit = isHostnameScopedFreeRateLimitMatrixRow(
+    state.intentPolicyDraft?.row,
+  )
+  const strictTypedPolicy = strictAlias || strictRateLimit
   const valuesApply = selectedIntentPolicyPresenceConstraint()
     !== FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
   const exact = valuesApply
@@ -5436,12 +5446,14 @@ function renderIntentPolicyValueMode() {
   elements.intentPolicyValueRelationship.hidden = !valuesApply
   elements.intentPolicyConstraintHelp.textContent = strictAlias
     ? `${ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP}${state.intentPolicyDraft?.aliasTemplateSourceHost ? ` The built-in ${state.intentPolicyDraft.aliasTemplateSourceHost} template is loaded as a custom value.` : ""}`
-    : DEFAULT_INTENT_POLICY_CONSTRAINT_HELP
-  elements.intentPolicyPresenceRequired.disabled = strictAlias
-  elements.intentPolicyPresenceOptional.disabled = strictAlias
-  elements.intentPolicyPresenceForbidden.disabled = strictAlias
+    : strictRateLimit
+      ? RATE_LIMIT_INTENT_POLICY_CONSTRAINT_HELP
+      : DEFAULT_INTENT_POLICY_CONSTRAINT_HELP
+  elements.intentPolicyPresenceRequired.disabled = strictTypedPolicy
+  elements.intentPolicyPresenceOptional.disabled = strictTypedPolicy
+  elements.intentPolicyPresenceForbidden.disabled = strictTypedPolicy
   for (const control of elements.intentPolicyValueRelationship.elements) {
-    control.disabled = !valuesApply || strictAlias
+    control.disabled = !valuesApply || strictTypedPolicy
   }
   elements.intentPolicyExactFields.hidden = !exact
   elements.intentPolicyModeObserved.disabled = !exact
@@ -5612,15 +5624,17 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
     .map((zone) => zoneById(zone.zoneId))
     .filter(Boolean)
   const strictAlias = isZoneAliasMatrixRow(draft.row)
+  const strictRateLimit = isHostnameScopedFreeRateLimitMatrixRow(draft.row)
+  const strictTypedPolicy = strictAlias || strictRateLimit
   const aliasTemplate = strictAlias
     && !selection.policy
     && loadedScopeZones.length === 1
     ? zoneAliasPolicyTemplateForSourceHost(loadedScopeZones[0].meta.name)
     : null
-  const presenceConstraint = strictAlias
+  const presenceConstraint = strictTypedPolicy
     ? FLEET_INTENT_PRESENCE_CONSTRAINT.REQUIRED
     : options.presenceConstraint || selection.presenceConstraint
-  const valueConstraint = strictAlias
+  const valueConstraint = strictTypedPolicy
     ? FLEET_INTENT_VALUE_CONSTRAINT.EXACT
     : options.valueConstraint || selection.valueConstraint
   const valuesApply = presenceConstraint
@@ -9646,7 +9660,7 @@ function formatActivityTime(timestamp) {
 }
 
 function activityZoneNames(entry) {
-  return [...new Set(entry.plans.map((plan) => plan.zoneName).filter(Boolean))]
+  return [...new Set(entry.plans.map((plan) => plan.worker || plan.zoneName).filter(Boolean))]
 }
 
 function updateActivityButton() {
@@ -9749,7 +9763,7 @@ function operationChangeList(entry) {
     if (!change) return []
     const item = createElement("section", { className: "activity-operation-change" })
     item.append(
-      createElement("strong", { text: `${plan.zoneName}: ${operation.label}` }),
+      createElement("strong", { text: `${plan.worker || plan.zoneName}: ${operation.label}` }),
       change,
     )
     return [item]
@@ -9769,7 +9783,7 @@ function activityOperationList(entry) {
     const item = document.createElement("li")
     item.append(
       createElement("code", { text: operation.method }),
-      document.createTextNode(`${plan.zoneName}: ${operation.label}`),
+      document.createTextNode(`${plan.worker || plan.zoneName}: ${operation.label}`),
     )
     list.append(item)
   }
@@ -9789,7 +9803,7 @@ function activityVerificationList(entry) {
     }))
   } else {
     for (const guard of entry.verification) {
-      const zoneName = entry.plans.find(
+      const zoneName = guard.target.worker || entry.plans.find(
         (plan) => plan.zoneId === guard.target.zoneId,
       )?.zoneName || guard.target.zoneId
       list.append(createElement("li", {
@@ -9833,7 +9847,7 @@ function activityRawPreview(entry) {
     label: operation.label,
     method: operation.method,
     path: operation.path,
-    zone: plan.zoneName,
+    zone: plan.worker || plan.zoneName,
   })))
 }
 
@@ -10071,6 +10085,18 @@ async function readActivityVerification(entry, message) {
 
 async function undoOperationActivity(entry) {
   if (!activityUndoable(entry) || state.busy || readOnly) return
+  if (entry.plans.some((plan) => plan.worker)) {
+    if (elements.activityDialog.open) elements.activityDialog.close()
+    try {
+      const preparation = await api.workerCommand("undo-plan", { activityId: entry.id })
+      if (preparation.status !== "planned") { toast(preparation.reason, "error"); return }
+      if (!await confirmPlans(preparation.title, acceptPreparedPlanSet(preparation.planSet), { confirmationNote: preparation.reason })) return
+      const result = await api.workerCommand("undo-apply", { activityId: entry.id, planDigest: preparation.planSet.digest })
+      toast(result.health?.status || result.status)
+      await loadOperationActivity({ silent: true })
+    } catch (error) { toast(error.message, "error") }
+    return
+  }
   if (elements.activityDialog.open) elements.activityDialog.close()
   state.activityGuardFailures.delete(entry.id)
   setBusy(true)
@@ -10122,7 +10148,7 @@ function operationPreview(plans) {
       label: operation.label,
       method: operation.method,
       path: operation.path,
-      zone: plan.zoneName,
+      zone: plan.worker || plan.zoneName,
     }
     if (Object.hasOwn(operation, "currentValue")) {
       preview.currentValue = operation.currentValue
@@ -10179,7 +10205,7 @@ function confirmPlans(title, planSet, options = {}) {
   elements.confirmTitle.textContent = title
   const operations = operationPreview(actionable)
   const validationTime = new Date(planSet.validatedAt).toLocaleTimeString()
-  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} zone${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.${options.confirmationNote ? ` ${options.confirmationNote}` : ""}`
+  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} resource scope${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.${options.confirmationNote ? ` ${options.confirmationNote}` : ""}`
   elements.confirmOperations.replaceChildren()
   for (const operation of operations) {
     const item = createElement("div", { className: "operation" })

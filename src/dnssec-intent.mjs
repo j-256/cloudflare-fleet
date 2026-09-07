@@ -69,6 +69,7 @@ export function dnssecIntentCorrection(row, options = {}) {
       conflicts.push(cell.zone.meta.name)
       continue
     }
+    if (!cell.policy) continue
     if (fleetIntentPolicyPresenceConstraint(cell.policy)
       === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN) continue
     if (fleetIntentPolicyValueConstraint(cell.policy)

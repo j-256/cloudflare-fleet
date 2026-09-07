@@ -25,19 +25,36 @@ import {
 } from "./cli-contract.mjs"
 import { isMainModule } from "./entrypoint.mjs"
 import {
-  createLocalFleetService,
   FLEET_SERVICE_SCHEMA_VERSION,
 } from "./fleet-service.mjs"
+import { createConfiguredFleetService } from "./configured-fleet-service.mjs"
 import {
   activityUndoInputSchema,
+  activityRecoverySchema,
+  alignmentCoverageSchema,
+  commandDiagnosticsSchema,
   digestSchema,
   fleetChangeSchema,
   fleetIntentDocumentSchema,
   identifierSchema,
   runtimeStatusInputSchema,
   runtimeStatusOutputSchema,
+  workerInspectionSchema,
+  workerIntentInputSchema,
+  workerHistorySchema,
+  workerVerificationSchema,
+  workerReportOutputSchema,
+  workerIncidentOutputSchema,
 } from "./interface-schemas.mjs"
+import {
+  buildConfirmationForm,
+  CONFIRMATION_DECISION,
+  confirmationFieldKeys,
+  intentReviewItems,
+  operationReviewItems,
+} from "./mcp-confirmation.mjs"
 import { stableString } from "./normalize.mjs"
+import { redactDiagnostics } from "./command-diagnostics.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
 import { createProgressReporter } from "./progress.mjs"
@@ -48,6 +65,10 @@ import {
   ZONE_ALIAS_INTENT_KIND,
   ZONE_ALIAS_RESOURCE_ENVELOPE,
 } from "./zone-alias-intent.mjs"
+import {
+  describeHostnameScopedFreeRateLimitPolicy,
+  HOSTNAME_SCOPED_RATE_LIMIT_KIND,
+} from "./rate-limit-intent.mjs"
 
 const MCP_SERVER_NAME = "cloudflare-fleet"
 const CONFIRMATION_KEY = "confirm_action"
@@ -94,33 +115,22 @@ const changeApplyInputSchema = changeInputSchema.extend({
 const undoApplyInputSchema = activityUndoInputSchema.extend({
   planDigest: digestSchema.describe("Exact digest returned by plan_activity_undo"),
 })
-const confirmationSchema = z.strictObject({
-  approve: z.boolean().describe("Set true only after reviewing the exact plan shown above"),
-})
-const confirmationRequestSchema = Object.freeze({
-  properties: {
-    approve: {
-      description: "Set true only after reviewing the exact plan shown above",
-      title: "Approve reviewed action",
-      type: "boolean",
-    },
-  },
-  required: ["approve"],
-  type: "object",
-})
 const requestStateSchema = z.strictObject({
   accountId: identifierSchema,
+  confirmationCount: z.number().int().positive(),
   planDigest: digestSchema,
   selector: selectorSchema,
 })
 const batchRequestStateSchema = z.strictObject({
   accountId: identifierSchema,
+  confirmationCount: z.number().int().positive(),
   planDigest: digestSchema,
   selectors: selectorsSchema,
 })
 const reviewedRequestStateSchema = z.strictObject({
   accountId: identifierSchema,
   action: identifierSchema,
+  confirmationCount: z.number().int().positive(),
   fingerprint: digestSchema,
   planDigest: digestSchema,
 })
@@ -128,12 +138,17 @@ const errorOutputSchema = z.looseObject({
   error: z.looseObject({
     message: z.string(),
     name: z.string(),
+    diagnostics: commandDiagnosticsSchema.optional(),
   }),
   schemaVersion: z.number().int(),
   status: z.string(),
 })
 const accountOutputSchema = z.looseObject({
   accountId: identifierSchema,
+  diagnostics: z.strictObject({
+    kind: z.literal("incomplete-inventory"), requestId: z.string().uuid(),
+    command: z.string().max(64), elapsedMs: z.number().int().nonnegative(),
+  }).optional(),
   schemaVersion: z.number().int(),
   status: z.string(),
 })
@@ -149,12 +164,16 @@ const operationPlanOutputSchema = z.looseObject({
   kind: z.string().optional(),
   operations: z.array(operationOutputSchema),
   summary: z.string().optional(),
-  zoneId: identifierSchema,
-  zoneName: z.string(),
+  zoneId: identifierSchema.optional(),
+  zoneName: z.string().optional(),
+  worker: identifierSchema.optional(),
+  accountId: identifierSchema.optional(),
 })
 const operationPreviewOutputSchema = operationOutputSchema.extend({
-  zoneId: identifierSchema,
-  zoneName: z.string(),
+  zoneId: identifierSchema.optional(),
+  zoneName: z.string().optional(),
+  worker: identifierSchema.optional(),
+  accountId: identifierSchema.optional(),
 })
 const planSetOutputSchema = z.looseObject({
   digest: digestSchema,
@@ -179,6 +198,7 @@ const assessmentOutputSchema = z.looseObject({
   })),
 })
 const candidateOutputSchema = z.looseObject({
+  coverage: alignmentCoverageSchema.optional(),
   assessment: assessmentOutputSchema,
   facet: z.looseObject({
     category: z.string(),
@@ -197,7 +217,9 @@ const verificationGuardOutputSchema = z.looseObject({
   summary: z.string(),
   target: z.looseObject({
     kind: z.string(),
-    zoneId: identifierSchema,
+    zoneId: identifierSchema.optional(),
+    worker: identifierSchema.optional(),
+    accountId: identifierSchema.optional(),
   }),
   value: z.unknown(),
 })
@@ -236,7 +258,7 @@ const auditOutputSchema = z.union([
     status: z.string(),
   }),
   errorOutputSchema,
-])
+]).describe("Completed audit or operational error; exhausted HTTP 429 retries return an error without a partial audit report")
 const candidatesOutputSchema = z.union([
   accountOutputSchema.extend({
     candidates: z.array(candidateOutputSchema),
@@ -248,6 +270,10 @@ const candidatesOutputSchema = z.union([
 ])
 const planOutputSchema = z.union([
   accountOutputSchema.extend({
+    coverage: alignmentCoverageSchema.optional(),
+    alignments: z.array(z.looseObject({
+      coverage: alignmentCoverageSchema.optional(), reason: z.string(), status: z.string(),
+    })).max(20).optional(),
     planSet: planSetOutputSchema.nullable(),
     reason: z.string(),
   }),
@@ -255,6 +281,10 @@ const planOutputSchema = z.union([
 ])
 const applyOutputSchema = z.union([
   accountOutputSchema.extend({
+    coverage: alignmentCoverageSchema.optional(),
+    alignments: z.array(z.looseObject({
+      coverage: alignmentCoverageSchema.optional(), reason: z.string(), status: z.string(),
+    })).max(20).optional(),
     applied: z.boolean().optional(),
     execution: z.looseObject({
       completed: z.number().int(),
@@ -327,6 +357,64 @@ const zoneAliasPolicyOutputSchema = z.strictObject({
   })),
   unexpectedResources: z.array(z.string()),
 })
+const hostnameScopedRateLimitValueOutputSchema = z.strictObject({
+  hosts: z.array(z.string()).max(20),
+  kind: z.literal(HOSTNAME_SCOPED_RATE_LIMIT_KIND),
+  rateRules: z.array(z.looseObject({
+    action: z.literal("block"),
+    description: z.string(),
+    enabled: z.literal(true),
+    expression: z.string(),
+    ratelimit: z.strictObject({
+      characteristics: z.array(z.string()).length(2),
+      mitigation_timeout: z.literal(10),
+      period: z.literal(10),
+      requests_per_period: z.number().int().positive(),
+    }),
+  })).max(1),
+  skipRules: z.array(z.looseObject({
+    action: z.literal("skip"),
+    action_parameters: z.strictObject({
+      phases: z.tuple([z.literal("http_ratelimit")]),
+    }),
+    description: z.string(),
+    enabled: z.literal(true),
+    expression: z.string(),
+  })).max(1),
+})
+const hostnameScopedRateLimitPolicyOutputSchema = z.strictObject({
+  facet: z.strictObject({
+    category: z.string(),
+    description: z.string(),
+    key: z.string(),
+    label: z.string(),
+  }),
+  freePlanLimits: z.strictObject({
+    action: z.literal("block"),
+    characteristics: z.tuple([z.literal("cf.colo.id"), z.literal("ip.src")]),
+    mitigationTimeoutSeconds: z.literal(10),
+    periodSeconds: z.literal(10),
+    rulesPerZone: z.literal(1),
+    ruleExpressionFields: z.tuple([z.literal("Path"), z.literal("Verified Bot")]),
+    wafCustomRulesConsumed: z.literal(1),
+  }),
+  relationship: z.strictObject({
+    firstPhase: z.literal("http_request_firewall_custom"),
+    ratePhase: z.literal("http_ratelimit"),
+    safety: z.string(),
+  }),
+  portability: z.strictObject({
+    customResponse: z.string(),
+  }),
+  requiredConstraints: z.strictObject({
+    presenceConstraint: z.literal("required"),
+    valueConstraint: z.literal("exact"),
+  }),
+  templates: z.array(z.strictObject({
+    id: identifierSchema,
+    value: hostnameScopedRateLimitValueOutputSchema,
+  })),
+})
 
 const READ_ONLY_EXTERNAL_ANNOTATIONS = Object.freeze({
   destructiveHint: false,
@@ -395,6 +483,8 @@ function errorEnvelope(error, secrets) {
     result.error.actualDigest = error.actualDigest
     result.error.expectedDigest = error.expectedDigest
   }
+  const diagnostics = commandDiagnosticsSchema.safeParse(error?.diagnostics)
+  if (diagnostics.success) result.error.diagnostics = redactDiagnostics(diagnostics.data, secrets)
   return result
 }
 
@@ -491,35 +581,64 @@ function inputFingerprint(value) {
     .digest("hex")}`
 }
 
-function confirmationOperation(operation, index) {
-  return [
-    `${index + 1}. ${operation.method} ${operation.path}`,
-    `Zone: ${operation.zoneName} (${operation.zoneId})`,
-    `Change: ${operation.label}`,
-    ...(Object.hasOwn(operation, "currentValue")
-      ? [`Current: ${JSON.stringify(operation.currentValue)}`]
-      : []),
-    ...(Object.hasOwn(operation, "body")
-      ? [`Body: ${JSON.stringify(operation.body)}`]
-      : []),
-  ].join("\n")
+const confirmationDecisionSchema = z.enum([
+  CONFIRMATION_DECISION.APPROVE,
+  CONFIRMATION_DECISION.DECLINE,
+])
+
+function confirmationResponseSchema(count) {
+  return z.strictObject(Object.fromEntries(
+    confirmationFieldKeys(count).map((key) => [
+      key,
+      confirmationDecisionSchema,
+    ]),
+  ))
 }
 
-function reviewedConfirmationMessage(title, plan) {
-  const operations = plan.planSet.preview.map(confirmationOperation)
-  const operationSection = operations.length > 0
-    ? operations
-    : ["No Cloudflare API writes; this action persists the exact request locally."]
-  return [
-    `Approve ${title} for account ${plan.accountId}?`,
-    `Plan digest: ${plan.planSet.digest}`,
-    `Validated: ${plan.planSet.validatedAt}`,
-    `Exact request: ${JSON.stringify(plan.planSet.request)}`,
-    "",
-    ...operationSection,
-    "",
-    "Set approve to true only after reviewing the exact request and every operation.",
-  ].join("\n")
+function acceptedConfirmation(inputResponses, count) {
+  return acceptedContent(
+    inputResponses,
+    CONFIRMATION_KEY,
+    confirmationResponseSchema(count),
+  )
+}
+
+function confirmationWasDeclined(confirmation) {
+  return Object.values(confirmation).includes(CONFIRMATION_DECISION.DECLINE)
+}
+
+function operationSummaryLines(count) {
+  return count > 1 ? [`Operations: ${count}`] : []
+}
+
+function reviewedConfirmationForm(title, plan) {
+  const operations = plan.planSet.preview
+  const summaryLines = []
+  if (plan.activityId) summaryLines.push(`Activity: ${plan.activityId}`)
+  summaryLines.push(...operationSummaryLines(operations.length))
+  let reviewItems
+  if (plan.reviewItems) {
+    reviewItems = plan.reviewItems
+  } else if (operations.length > 0) {
+    reviewItems = operationReviewItems(operations)
+  } else if (plan.diff) {
+    reviewItems = intentReviewItems(plan)
+  } else {
+    reviewItems = [{
+      lines: [
+        "Cloudflare API writes: none",
+        "The plan digest binds the complete selected-backend request",
+      ],
+      title: "Review persisted change",
+    }]
+  }
+  return buildConfirmationForm({
+    accountId: plan.accountId,
+    heading: `Review ${title}`,
+    planSet: plan.planSet,
+    reviewItems,
+    summaryLines,
+  })
 }
 
 function reviewedPlanChanged(plan, expectedDigest, action) {
@@ -549,7 +668,7 @@ function declinedConfirmationReason(subject, action) {
   return `${subject} confirmation was ${outcome}`
 }
 
-function validReviewedRequestState(
+function reviewedRequestState(
   value,
   accountId,
   action,
@@ -562,38 +681,33 @@ function validReviewedRequestState(
     && parsed.data.action === action
     && parsed.data.fingerprint === fingerprint
     && parsed.data.planDigest === planDigest
+    ? parsed.data
+    : null
 }
 
-function confirmationMessage(plan) {
-  const operations = plan.planSet.preview.map(confirmationOperation)
-  return [
-    `Approve Cloudflare Fleet alignment for account ${plan.accountId}?`,
-    `Facet: ${plan.facet.label}`,
-    `Plan digest: ${plan.planSet.digest}`,
-    `Validated: ${plan.planSet.validatedAt}`,
-    "",
-    ...operations,
-    "",
-    "Set approve to true only after reviewing every operation.",
-  ].join("\n")
+function confirmationForm(plan) {
+  const operations = plan.planSet.preview
+  return buildConfirmationForm({
+    accountId: plan.accountId,
+    heading: `Review alignment: ${plan.facet.label}`,
+    planSet: plan.planSet,
+    reviewItems: operationReviewItems(operations),
+    summaryLines: operationSummaryLines(operations.length),
+  })
 }
 
-function batchConfirmationMessage(plan) {
-  const scopes = plan.alignments.map((alignment) => (
-    `- ${alignment.facet?.label || "Unknown facet"}: ${alignment.status}`
-  ))
-  const operations = plan.planSet.preview.map(confirmationOperation)
-  return [
-    `Approve Cloudflare Fleet alignment batch for account ${plan.accountId}?`,
-    `Plan digest: ${plan.planSet.digest}`,
-    `Validated: ${plan.planSet.validatedAt}`,
-    "Scopes:",
-    ...scopes,
-    "",
-    ...operations,
-    "",
-    "Set approve to true only after reviewing every operation.",
-  ].join("\n")
+function batchConfirmationForm(plan) {
+  const operations = plan.planSet.preview
+  return buildConfirmationForm({
+    accountId: plan.accountId,
+    heading: "Review alignment batch",
+    planSet: plan.planSet,
+    reviewItems: operationReviewItems(operations),
+    summaryLines: [
+      `Scopes: ${plan.alignments.length}`,
+      ...operationSummaryLines(operations.length),
+    ],
+  })
 }
 
 function planChangedResult(plan, expectedDigest) {
@@ -618,18 +732,20 @@ function confirmationOutcome(accountId, selector, status, reason) {
   }
 }
 
-function validRequestState(value, accountId, selector, planDigest) {
+function alignmentRequestState(value, accountId, selector, planDigest) {
   const parsed = requestStateSchema.safeParse(value)
   if (!parsed.success
     || parsed.data.accountId !== accountId
-    || parsed.data.planDigest !== planDigest) return false
+    || parsed.data.planDigest !== planDigest) return null
   let stateSelector
   try {
     stateSelector = normalizeAlignmentSelector(parsed.data.selector)
   } catch {
-    return false
+    return null
   }
   return stableString(stateSelector) === stableString(selector)
+    ? parsed.data
+    : null
 }
 
 function batchRequestState(value, accountId, selectors) {
@@ -653,11 +769,11 @@ function resultIsExecutionError(result) {
   ].includes(result.status)
 }
 
-function lazyLocalFleetService(options) {
+function lazyConfiguredFleetService(options) {
   let service
   return new Proxy({}, {
     get(_target, property) {
-      service ||= createLocalFleetService(options)
+      service ||= createConfiguredFleetService(options)
       return service[property]
     },
   })
@@ -666,7 +782,11 @@ function lazyLocalFleetService(options) {
 export function createFleetMcpServer(options = {}) {
   const environment = options.environment || process.env
   const stderr = options.stderr || process.stderr
-  const service = options.service || lazyLocalFleetService({
+  const hostedBackend = environment.CLOUDFLARE_FLEET_BACKEND !== "local"
+    && (environment.CLOUDFLARE_FLEET_BACKEND === "hosted" || Boolean(environment.CLOUDFLARE_FLEET_URL))
+  const stateReadAnnotations = hostedBackend ? READ_ONLY_EXTERNAL_ANNOTATIONS : READ_ONLY_LOCAL_ANNOTATIONS
+  const stateApplyAnnotations = { ...APPLY_LOCAL_ANNOTATIONS, openWorldHint: hostedBackend }
+  const service = options.service || lazyConfiguredFleetService({
     environment,
     policyFile: options.policyFile,
     stateFile: options.stateFile,
@@ -693,11 +813,11 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. Use read and plan tools before mutations. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and its initial compatibility-domain templates, then persist it through plan_fleet_intent and apply_fleet_intent. Remediate its drift through the ordinary alignment tools. Every apply tool binds the exact request to signed elicitation state, requires explicit review, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
-  const secrets = [environment.CLOUDFLARE_API_TOKEN]
+  const secrets = [environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET, environment.CLOUDFLARE_FLEET_ACCESS_TOKEN]
 
   function reviewedMutationHandler(configuration) {
     return safeToolHandler(async (input, context) => {
@@ -706,13 +826,14 @@ export function createFleetMcpServer(options = {}) {
       const fingerprint = inputFingerprint(request)
       const requestState = context.mcpReq.requestState()
       if (requestState !== undefined) {
-        if (!validReviewedRequestState(
+        const state = reviewedRequestState(
           requestState,
           service.accountId,
           configuration.action,
           fingerprint,
           planDigest,
-        )) {
+        )
+        if (!state) {
           const result = reviewedConfirmationOutcome(
             service.accountId,
             configuration.action,
@@ -735,19 +856,27 @@ export function createFleetMcpServer(options = {}) {
           )
           return toolResult(result, result.reason)
         }
-        const confirmation = acceptedContent(
+        const confirmation = acceptedConfirmation(
           context.mcpReq.inputResponses,
-          CONFIRMATION_KEY,
-          confirmationSchema,
+          state.confirmationCount,
         )
-        if (!confirmation || confirmation.approve !== true) {
+        if (!confirmation) {
           const result = reviewedConfirmationOutcome(
             service.accountId,
             configuration.action,
             "confirmation-invalid",
-            "Confirmation must explicitly approve the displayed request and plan",
+            "Confirmation must answer every review field with a valid decision",
           )
           return toolResult(result, result.reason, { isError: true })
+        }
+        if (confirmationWasDeclined(confirmation)) {
+          const result = reviewedConfirmationOutcome(
+            service.accountId,
+            configuration.action,
+            "confirmation-declined",
+            declinedConfirmationReason(configuration.title, "decline"),
+          )
+          return toolResult(result, result.reason)
         }
         const result = await configuration.apply(request, planDigest, {
           onProgress: createProgressReporter(
@@ -793,17 +922,19 @@ export function createFleetMcpServer(options = {}) {
         )
         return toolResult(result, result.reason)
       }
+      const confirmation = reviewedConfirmationForm(configuration.title, plan)
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
         action: configuration.action,
+        confirmationCount: confirmation.fieldCount,
         fingerprint,
         planDigest,
       }, context)
       return inputRequired({
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
-            message: reviewedConfirmationMessage(configuration.title, plan),
-            requestedSchema: confirmationRequestSchema,
+            message: confirmation.message,
+            requestedSchema: confirmation.requestedSchema,
           }),
         },
         requestState: signedState,
@@ -815,7 +946,7 @@ export function createFleetMcpServer(options = {}) {
     "get_runtime_status",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
-      description: "Inspect effective local paths, credential presence, private file modes, runtime and dashboard prerequisites, with an optional bounded live zone-list probe. Secret values are never returned.",
+      description: "Inspect the selected backend, endpoint or local paths, credential presence, runtime, and prerequisites. Optional live checks verify hosted API/D1 readiness or standalone zone access. Secret values are never returned.",
       inputSchema: runtimeStatusInputSchema,
       outputSchema: runtimeOutputSchema,
       title: "Diagnose Cloudflare Fleet runtime",
@@ -834,12 +965,98 @@ export function createFleetMcpServer(options = {}) {
       return toolResult(result, summary)
     }, secrets),
   )
+  const stateRequestSchema = z.strictObject({ state: z.json(), intentSource: z.enum(["incoming", "hosted"]) })
+  const stateOutputSchema = z.union([accountOutputSchema.extend({
+    state: z.json().optional(), archives: z.array(z.json()).optional(), archiveId: z.string().optional(),
+    archivesLimited: z.boolean().optional(), summary: z.json().optional(), planSet: z.json().optional(),
+    diff: z.array(z.json()).optional(), target: z.json().optional(), reviewItems: z.array(z.json()).optional(),
+    entry: z.json().optional(), activityId: identifierSchema.optional(), outcome: z.literal("unknown").optional(),
+  }), errorOutputSchema])
+  server.registerTool("get_fleet_state", {
+    title: "Export selected Fleet state or a hosted recovery archive",
+    description: "Read the complete account-scoped state for backup and reviewed reconciliation, plus bounded hosted archive metadata. Never writes Cloudflare configuration.",
+    annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+    inputSchema: z.strictObject({ archiveId: identifierSchema.optional() }), outputSchema: stateOutputSchema,
+  }, safeToolHandler(async ({ archiveId }) => {
+    const result = await service.getState(archiveId)
+    return toolResult(result, "Fleet state exported from the selected backend")
+  }, secrets))
+  server.registerTool("plan_state_reconciliation", {
+    title: "Plan shared Fleet state reconciliation",
+    description: "Compare incoming and hosted state. Explicitly choose incoming or hosted intent; preserve distinct activity and incident records, reject conflicting identities and pending operations, and bind both complete inputs to the review digest.",
+    annotations: READ_ONLY_EXTERNAL_ANNOTATIONS, inputSchema: stateRequestSchema, outputSchema: stateOutputSchema,
+  }, safeToolHandler(async (input) => {
+    const result = await service.planState(input)
+    return toolResult(result, "Reviewed state reconciliation prepared without changing either store")
+  }, secrets))
+  server.registerTool("apply_state_reconciliation", {
+    title: "Apply reviewed Fleet state reconciliation",
+    description: "After signed interactive approval, replan under hosted exclusion, reject changed revisions, preserve all history, archive the previous hosted state, and verify persisted documents. Does not modify Cloudflare resources.",
+    annotations: APPLY_ANNOTATIONS,
+    inputSchema: stateRequestSchema.extend({ planDigest: digestSchema }), outputSchema: stateOutputSchema,
+  }, reviewedMutationHandler({
+    action: "state-reconciliation-apply", toolName: "apply_state_reconciliation", title: "Fleet state reconciliation",
+    request: ({ planDigest: _digest, ...input }) => input,
+    plan: (input) => service.planState(input),
+    apply: (input, digest) => service.applyState(input, digest),
+  }))
+
+  server.registerTool("plan_activity_recovery", {
+    title: "Review an interrupted hosted activity",
+    description: "Requires an expired lease, the pending activity ID, an investigation reason, and confirmation that old clients are stopped and affected resources inspected. Preserves unknown outcomes without retrying or claiming verification.",
+    annotations: READ_ONLY_EXTERNAL_ANNOTATIONS, inputSchema: activityRecoverySchema, outputSchema: stateOutputSchema,
+  }, safeToolHandler(async (input) => toolResult(await service.planRecovery(input), "Interrupted activity recovery review prepared"), secrets))
+  server.registerTool("apply_activity_recovery", {
+    title: "Close an interrupted hosted activity after review",
+    description: "Signed approval binds the exact pending journal and operator acknowledgement. Requires an inactive lease, retains the original plans with an unknown-outcome failure and no automatic undo, verifies persistence, and unblocks subsequent reviewed writes. Does not change Cloudflare resources.",
+    annotations: APPLY_ANNOTATIONS,
+    inputSchema: activityRecoverySchema.extend({ planDigest: digestSchema }), outputSchema: stateOutputSchema,
+  }, reviewedMutationHandler({
+    action: "activity-recovery-apply", toolName: "apply_activity_recovery", title: "Interrupted Fleet activity",
+    request: ({ planDigest: _digest, ...input }) => input,
+    plan: (input) => service.planRecovery(input),
+    apply: (input, digest) => service.applyRecovery(input, digest),
+  }))
+
+  const workerOutputSchema = z.union([accountOutputSchema, errorOutputSchema])
+  for (const [name, method, schema, description, readOnly] of [
+    ["inspect_worker", "inspect", workerInspectionSchema, "Inspect one exact Worker or Worker finding within a bounded past time window. Return redacted configuration, deployed versions, invocation-only page counts, separate HTTP statuses and explicit coverage. Pass the original start/end with the next cursor. Does not retrieve source or save an incident.", true],
+    ["record_worker_incident", "record", workerInspectionSchema, "Capture fresh scoped Worker evidence as an append-only selected-backend incident assessment, linking the prior assessment without erasing it. Does not change Cloudflare resources.", false],
+    ["list_worker_incidents", "history", workerHistorySchema, "Read paginated incident history, supersession links and explicit schedule intent for one Worker.", true],
+    ["verify_worker_incident", "verify", workerVerificationSchema, "Verify this Worker's recorded schedule change using only evidence after the propagation grace period, and save the new assessment. Distinguishes configuration acceptance, propagation pending, observed failures, awaiting evidence and observed health.", false],
+    ["plan_worker_intent", "planIntent", workerIntentInputSchema, "Plan revision-safe selected-backend schedule intent: disabled, exact desired set, or unmanaged. Include the owning configuration and reviewed reconciliation step; no arbitrary local file is edited.", true],
+  ]) {
+    server.registerTool(name, {
+      title: name.replaceAll("_", " "), description,
+      annotations: readOnly ? READ_ONLY_EXTERNAL_ANNOTATIONS : { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      inputSchema: schema,
+      outputSchema: method === "inspect" ? z.union([workerReportOutputSchema, errorOutputSchema])
+        : ["record", "verify"].includes(method) ? z.union([accountOutputSchema.extend({ record: workerIncidentOutputSchema }), errorOutputSchema])
+        : method === "history" ? z.union([accountOutputSchema.extend({ records: z.array(workerIncidentOutputSchema).max(50), nextOffset: z.number().int().nullable(), intent: z.json(), revision: z.string() }), errorOutputSchema])
+        : planOutputSchema,
+    }, safeToolHandler(async (input, context) => {
+      const result = await service.workers[method](input, { signal: context.mcpReq.signal })
+      return toolResult(result, result.summary || result.reason || `Worker diagnostics ${result.status}`)
+    }, secrets))
+  }
+  server.registerTool("apply_worker_intent", {
+    title: "Save reviewed Worker schedule intent",
+    description: "Persist only the exact reviewed schedule intent after signed interactive confirmation and revision checking. Does not modify deployment files or Cloudflare schedules.",
+    annotations: stateApplyAnnotations,
+    inputSchema: z.strictObject({ input: workerIntentInputSchema, planDigest: digestSchema }),
+    outputSchema: workerOutputSchema,
+  }, reviewedMutationHandler({
+    action: "worker-intent-apply", toolName: "apply_worker_intent", title: "Worker schedule intent",
+    request: (input) => input.input,
+    plan: (input, options) => service.workers.planIntent(input, options),
+    apply: (input, digest, options) => service.workers.applyIntent(input, digest, options),
+  }))
 
   server.registerTool(
     "audit_fleet",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
-      description: "Audit live Cloudflare fleet posture without writing, including canonical alias redirect semantics and independent web attachments. Deep mode adds bounded account, delegation, endpoint, and dependency checks.",
+      description: "Audit live Cloudflare fleet posture without writing, including canonical alias redirect semantics and independent web attachments. Deep mode adds bounded account, delegation, endpoint, and dependency checks, including independent Worker Cron/handler mismatches with explicit unknown coverage when metadata is missing. All-invocation errors are not HTTP failure rates.",
       inputSchema: z.strictObject({
         deep: z.boolean().default(false),
       }),
@@ -880,9 +1097,27 @@ export function createFleetMcpServer(options = {}) {
   )
 
   server.registerTool(
-    "get_fleet_intent",
+    "describe_hostname_scoped_rate_limit_policy",
     {
       annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      description: "Return the typed Free-plan rate rule and complementary custom WAF host-scope skip posture without reading or writing Cloudflare.",
+      inputSchema: emptyInputSchema,
+      outputSchema: hostnameScopedRateLimitPolicyOutputSchema,
+      title: "Describe hostname-scoped rate-limit policy",
+    },
+    safeToolHandler(async () => {
+      const result = describeHostnameScopedFreeRateLimitPolicy()
+      return toolResult(
+        result,
+        "Hostname-scoped Free rate-limit policy pairs one rate rule with one earlier WAF skip",
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "get_fleet_intent",
+    {
+      annotations: stateReadAnnotations,
       description: "Read the complete revisioned fleet intent document for editing without reading or writing Cloudflare.",
       inputSchema: emptyInputSchema,
       outputSchema: intentOutputSchema,
@@ -897,7 +1132,7 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "plan_fleet_intent",
     {
-      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
+      annotations: stateReadAnnotations,
       description: "Validate a complete desired fleet intent document against its current account and revision, then return an exact digest-bound collection diff without persisting it.",
       inputSchema: intentInputSchema,
       outputSchema: planOutputSchema,
@@ -915,7 +1150,7 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "apply_fleet_intent",
     {
-      annotations: APPLY_LOCAL_ANNOTATIONS,
+      annotations: stateApplyAnnotations,
       description: "Persist only the exact reviewed complete fleet intent document after signed interactive confirmation, exclusive locking, fresh revision validation, and digest comparison.",
       inputSchema: intentApplyInputSchema,
       outputSchema: applyOutputSchema,
@@ -987,12 +1222,13 @@ export function createFleetMcpServer(options = {}) {
       const selector = normalizeAlignmentSelector(requestedSelector)
       const requestState = context.mcpReq.requestState()
       if (requestState !== undefined) {
-        if (!validRequestState(
+        const state = alignmentRequestState(
           requestState,
           service.accountId,
           selector,
           planDigest,
-        )) {
+        )
+        if (!state) {
           const result = confirmationOutcome(
             service.accountId,
             selector,
@@ -1015,19 +1251,27 @@ export function createFleetMcpServer(options = {}) {
           )
           return toolResult(result, result.reason)
         }
-        const confirmation = acceptedContent(
+        const confirmation = acceptedConfirmation(
           context.mcpReq.inputResponses,
-          CONFIRMATION_KEY,
-          confirmationSchema,
+          state.confirmationCount,
         )
-        if (!confirmation || confirmation.approve !== true) {
+        if (!confirmation) {
           const result = confirmationOutcome(
             service.accountId,
             selector,
             "confirmation-invalid",
-            "Alignment confirmation must explicitly approve the displayed plan",
+            "Alignment confirmation must answer every review field with a valid decision",
           )
           return toolResult(result, result.reason, { isError: true })
+        }
+        if (confirmationWasDeclined(confirmation)) {
+          const result = confirmationOutcome(
+            service.accountId,
+            selector,
+            "confirmation-declined",
+            declinedConfirmationReason("Alignment", "decline"),
+          )
+          return toolResult(result, result.reason)
         }
         const result = await service.applyAlignment(selector, planDigest, {
           onProgress: createProgressReporter(
@@ -1064,16 +1308,18 @@ export function createFleetMcpServer(options = {}) {
         const result = planChangedResult(plan, planDigest)
         return toolResult(result, result.reason)
       }
+      const confirmation = confirmationForm(plan)
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
+        confirmationCount: confirmation.fieldCount,
         planDigest,
         selector: requestedSelector,
       }, context)
       return inputRequired({
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
-            message: confirmationMessage(plan),
-            requestedSchema: confirmationRequestSchema,
+            message: confirmation.message,
+            requestedSchema: confirmation.requestedSchema,
           }),
         },
         requestState: signedState,
@@ -1124,20 +1370,29 @@ export function createFleetMcpServer(options = {}) {
           }
           return toolResult(result, result.reason)
         }
-        const confirmation = acceptedContent(
+        const confirmation = acceptedConfirmation(
           context.mcpReq.inputResponses,
-          CONFIRMATION_KEY,
-          confirmationSchema,
+          state.confirmationCount,
         )
-        if (!confirmation || confirmation.approve !== true) {
+        if (!confirmation) {
           const result = {
             accountId: service.accountId,
-            reason: "Alignment confirmation must explicitly approve the displayed batch",
+            reason: "Alignment confirmation must answer every review field with a valid decision",
             schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
             selectors,
             status: "confirmation-invalid",
           }
           return toolResult(result, result.reason, { isError: true })
+        }
+        if (confirmationWasDeclined(confirmation)) {
+          const result = {
+            accountId: service.accountId,
+            reason: declinedConfirmationReason("Alignment", "decline"),
+            schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+            selectors,
+            status: "confirmation-declined",
+          }
+          return toolResult(result, result.reason)
         }
         const result = await service.applyAlignments(
           selectors,
@@ -1175,16 +1430,18 @@ export function createFleetMcpServer(options = {}) {
       if (plan.status !== ALIGNMENT_PREPARATION_STATUS.PLANNED) {
         return toolResult(plan, batchPlanSummary(plan))
       }
+      const confirmation = batchConfirmationForm(plan)
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
+        confirmationCount: confirmation.fieldCount,
         planDigest: plan.planSet.digest,
         selectors: requestedSelectors,
       }, context)
       return inputRequired({
         inputRequests: {
           [CONFIRMATION_KEY]: inputRequired.elicit({
-            message: batchConfirmationMessage(plan),
-            requestedSchema: confirmationRequestSchema,
+            message: confirmation.message,
+            requestedSchema: confirmation.requestedSchema,
           }),
         },
         requestState: signedState,
@@ -1242,8 +1499,8 @@ export function createFleetMcpServer(options = {}) {
   server.registerTool(
     "list_activity",
     {
-      annotations: READ_ONLY_LOCAL_ANNOTATIONS,
-      description: "List durable local operation activity newest first without reading or writing Cloudflare.",
+      annotations: stateReadAnnotations,
+      description: "List durable selected-backend operation activity newest first without reading or writing Cloudflare.",
       inputSchema: emptyInputSchema,
       outputSchema: activityOutputSchema,
       title: "List fleet operation activity",
@@ -1307,7 +1564,7 @@ export function createFleetMcpServer(options = {}) {
 export function runFleetMcpServer(options = {}) {
   const environment = options.environment || process.env
   const stderr = options.stderr || process.stderr
-  const secrets = [environment.CLOUDFLARE_API_TOKEN]
+  const secrets = [environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET, environment.CLOUDFLARE_FLEET_ACCESS_TOKEN]
   const server = createFleetMcpServer({ ...options, environment, stderr })
   stderr.write("[mcp] Cloudflare Fleet stdio server ready\n")
   return serveStdio(() => server, {

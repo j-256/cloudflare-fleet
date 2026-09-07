@@ -5,6 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { test as base, expect } from "@playwright/test"
+import { workerFixture } from "../worker.fixture.mjs"
 
 import {
   createCacheRecord,
@@ -12,6 +13,7 @@ import {
 import {
   ACCOUNT_SURFACES,
   SURFACES,
+  WAF_PHASE,
 } from "../../src/constants.mjs"
 import {
   CACHE_MODE,
@@ -34,6 +36,13 @@ import {
   ok,
 } from "../fixtures.mjs"
 import {
+  materializeValue,
+} from "../../src/normalize.mjs"
+import {
+  createHostnameScopedFreeRateLimitIntentValue,
+  RATE_LIMIT_PHASE,
+} from "../../src/rate-limit-intent.mjs"
+import {
   buildZoneAliasRedirectRule,
   createZoneAliasIntentValue,
   ZONE_ALIAS_REDIRECT_PHASE,
@@ -52,7 +61,7 @@ const SETTING_PATH_PATTERN = /^zones\/([^/]+)\/settings\/([^/]+)$/
 const SESSION_SECRET = "e2e-session-secret"
 const ZONES_PATH = "zones"
 const DENSE_RULE_ZONE_COUNT = 12
-const DENSE_RULE_PHASE = "http_request_firewall_custom"
+const DENSE_RULE_PHASE = WAF_PHASE
 
 const ZONE_NAMES = Object.freeze([
   "alpha.example",
@@ -247,6 +256,53 @@ function zoneAliasIntentInventory() {
   return inventory
 }
 
+function rateLimitIntentInventory() {
+  const zoneName = "limits.example"
+  const current = materializeValue(
+    createHostnameScopedFreeRateLimitIntentValue({
+      hosts: ["legacy.{zone}"],
+      rateDescription: "[fleet] Limit API requests by source",
+      rateExpression: "starts_with(http.request.uri.path, \"/api/\")",
+      requestsPerPeriod: 100,
+      skipDescription: "[fleet] Skip API rate limit on other hosts",
+    }),
+    zoneName,
+  )
+  const rateRuleset = {
+    id: "rate-limit-ruleset",
+    kind: "zone",
+    name: "default",
+    phase: RATE_LIMIT_PHASE,
+    rules: [{
+      id: "rate-limit-rule",
+      ...current.rateRules[0],
+    }],
+  }
+  const skipRuleset = {
+    id: "rate-limit-skip-ruleset",
+    kind: "zone",
+    name: "default",
+    phase: WAF_PHASE,
+    rules: [{
+      id: "rate-limit-skip-rule",
+      ...current.skipRules[0],
+    }],
+  }
+  const zone = makeDashboardZone(zoneName, {
+    ruleDetails: [ok(skipRuleset), ok(rateRuleset)],
+    rulesets: [skipRuleset, rateRuleset].map((ruleset) => ({
+      id: ruleset.id,
+      kind: ruleset.kind,
+      name: ruleset.name,
+      phase: ruleset.phase,
+    })),
+  })
+  const inventory = makeInventory([zone])
+  inventory.account.id = ACCOUNT_ID
+  inventory.loadedAt = new Date().toISOString()
+  return inventory
+}
+
 function denseRuleInventory() {
   const zones = Array.from({ length: DENSE_RULE_ZONE_COUNT }, (_, index) => {
     const ordinal = String(index + 1).padStart(2, "0")
@@ -283,16 +339,17 @@ function denseRuleInventory() {
   return inventory
 }
 
-function jsonResponse(status, payload) {
+function jsonResponse(status, payload, headers = {}) {
   return new Response(JSON.stringify(payload), {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      ...headers,
     },
     status,
   })
 }
 
-function fakeCloudflareTransport(inventory) {
+function fakeCloudflareTransport(inventory, options = {}) {
   const requests = []
   const dnsByZone = new Map()
   const emailSettings = new Map()
@@ -319,6 +376,7 @@ function fakeCloudflareTransport(inventory) {
     ))
   }
 
+  const workers = workerFixture({ accountId: ACCOUNT_ID, now: options.now || Date.now() })
   const fetch = async (url, request = {}) => {
     const target = new URL(url)
     const method = request.method || "GET"
@@ -331,6 +389,15 @@ function fakeCloudflareTransport(inventory) {
       method,
       path: `${relativePath}${target.search}`,
     })
+    if (relativePath.startsWith(`accounts/${ACCOUNT_ID}/workers/scripts/example-worker/`)
+      || relativePath === `accounts/${ACCOUNT_ID}/workers/observability/telemetry/query`) {
+      try {
+        const response = await workers.api.request(relativePath, { method, body, signal: request.signal })
+        return jsonResponse(200, { result: response.result, success: true })
+      } catch (error) {
+        return jsonResponse(error.status || 500, { success: false, errors: [{ message: "Fixture Worker read failed" }] })
+      }
+    }
 
     const failureIndex = failures.findIndex((failure) => (
       failure.method === method
@@ -341,7 +408,7 @@ function fakeCloudflareTransport(inventory) {
       return jsonResponse(failure.status, {
         errors: [{ message: failure.message }],
         success: false,
-      })
+      }, failure.headers)
     }
 
     if (relativePath === ZONES_PATH && method === "GET") {
@@ -353,6 +420,12 @@ function fakeCloudflareTransport(inventory) {
     }
 
     if (method === "GET") {
+      if (relativePath === `accounts/${ACCOUNT_ID}/email/routing/addresses`) {
+        return jsonResponse(200, {
+          result: structuredClone(inventory.account.emailAddresses.result),
+          success: true,
+        })
+      }
       const accountSurface = ACCOUNT_SURFACES.find(
         (surface) => surface.path(ACCOUNT_ID).split("?", 1)[0] === relativePath,
       )
@@ -585,6 +658,7 @@ function fakeCloudflareTransport(inventory) {
     },
     queueFailure(failure) {
       failures.push({
+        headers: failure.headers || {},
         message: failure.message || "Simulated upstream failure",
         method: failure.method,
         path: failure.path || "",
@@ -652,7 +726,7 @@ export async function createDashboardSession(options = {}) {
         fetch: options.cloudflareFetch,
         requests: options.requests || [],
       }
-    : fakeCloudflareTransport(inventory)
+    : fakeCloudflareTransport(inventory, options)
   await copyRuntimeAssets(runtimeDir)
   if (options.stateSourceFile) {
     await fs.copyFile(options.stateSourceFile, stateFile)
@@ -790,6 +864,11 @@ export const test = base.extend({
   zoneAliasDashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo, {
       inventory: zoneAliasIntentInventory(),
+    })
+  },
+  rateLimitDashboard: async ({ page }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, {
+      inventory: rateLimitIntentInventory(),
     })
   },
   readOnlyDashboard: async ({ page }, use, testInfo) => {

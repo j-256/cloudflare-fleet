@@ -19,6 +19,7 @@ export const DOCUMENTATION_SOURCE_PATHS = Object.freeze([
   "diagrams/intent-alignment.svg",
   "diagrams/write-flow.svg",
   "favicon.svg",
+  "fixtures/observability-console-missing-outcome.json",
   "getting-started.html",
   "index.html",
   "screenshots/alignment-blocked.png",
@@ -28,6 +29,7 @@ export const DOCUMENTATION_SOURCE_PATHS = Object.freeze([
   "screenshots/intent-alignment.png",
   "screenshots/mobile-dashboard.png",
   "screenshots/reviewed-write.png",
+  "screenshots/worker-diagnostics.png",
   "security.html",
   "styles.css",
 ])

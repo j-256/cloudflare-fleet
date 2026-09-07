@@ -104,6 +104,30 @@ test("DNSSEC intent correction targets writable drift and separates pending or g
   assert.deepEqual(correction.conflicts, ["conflicted.example"])
 })
 
+test("DNSSEC intent correction ignores cells without a governing policy", () => {
+  const ungoverned = zone("ungoverned.example")
+  const outsideScope = zone("outside.example")
+  const governed = zone("governed.example")
+  const desired = policy("active-policy", "active")
+  const row = dnssecRow([
+    [ungoverned, "disabled"],
+    [outsideScope, "disabled"],
+    [governed, "disabled"],
+  ], [
+    intentCell(ungoverned, undefined, FLEET_INTENT_CELL_STATUS.UNGOVERNED),
+    intentCell(outsideScope, null, FLEET_INTENT_CELL_STATUS.OUT_OF_SCOPE),
+    intentCell(governed, desired, FLEET_INTENT_CELL_STATUS.VARIANT),
+  ])
+
+  const correction = dnssecIntentCorrection(row)
+
+  assert.equal(correction.available, true)
+  assert.deepEqual(correction.targets.map((target) => target.zoneName), ["governed.example"])
+  assert.deepEqual(correction.conflicts, [])
+  assert.deepEqual(correction.generatedOnly, [])
+  assert.deepEqual(correction.waiting, [])
+})
+
 test("DNSSEC intent correction can isolate one policy from disjoint coverage", () => {
   const activePolicy = policy("active-policy", "active")
   const disabledPolicy = policy("disabled-policy", "disabled")

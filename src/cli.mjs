@@ -19,9 +19,10 @@ import { CliUsageError, parseCliOptions } from "./cli-options.mjs"
 import { isMainModule } from "./entrypoint.mjs"
 import { normalizeFleetChange } from "./fleet-change.mjs"
 import {
-  createLocalFleetService,
   FLEET_SERVICE_SCHEMA_VERSION,
 } from "./fleet-service.mjs"
+import { createConfiguredFleetService } from "./configured-fleet-service.mjs"
+import { selectFleetBackend } from "./backend-selection.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
 import { createProgressReporter } from "./progress.mjs"
@@ -32,6 +33,10 @@ import {
 } from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
 import { describeZoneAliasPolicy } from "./zone-alias-intent.mjs"
+import { describeHostnameScopedFreeRateLimitPolicy } from "./rate-limit-intent.mjs"
+import { runWorkerCommand, WORKER_COMMANDS } from "./worker-command.mjs"
+import { commandDiagnosticsSchema } from "./interface-schemas.mjs"
+import { redactDiagnostics } from "./command-diagnostics.mjs"
 
 const CLI_FORMAT = Object.freeze({
   JSON: "json",
@@ -95,6 +100,8 @@ const SELECTOR_OPTIONS = Object.freeze([
   { key: "zoneIds", multiple: true, name: "zone-id", short: "z", value: true },
 ])
 const HELP_COMMAND_BY_TOPIC = Object.freeze({
+  state: "state-help",
+  recovery: "recovery-help",
   activity: "activity-help",
   alignment: "alignment-help",
   change: "change-help",
@@ -104,6 +111,7 @@ const HELP_COMMAND_BY_TOPIC = Object.freeze({
   intent: "intent-help",
   mcp: "mcp-help",
   schema: "schema-help",
+  worker: "worker-help",
 })
 
 export function fleetUsage() {
@@ -119,10 +127,13 @@ export function fleetUsage() {
     "  cloudflare-fleet alignment list [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment plan SELECTOR_OPTIONS [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
-    "  cloudflare-fleet intent aliases|show|plan|apply [OPTIONS]",
+    "  cloudflare-fleet intent aliases|rate-limits|show|plan|apply [OPTIONS]",
     "  cloudflare-fleet change plan|apply --input FILE|- [OPTIONS]",
+    "  cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
     "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet activity undo plan|apply --id ID [OPTIONS]",
+    "  cloudflare-fleet state export|plan|apply [OPTIONS]",
+    "  cloudflare-fleet recovery plan|apply --input FILE|- [OPTIONS]",
     "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
     "  cloudflare-fleet hosted configure [OPTIONS]",
     "  cloudflare-fleet hosted import-state [OPTIONS] [STATE_FILE]",
@@ -141,15 +152,21 @@ export function fleetUsage() {
     "  -h, --help                Show this help",
     "",
     "ENVIRONMENT",
-    "  CLOUDFLARE_API_TOKEN        Required account-level Cloudflare API token",
-    "  CLOUDFLARE_ACCOUNT_ID       Required Cloudflare account identifier",
+    "  CLOUDFLARE_API_TOKEN        Account token for standalone mode only",
+    "  CLOUDFLARE_ACCOUNT_ID       Cloudflare account identifier",
+    "  CLOUDFLARE_FLEET_URL        HTTPS origin selects hosted state without local fallback",
+    "  CLOUDFLARE_FLEET_ACCOUNT_ID Expected hosted account (defaults to CLOUDFLARE_ACCOUNT_ID)",
+    "  CLOUDFLARE_FLEET_ACCESS_CLIENT_ID and CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET authenticate hosted clients",
+    "  CLOUDFLARE_FLEET_ACCESS_TOKEN Alternative: unexpired Access application JWT",
+    "  CLOUDFLARE_FLEET_BACKEND=local Explicit standalone override",
     "  CLOUDFLARE_FLEET_STATE_FILE Optional absolute fleet-state JSON file",
     "  CLOUDFLARE_FLEET_POLICY_FILE Optional absolute fleet-policy JSON file",
     "  XDG_STATE_HOME               Optional absolute base for default fleet state",
     "  XDG_CONFIG_HOME              Optional absolute base for default fleet policy",
     "",
     "FILES",
-    "  State and policy use standard per-user directories when no profile is selected",
+    "  Hosted mode ignores local environment paths and rejects local file flags",
+    "  Without a hosted URL, state and policy use standard per-user directories",
     "",
     "EXIT STATUS",
     "  0  Command completed successfully",
@@ -163,6 +180,24 @@ export function fleetUsage() {
   ].join("\n")
 }
 
+export function fleetWorkerUsage() {
+  return [
+    "cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [--format text|json] [--state-file PATH]",
+    `Commands: ${WORKER_COMMANDS.join(", ")}`,
+    "Options: -i/--input JSON file or stdin; -e/--expect-plan exact approved digest for apply; -f/--format; -s/--state-file; -h/--help",
+    'Inspect/record input: {"worker":"example-worker","start":"2026-01-01T00:00:00Z","end":"2026-01-01T01:00:00Z","limit":50}',
+    "Inspection also accepts findingId, zoneIds (route scope), logs, and cursor with the original start/end; at most 24 past hours and 200 events",
+    'History input: {"worker":"example-worker","offset":0,"limit":20}; limit at most 50',
+    'Intent input: {"worker":"example-worker","expectedRevision":"","intent":{"mode":"disabled","crons":[],"owner":"repository:wrangler.jsonc","reconciliation":"Set triggers.crons to [] before the next deployment"}}',
+    "Intent modes: disabled (empty crons), exact (nonempty crons), unmanaged (empty crons); managed intent requires owner and reconciliation",
+    "Schedule input: worker-schedules-update fleet-change object (cloudflare-fleet schema change); uses the same guarded planner as change plan/apply",
+    'Undo input: {"activityId":"activity-ID"}; verify input: {"worker":"example-worker","activityId":"activity-ID"} with optional start/end/limit/zoneIds',
+    "Verify saves fresh evidence after the propagation grace period; record appends an incident; intent-apply saves selected-backend intent; schedules-apply and undo-apply write Cloudflare",
+    "Environment: hosted URL and Access credentials, or standalone CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (see root --help)",
+    "Exit statuses: 0 success, 1 runtime failure, 2 usage/precondition, 3 dependency, 4 blocked, 5 plan changed, 6 write failed, 7 verification failed",
+  ].join("\n")
+}
+
 export function fleetIntentUsage() {
   return [
     "NAME",
@@ -171,6 +206,7 @@ export function fleetIntentUsage() {
     "SYNOPSIS",
     "  cloudflare-fleet intent show [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet intent aliases [--format text|json]",
+    "  cloudflare-fleet intent rate-limits [--format text|json]",
     "  cloudflare-fleet intent plan --input FILE|- [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet intent apply --input FILE|- --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "",
@@ -183,6 +219,7 @@ export function fleetIntentUsage() {
     "",
     "WORKFLOW",
     "  aliases emits the strict reusable passthrough facet and initial templates",
+    "  rate-limits emits the typed Free-plan rate rule and host-scope skip posture",
     "  intent show emits an editable document in text mode",
     "  plan validates every collection and reports additions, changes, and removals",
     "  apply replans under the shared write lock and persists only an exact digest match",
@@ -192,7 +229,7 @@ export function fleetIntentUsage() {
 export function fleetConfigUsage() {
   return [
     "NAME",
-    "  cloudflare-fleet config - explain effective local operator configuration",
+    "  cloudflare-fleet config - explain the selected backend and operator configuration",
     "",
     "SYNOPSIS",
     "  cloudflare-fleet config show [--format text|json] [--policy-file PATH] [--state-file PATH]",
@@ -205,20 +242,20 @@ export function fleetConfigUsage() {
     "",
     "OUTPUT",
     "  Reports path precedence, file state, credential presence, runtime, and dashboard support",
-    "  Never prints the Cloudflare account identifier or API token value",
+    "  Hosted output shows endpoint and account binding, not secret values",
   ].join("\n")
 }
 
 export function fleetDoctorUsage() {
   return [
     "NAME",
-    "  cloudflare-fleet doctor - check local readiness and explain remedies",
+    "  cloudflare-fleet doctor - check selected-backend readiness and explain remedies",
     "",
     "SYNOPSIS",
     "  cloudflare-fleet doctor [--live] [--format text|json] [--policy-file PATH] [--state-file PATH]",
     "",
     "OPTIONS",
-    "  --live                 Make one bounded account-scoped zone-list request",
+    "  --live                 Check hosted API/D1 readiness or a standalone zone-list read",
     "  -f, --format text|json Select operator text or structured JSON output",
     "  -p, --policy-file PATH Check an explicit fleet policy profile",
     "  -s, --state-file PATH  Check an explicit fleet state profile",
@@ -371,6 +408,27 @@ function isHelpArgument(value) {
 }
 
 async function runDashboardCommand(parsed, options) {
+  const backend = selectFleetBackend(options)
+  if (backend.kind === "hosted") {
+    if (parsed.argv.some(isHelpArgument)) {
+      options.stdout.write("NAME\n  cloudflare-fleet dashboard - open the selected Fleet dashboard\n\nSYNOPSIS\n  cloudflare-fleet dashboard [--write|--read-only]\n\nDESCRIPTION\n  Hosted mode opens CLOUDFLARE_FLEET_URL; deployment policy controls writes\n  Use CLOUDFLARE_FLEET_BACKEND=local for standalone launcher options\n")
+      options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+      return null
+    }
+    const flags = parsed.argv.filter((argument) => !["--write", "--read-only"].includes(argument))
+    if (flags.length) throw new CliUsageError("Hosted dashboard accepts no local launcher options; select CLOUDFLARE_FLEET_BACKEND=local for a standalone dashboard")
+    options.stdout.write(`Hosted Fleet: ${backend.endpoint}\nWrite authority is controlled by the hosted deployment and Access policy\n`)
+    if (options.openUrl) await options.openUrl(backend.endpoint)
+    else if (process.platform === "darwin") {
+      await new Promise((resolve, reject) => {
+        const child = spawn("open", [backend.endpoint], { stdio: "ignore" })
+        child.once("error", reject)
+        child.once("exit", (code) => code === 0 ? resolve() : reject(new Error("Could not open hosted Fleet")))
+      })
+    }
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return { backend, exitCode: FLEET_CLI_EXIT_CODE.SUCCESS }
+  }
   if (options.dashboardRunner) {
     return options.dashboardRunner(parsed.argv, options)
   }
@@ -468,6 +526,27 @@ export function parseFleetArguments(argv) {
       stateFile: options.statefile,
     }
   }
+  if (resource === "recovery") {
+    if (!action || isHelpArgument(action)) return { command: "recovery-help" }
+    if (!["plan", "apply"].includes(action)) throw new CliUsageError("Recovery command must be plan or apply")
+    const options = parseOptions(rest, [...COMMON_OPTIONS, INPUT_OPTION, ...(action === "apply" ? [EXPECT_PLAN_OPTION] : [])])
+    if (options.help) return { command: "recovery-help" }
+    if (!options.input || action === "apply" && !options.expectplan) throw new CliUsageError("Recovery requires --input; apply also requires --expect-plan")
+    return { command: `recovery-${action}`, format: options.format, input: options.input, expectedDigest: options.expectplan, stateFile: options.statefile }
+  }
+  if (resource === "state") {
+    if (!action || isHelpArgument(action)) return { command: "state-help" }
+    if (!["export", "plan", "apply"].includes(action)) throw new CliUsageError("State command must be export, plan, or apply")
+    const options = parseOptions(rest, [
+      ...COMMON_OPTIONS,
+      ...(action === "export" ? [{ name: "archive-id", key: "archiveId", value: true }] : [INPUT_OPTION]),
+      ...(action === "apply" ? [EXPECT_PLAN_OPTION] : []),
+    ])
+    if (options.help) return { command: "state-help" }
+    if (action !== "export" && !options.input) throw new CliUsageError("State reconciliation requires --input")
+    if (action === "apply" && !options.expectplan) throw new CliUsageError("State apply requires --expect-plan")
+    return { command: `state-${action}`, format: options.format, input: options.input, expectedDigest: options.expectplan, archiveId: options.archiveId, stateFile: options.statefile }
+  }
   if (resource === "doctor") {
     const options = parseOptions(argv.slice(1), [
       FORMAT_OPTION,
@@ -510,10 +589,11 @@ export function parseFleetArguments(argv) {
   }
   if (resource === "intent") {
     if (!action || isHelpArgument(action)) return { command: "intent-help" }
-    if (!["aliases", "show", "plan", "apply"].includes(action)) {
-      throw new CliUsageError("Intent command must be aliases, show, plan, or apply")
+    if (!["aliases", "rate-limits", "show", "plan", "apply"].includes(action)) {
+      throw new CliUsageError("Intent command must be aliases, rate-limits, show, plan, or apply")
     }
-    const definitions = action === "aliases"
+    const descriptor = ["aliases", "rate-limits"].includes(action)
+    const definitions = descriptor
       ? [FORMAT_OPTION, HELP_OPTION]
       : action === "show"
       ? COMMON_OPTIONS
@@ -522,7 +602,7 @@ export function parseFleetArguments(argv) {
         : [...COMMON_OPTIONS, INPUT_OPTION]
     const options = parseOptions(rest, definitions)
     if (options.help) return { command: "intent-help" }
-    if (!["aliases", "show"].includes(action) && !options.input) {
+    if (!["aliases", "rate-limits", "show"].includes(action) && !options.input) {
       throw new CliUsageError(`intent ${action} requires --input`)
     }
     if (action === "apply" && !options.expectplan) {
@@ -533,7 +613,7 @@ export function parseFleetArguments(argv) {
       expectedDigest: options.expectplan || null,
       format: options.format,
       input: options.input || null,
-      stateFile: action === "aliases" ? null : options.statefile,
+      stateFile: descriptor ? null : options.statefile,
     }
   }
   if (resource === "change") {
@@ -563,6 +643,15 @@ export function parseFleetArguments(argv) {
       policyFile: options.policyfile,
       stateFile: options.statefile,
     }
+  }
+  if (resource === "worker") {
+    if (!action || isHelpArgument(action)) return { command: "worker-help" }
+    if (!WORKER_COMMANDS.includes(action)) throw new CliUsageError("Unknown Worker command")
+    const options = parseOptions(rest, [...COMMON_OPTIONS, INPUT_OPTION, ...(action.endsWith("-apply") ? [EXPECT_PLAN_OPTION] : [])])
+    if (options.help) return { command: "worker-help" }
+    if (!options.input) throw new CliUsageError("Worker command requires --input")
+    if (action.endsWith("-apply") && !options.expectplan) throw new CliUsageError("Worker apply requires --expect-plan")
+    return { command: `worker-${action}`, workerCommand: action, input: options.input, expectedDigest: options.expectplan, format: options.format, stateFile: options.statefile }
   }
   if (resource === "alignment") {
     if (!action || isHelpArgument(action)) return { command: "alignment-help" }
@@ -797,6 +886,14 @@ function operatorFileSummary(file) {
 }
 
 function renderRuntimeConfiguration(result) {
+  if (result.backend?.kind === "hosted") return [
+    `Cloudflare Fleet backend: HOSTED (${result.backend.endpoint})`,
+    `Account: ${result.backend.accountId}`,
+    "State and policy: hosted service and D1; local files are not used",
+    "Local fallback: disabled",
+    `Access credential presence: ${JSON.stringify(result.backend.credentials)}`,
+    "Standalone local mode: CLOUDFLARE_FLEET_BACKEND=local",
+  ].join("\n")
   return [
     "Cloudflare Fleet configuration",
     `Package: ${result.runtime.packageVersion}`,
@@ -829,6 +926,9 @@ function renderRuntimeDoctor(result) {
 }
 
 function renderResult(command, result) {
+  if (command === "state-export") return JSON.stringify(result.state, null, 2)
+  if (command.startsWith("state-") || command.startsWith("recovery-")) return JSON.stringify(result, null, 2)
+  if (command.startsWith("worker-")) return JSON.stringify(result, null, 2)
   if (command === "config-show") return renderRuntimeConfiguration(result)
   if (command === "doctor") return renderRuntimeDoctor(result)
   if (command === "alignment-list") return renderAlignmentList(result)
@@ -844,6 +944,16 @@ function renderResult(command, result) {
       `- ${template.sourceHost} -> ${template.value.redirect.targetHost} (HTTP ${template.value.redirect.statusCode})`
     )),
     ...result.limitations.map((limitation) => `Limitation: ${limitation}`),
+  ].join("\n")
+  if (command === "intent-rate-limits") return [
+    "Hostname-scoped Free rate-limit fleet intent",
+    `Facet: ${result.facet.category}/${result.facet.key}`,
+    `Relationship: ${result.relationship.firstPhase} -> ${result.relationship.ratePhase}`,
+    `Free plan: ${result.freePlanLimits.rulesPerZone} rule, ${result.freePlanLimits.periodSeconds}s period, ${result.freePlanLimits.action}`,
+    `Portability: ${result.portability.customResponse}`,
+    ...result.templates.map((template) => (
+      `- ${template.id}: ${template.value.rateRules.length === 0 ? "unused" : template.value.hosts.join(", ")}`
+    )),
   ].join("\n")
   if (command === "intent-plan") return renderIntentPlan(result)
   if (command === "intent-apply") {
@@ -896,6 +1006,40 @@ export async function runFleetCommand(options = {}) {
     stdout.write(`${PACKAGE_VERSION}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return PACKAGE_VERSION
+  }
+  if (parsed.command === "recovery-help") {
+    stdout.write([
+      "NAME", "  cloudflare-fleet recovery - close an interrupted hosted operation",
+      "", "SYNOPSIS", "  cloudflare-fleet recovery plan --input FILE|- [--format json|text]",
+      "  cloudflare-fleet recovery apply --input FILE|- --expect-plan DIGEST [--format json|text]",
+      "", "INPUT", '  {"activityId":"ID","reason":"Operator investigation","stoppedClientsAndInspectedResources":true}',
+      "", "DESCRIPTION", "  Stop old clients and inspect affected live resources before confirming recovery",
+      "  Requires an expired execution lease and the exact pending activity",
+      "  Preserves the journal as a failed, unknown-outcome execution with no automatic undo",
+      "  Does not retry, reverse, or verify Cloudflare writes; unblocks subsequent reviewed operations",
+      "", "EXIT STATUS", "  0 Success; 1 Runtime failure; 2 Invalid usage; 5 Plan changed", "",
+    ].join("\n"))
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
+  if (parsed.command === "state-help") {
+    stdout.write([
+      "NAME", "  cloudflare-fleet state - export or reconcile shared Fleet state",
+      "", "SYNOPSIS", "  cloudflare-fleet state export [--archive-id ID] [--format json|text] [--state-file PATH]",
+      "  cloudflare-fleet state plan --input FILE|- [--format json|text]",
+      "  cloudflare-fleet state apply --input FILE|- --expect-plan DIGEST [--format json|text]",
+      "", "INPUT", '  {"state": EXPORTED_STATE, "intentSource": "incoming" | "hosted"}',
+      "  intentSource explicitly selects zone intent and conflicting Worker intent",
+      "  All distinct activity and incident records are retained; conflicting IDs or pending activity block",
+      "  Apply archives previous hosted state and rejects changed inputs or revisions",
+      "  Export --archive-id reads a recovery copy; plan it as incoming to restore intent without deleting newer history",
+      "", "ENVIRONMENT", "  Reconciliation requires CLOUDFLARE_FLEET_URL and an account-scoped Access credential",
+      "  CLOUDFLARE_FLEET_BACKEND=local enables standalone export only",
+      "", "EXIT STATUS", "  0 Success; 1 Runtime failure; 2 Invalid usage; 4 Blocked; 5 Plan changed",
+      "",
+    ].join("\n"))
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
   }
   if (parsed.command === "dashboard") {
     return runDashboardCommand(parsed, { ...options, environment, stderr, stdout })
@@ -996,6 +1140,11 @@ export async function runFleetCommand(options = {}) {
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return null
   }
+  if (parsed.command === "worker-help") {
+    stdout.write(`${fleetWorkerUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
   if (parsed.command === "activity-help") {
     stdout.write(`${fleetActivityUsage()}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
@@ -1038,6 +1187,12 @@ export async function runFleetCommand(options = {}) {
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
     return result
   }
+  if (parsed.command === "intent-rate-limits") {
+    const result = describeHostnameScopedFreeRateLimitPolicy()
+    writeResult(stdout, parsed.format, parsed.command, result)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return result
+  }
   let intentDocument
   let change
   if (["intent-plan", "intent-apply"].includes(parsed.command)) {
@@ -1053,7 +1208,7 @@ export async function runFleetCommand(options = {}) {
       throw error
     }
   }
-  const service = options.service || createLocalFleetService({
+  const service = options.service || createConfiguredFleetService({
     environment,
     policyFile: parsed.policyFile,
     stateFile: parsed.stateFile,
@@ -1064,7 +1219,23 @@ export async function runFleetCommand(options = {}) {
     validatedAt: options.validatedAt,
   }
   let result
-  if (parsed.command === "alignment-list") {
+  if (parsed.command.startsWith("recovery-")) {
+    const input = await readJsonInput(parsed.input, options)
+    result = parsed.command === "recovery-plan" ? await service.planRecovery(input) : await service.applyRecovery(input, parsed.expectedDigest)
+  } else if (parsed.command.startsWith("state-")) {
+    if (parsed.command === "state-export") result = await service.getState(parsed.archiveId)
+    else {
+      const input = await readJsonInput(parsed.input, options)
+      result = parsed.command === "state-plan" ? await service.planState(input) : await service.applyState(input, parsed.expectedDigest)
+    }
+  } else if (parsed.workerCommand) {
+    const input = await readJsonInput(parsed.input, options)
+    const payload = parsed.workerCommand.endsWith("-apply")
+      ? parsed.workerCommand === "undo-apply" ? { ...input, planDigest: parsed.expectedDigest } : { input, planDigest: parsed.expectedDigest }
+      : input
+    try { result = await runWorkerCommand(service.workers, parsed.workerCommand, payload, commandOptions) }
+    catch (error) { if (error instanceof TypeError) throw new CliUsageError(error.message); throw error }
+  } else if (parsed.command === "alignment-list") {
     result = await service.listAlignments(commandOptions)
   } else if (parsed.command === "alignment-plan") {
     result = await service.planAlignment(parsed.selector, commandOptions)
@@ -1139,11 +1310,12 @@ function errorExitCode(error) {
 }
 
 function redactedErrorMessage(error, environment) {
-  const message = error instanceof Error ? error.message : String(error)
-  const secret = environment.CLOUDFLARE_API_TOKEN
-  return typeof secret === "string" && secret.length > 0
-    ? message.replaceAll(secret, "[redacted]")
-    : message
+  let message = error instanceof Error ? error.message : String(error)
+  for (const key of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_FLEET_ACCESS_CLIENT_ID", "CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET", "CLOUDFLARE_FLEET_ACCESS_TOKEN"]) {
+    const secret = environment[key]
+    if (typeof secret === "string" && secret.length > 0) message = message.replaceAll(secret, "[redacted]")
+  }
+  return message
 }
 
 function errorResult(error, environment) {
@@ -1165,6 +1337,13 @@ function errorResult(error, environment) {
   if (error instanceof AlignmentPlanChangedError) {
     result.error.actualDigest = error.actualDigest
     result.error.expectedDigest = error.expectedDigest
+  }
+  const diagnostics = commandDiagnosticsSchema.safeParse(error?.diagnostics)
+  if (diagnostics.success) {
+    result.error.diagnostics = redactDiagnostics(diagnostics.data, [
+      environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID,
+      environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET, environment.CLOUDFLARE_FLEET_ACCESS_TOKEN,
+    ])
   }
   return result
 }

@@ -1,6 +1,12 @@
 import {
   FLEET_BOOTSTRAP_ERROR_GLOBAL,
 } from "../api.mjs"
+import { runWorkerCommand, WORKER_READ_COMMANDS } from "../worker-command.mjs"
+import { createHostedFleetService } from "./fleet-service.mjs"
+import { FleetCommandError } from "../command-diagnostics.mjs"
+import { commandFailureResponse, withIncompleteInventoryDiagnostics } from "./command-response.mjs"
+import { FLEET_COMMAND_VERSION, runFleetServiceCommand, validateFleetCommand, fleetCommandIsReadOnly } from "../fleet-command.mjs"
+import { hostedExecutionLock, HostedExecutionConflictError, HOSTED_EXECUTION_HEADER } from "./execution-lock.mjs"
 import {
   CACHE_RECORD_GLOBAL,
 } from "../cache.mjs"
@@ -174,12 +180,12 @@ async function handleIntent(request, env) {
     return errorResponse(400, "Fleet intent body is incomplete")
   }
   try {
-    return successResponse(await persistHostedFleetIntent(
+    return successResponse(await hostedExecutionLock(env.FLEET_DB, env.FLEET_ACCOUNT_ID).withWriteLock(() => persistHostedFleetIntent(
       env.FLEET_DB,
       env.FLEET_ACCOUNT_ID,
       payload.expectedRevision,
       payload.document,
-    ))
+    )))
   } catch (error) {
     if (error instanceof HostedFleetIntentRevisionConflictError) {
       return jsonResponse({
@@ -209,17 +215,19 @@ async function handleActivity(request, env) {
   if (!payload?.entry) {
     return errorResponse(400, "Operation activity body is incomplete")
   }
-  const document = request.method === HTTP_METHOD.POST
-    ? await appendHostedOperationActivity(
-        env.FLEET_DB,
-        env.FLEET_ACCOUNT_ID,
-        payload.entry,
-      )
-    : await finalizeHostedOperationActivity(
-        env.FLEET_DB,
-        env.FLEET_ACCOUNT_ID,
-        payload.entry,
-      )
+  const lock = hostedExecutionLock(env.FLEET_DB, env.FLEET_ACCOUNT_ID)
+  let document
+  if (request.method === HTTP_METHOD.POST) {
+    const owner = await lock.acquire(payload.entry.id)
+    try { document = await appendHostedOperationActivity(env.FLEET_DB, env.FLEET_ACCOUNT_ID, payload.entry) }
+    catch (error) { await lock.release(owner); throw error }
+  } else {
+    const owner = request.headers.get(HOSTED_EXECUTION_HEADER)
+    if (owner !== payload.entry.id) throw new HostedExecutionConflictError("Finalization requires the matching execution owner")
+    await lock.renew(owner)
+    document = await finalizeHostedOperationActivity(env.FLEET_DB, env.FLEET_ACCOUNT_ID, payload.entry)
+    await lock.release(payload.entry.id)
+  }
   return successResponse(document)
 }
 
@@ -238,10 +246,50 @@ async function handleCache(request, env) {
 
 async function handleApi(request, env) {
   const pathname = new URL(request.url).pathname
+  if (pathname === "/api/commands") {
+    if (request.method !== HTTP_METHOD.POST) return errorResponse(405, "Fleet commands require POST")
+    const value = validateFleetCommand(await readJsonBody(request))
+    if (value.accountId !== env.FLEET_ACCOUNT_ID) return errorResponse(403, "Fleet command account mismatch")
+    if (deploymentIsReadOnly(env) && !fleetCommandIsReadOnly(value.command)) return errorResponse(403, "Hosted Fleet writes are disabled")
+    const requestId = crypto.randomUUID()
+    const startedAt = Date.now()
+    try {
+      const result = await runFleetServiceCommand(createHostedFleetService(env), value, { readOnly: deploymentIsReadOnly(env), signal: request.signal })
+      return jsonResponse({
+        success: true,
+        result: withIncompleteInventoryDiagnostics(result, { requestId, command: value.command, elapsedMs: Date.now() - startedAt }, env),
+        version: FLEET_COMMAND_VERSION, accountId: env.FLEET_ACCOUNT_ID,
+      })
+    } catch (error) {
+      if (error instanceof FleetCommandError) return commandFailureResponse(error, requestId, env)
+      const changed = ["AlignmentPlanChangedError", "FleetIntentChangedError"].includes(error.name)
+      if (changed || error instanceof HostedExecutionConflictError) {
+        return jsonResponse({
+          success: false, result: null,
+          errors: [{ message: changed ? "Fleet plan changed; prepare and approve a fresh plan" : error.message }],
+          error: { name: changed ? "AlignmentPlanChangedError" : error.name, actualDigest: error.actualDigest || null },
+        }, 409)
+      }
+      throw error
+    }
+  }
+  if (pathname.startsWith("/api/workers/")) {
+    if (request.method !== HTTP_METHOD.POST) return errorResponse(405, "Worker commands require POST")
+    const command = pathname.slice("/api/workers/".length)
+    if (deploymentIsReadOnly(env) && !WORKER_READ_COMMANDS.includes(command)) return errorResponse(403, "Worker writes are disabled")
+    const service = createHostedFleetService(env).workers
+    try {
+      return successResponse(await runWorkerCommand(service, command, await readJsonBody(request), { readOnly: deploymentIsReadOnly(env), signal: request.signal }))
+    } catch (error) { return errorResponse(error instanceof TypeError ? 400 : 409, error.message) }
+  }
   if (pathname === "/api/intent") return handleIntent(request, env)
   if (pathname === "/api/activity") return handleActivity(request, env)
   if (pathname === "/api/cache") return handleCache(request, env)
   if (pathname.startsWith("/api/cloudflare/")) {
+    if (MUTATION_METHODS.has(request.method)) {
+      if (deploymentIsReadOnly(env)) return errorResponse(403, "Hosted Fleet writes are disabled")
+      await hostedExecutionLock(env.FLEET_DB, env.FLEET_ACCOUNT_ID).renew(request.headers.get(HOSTED_EXECUTION_HEADER))
+    }
     return proxyCloudflareRequest(request, {
       accountId: env.FLEET_ACCOUNT_ID,
       apiToken: env.CLOUDFLARE_API_TOKEN,
@@ -285,6 +333,7 @@ export async function fetchHostedFleet(request, env) {
   try {
     return await handleRequest(request, env)
   } catch (error) {
+    if (error instanceof HostedExecutionConflictError) return errorResponse(409, error.message)
     if (error instanceof RequestBodyTooLargeError) {
       return errorResponse(413, error.message)
     }

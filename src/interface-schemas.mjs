@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { WORKER_NAME_PATTERN, WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
 
 import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
 import {
@@ -13,6 +14,43 @@ import {
 
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+export const commandDiagnosticsSchema = z.strictObject({
+  command: z.string().max(64),
+  deadlineMs: z.number().int().nonnegative(),
+  elapsedMs: z.number().int().nonnegative(),
+  error: z.strictObject({
+    name: z.enum(["Error", "CloudflareApiError", "TypeError", "RangeError", "AbortError", "TimeoutError"]),
+    frames: z.array(z.strictObject({ file: z.string().max(256), line: z.number().int().positive(), column: z.number().int().positive() })).max(8),
+  }).optional(),
+  kind: z.enum(["command-timeout", "upstream-timeout", "cancelled", "upstream-error", "internal-error"]),
+  progress: z.strictObject({
+    stage: z.enum(["account-surfaces", "surfaces", "rulesets", "writes", "verification"]),
+    completed: z.number().int().nullable(), total: z.number().int().nullable(),
+  }).nullable(),
+  readOnly: z.boolean(),
+  requestId: z.string().uuid().optional(),
+  upstream: z.strictObject({
+    abortKind: z.enum(["timeout", "cancelled"]).nullable(),
+    elapsedMs: z.number().int().nonnegative().nullable(),
+    method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).nullable(),
+    path: z.string().max(1024).nullable(),
+    status: z.number().int().nullable(),
+  }).nullable(),
+})
+export const alignmentCoverageSchema = z.strictObject({
+  complete: z.boolean(), failureCount: z.number().int().nonnegative(), truncated: z.boolean(),
+  failures: z.array(z.strictObject({
+    zoneId: identifierSchema.nullable(), zoneName: z.string().nullable(),
+    surfaceId: identifierSchema, phase: identifierSchema.optional(), rulesetId: identifierSchema.optional(),
+    errorKind: z.enum(["timeout", "cancelled", "read-failed", "not-read"]),
+    status: z.number().int().nullable(),
+  })).max(50),
+})
+export const activityRecoverySchema = z.strictObject({
+  activityId: identifierSchema,
+  reason: z.string().trim().min(10).max(1000),
+  stoppedClientsAndInspectedResources: z.literal(true),
+})
 const zoneIdsSchema = z.array(identifierSchema).min(1).max(100)
 const desiredSchema = z.json().describe("Desired bounded resource definition")
 const rulesetTargetSchema = {
@@ -25,7 +63,85 @@ const ruleTargetSchema = {
   ruleId: identifierSchema,
 }
 
+export const workerNameSchema = z.string().regex(WORKER_NAME_PATTERN)
+export const workerIntentSchema = z.strictObject({
+  mode: z.enum(["disabled", "exact", "unmanaged"]),
+  crons: z.array(z.string().min(1).max(256)).max(10).default([]),
+  owner: z.string().min(1).max(1000).nullable().optional(),
+  reconciliation: z.string().min(1).max(1000).nullable().optional(),
+})
+export const workerInspectionSchema = z.strictObject({
+  worker: workerNameSchema.optional(),
+  findingId: z.string().max(256).optional(),
+  start: z.iso.datetime({ offset: true }).optional(),
+  end: z.iso.datetime({ offset: true }).optional(),
+  cursor: identifierSchema.optional(),
+  limit: z.number().int().min(1).max(200).default(50),
+  zoneIds: z.array(identifierSchema).max(20).optional(),
+  logs: z.boolean().default(true),
+})
+export const workerIntentInputSchema = z.strictObject({ worker: workerNameSchema, intent: workerIntentSchema, expectedRevision: z.string().max(64) })
+export const workerHistorySchema = z.strictObject({ worker: workerNameSchema, offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() })
+export const workerVerificationSchema = z.strictObject({ worker: workerNameSchema, activityId: identifierSchema, start: z.iso.datetime({ offset: true }).optional(), end: z.iso.datetime({ offset: true }).optional(), limit: z.number().int().min(1).max(200).optional(), zoneIds: z.array(identifierSchema).max(20).optional() })
+
+const workerReadSchema = (value) => z.looseObject({
+  status: z.enum(["observed", "unknown", "not-requested"]),
+  readAt: z.string().optional(),
+  reason: z.string().optional(),
+  value: value.nullable(),
+})
+const workerSampleSchema = z.strictObject({
+  id: identifierSchema,
+  timestamp: z.string(),
+  eventType: z.string(),
+  outcome: z.string(),
+  version: identifierSchema.nullable(),
+  servingVersion: z.boolean().nullable(),
+  httpStatus: z.number().int().nullable(),
+  cron: z.string().max(256).nullable(),
+  truncated: z.boolean(),
+})
+export const workerReportOutputSchema = z.looseObject({
+  accountId: identifierSchema,
+  worker: workerNameSchema,
+  schemaVersion: z.literal(1),
+  status: z.literal("ok"),
+  readAt: z.string(),
+  summary: z.string(),
+  selector: z.looseObject({ worker: workerNameSchema, start: z.string(), end: z.string(), limit: z.number().int().max(200) }),
+  assessment: z.looseObject({ findingId: z.string(), status: z.enum(["unknown", "mismatch", "consistent"]), confidence: z.string(), missingChecks: z.array(z.string()), recommendedActions: z.array(z.string()), observations: z.json(), coverage: z.json(), inferredCause: z.string().nullable() }),
+  deployment: workerReadSchema(z.json()),
+  schedules: workerReadSchema(z.array(z.string())),
+  versions: z.array(z.json()).max(10),
+  ingress: workerReadSchema(z.json()),
+  logging: workerReadSchema(z.json()),
+  domains: workerReadSchema(z.json()),
+  routes: z.array(z.json()).max(20),
+  logs: workerReadSchema(z.strictObject({
+    invocations: z.number().int().nonnegative(),
+    groups: z.array(z.strictObject({ eventType: z.string(), outcome: z.string(), version: z.string().nullable(), servingVersion: z.boolean().nullable(), count: z.number().int().positive() })).max(200),
+    httpStatuses: z.array(z.strictObject({ status: z.number().int().nullable(), version: z.string().nullable(), servingVersion: z.boolean().nullable(), count: z.number().int().positive() })).max(200),
+    samples: z.array(workerSampleSchema).max(200),
+    errorSignatures: z.array(z.enum(["missing-scheduled-handler", "missing-fetch-handler"])),
+    ignoredRecords: z.number().int().nonnegative(),
+    nextCursor: z.string().nullable(),
+    limitReached: z.boolean(),
+  })),
+  limitations: z.array(z.string()),
+  intent: workerIntentSchema,
+})
+export const workerIncidentOutputSchema = z.strictObject({
+  id: identifierSchema,
+  worker: workerNameSchema,
+  findingId: z.string(),
+  recordedAt: z.string(),
+  supersedes: identifierSchema.nullable(),
+  activityId: identifierSchema.nullable(),
+  report: workerReportOutputSchema,
+})
+
 export const fleetChangeSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal(WORKER_SCHEDULE_KIND), worker: workerNameSchema, intent: workerIntentSchema, findingId: z.string().max(256).optional() }),
   z.strictObject({
     desired: desiredSchema,
     kind: z.literal("zone-setting-update"),
@@ -151,7 +267,7 @@ const fleetIntentGroupSchema = z.discriminatedUnion("mode", [
     ]),
   }),
 ])
-const fleetIntentExpectedValueSchema = z.json().describe("Desired bounded resource definition. Canonical web passthrough policies use the strict canonical-web-passthrough value returned by describe_zone_alias_policy and require exact value plus required presence.")
+const fleetIntentExpectedValueSchema = z.json().describe("Desired bounded resource definition. Canonical web passthrough and hostname-scoped Free rate-limit policies use the strict values returned by their descriptor tools and require exact value plus required presence.")
 const fleetIntentExpectedCommonShape = {
   canonical: fleetIntentLabelSchema(FLEET_INTENT_LONG_LABEL_LIMIT),
   display: z.string(),
@@ -308,6 +424,12 @@ const runtimeCheckSchema = z.strictObject({
 })
 
 export const runtimeStatusOutputSchema = z.looseObject({
+  backend: z.looseObject({
+    kind: z.enum(["local", "hosted"]),
+    endpoint: z.string().nullable(),
+    accountId: z.string().optional(),
+    fallback: z.boolean().optional(),
+  }).optional(),
   checkedAt: z.string(),
   checks: z.array(runtimeCheckSchema),
   credentials: z.strictObject({

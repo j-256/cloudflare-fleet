@@ -89,8 +89,8 @@ function isOperationPlan(plan) {
     && isNonEmptyString(plan.id)
     && isNonEmptyString(plan.kind)
     && isNonEmptyString(plan.summary)
-    && isNonEmptyString(plan.zoneId)
-    && isNonEmptyString(plan.zoneName)
+    && ((isNonEmptyString(plan.zoneId) && isNonEmptyString(plan.zoneName))
+      || (isNonEmptyString(plan.accountId) && isNonEmptyString(plan.worker)))
     && Array.isArray(plan.operations)
     && plan.operations.length > 0
     && plan.operations.every(isWriteOperation)
@@ -98,6 +98,11 @@ function isOperationPlan(plan) {
 }
 
 function isVerificationTarget(target) {
+  if (target?.kind === WRITE_VERIFICATION_KIND.WORKER_SCHEDULES) {
+    return isNonEmptyString(target.accountId) && isNonEmptyString(target.worker)
+      && Array.isArray(target.expectedSchedules) && target.expectedSchedules.every(isNonEmptyString)
+      && isObject(target.deployment)
+  }
   if (!isObject(target) || !isNonEmptyString(target.zoneId)) return false
   if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
     return isNonEmptyString(target.settingId)
@@ -372,7 +377,10 @@ export function verificationObservation(entry) {
   const { response, target } = entry
   let value
   let summary
-  if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
+  if (target.kind === WRITE_VERIFICATION_KIND.WORKER_SCHEDULES) {
+    value = response.result
+    summary = `Worker ${target.worker} schedule configuration`
+  } else if (target.kind === WRITE_VERIFICATION_KIND.SETTING) {
     value = {
       settingId: target.settingId,
       value: response.result?.value,
@@ -492,6 +500,18 @@ function collectionPath(operation, segmentCount) {
 function inverseOperation(operation, response, createdRuleIds) {
   const segments = operationSegments(operation)
   const undoLabel = `Undo: ${operation.label}`
+  if (segments[0] === "accounts" && segments[2] === "workers"
+    && segments[3] === "scripts" && segments[5] === "schedules"
+    && segments.length === 6 && operation.method === HTTP_METHOD.PUT) {
+    return {
+      body: requiredCurrentValue(operation),
+      currentValue: operation.body,
+      deployment: operation.deployment,
+      label: undoLabel,
+      method: HTTP_METHOD.PUT,
+      path: operation.path,
+    }
+  }
   if (segments[0] !== "zones" || !segments[1]) {
     throw new Error(`${operation.label} uses an unsupported account-level path`)
   }
@@ -719,8 +739,8 @@ export function buildInversePlans(results) {
         kind: "operation-undo",
         operations: [],
         summary: `Undo ${entry.plan.summary}`,
-        zoneId: entry.plan.zoneId,
-        zoneName: entry.plan.zoneName,
+        ...(entry.plan.worker ? { accountId: entry.plan.accountId, worker: entry.plan.worker }
+          : { zoneId: entry.plan.zoneId, zoneName: entry.plan.zoneName }),
       }
       byPlan.set(entry.plan.id, plan)
       plans.push(plan)

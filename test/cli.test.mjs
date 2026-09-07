@@ -248,7 +248,9 @@ test("unified CLI serves namespace and leaf help without requiring operands", as
     [["schema", "--help"], /cloudflare-fleet schema/],
     [["schema", "change", "--help"], /machine-readable public input schemas/],
     [["help", "intent"], /cloudflare-fleet intent/],
-    [["help", "doctor"], /check local readiness/],
+    [["help", "doctor"], /check selected-backend readiness/],
+    [["state", "plan", "--help"], /intentSource/],
+    [["recovery", "apply", "--help"], /unknown-outcome/],
   ]
 
   for (const [argv, pattern] of cases) {
@@ -395,6 +397,16 @@ test("unified CLI parses canonical intent, change, undo, and schema commands", (
     },
   )
   assert.deepEqual(
+    parseFleetArguments(["intent", "rate-limits", "--format=json"]),
+    {
+      command: "intent-rate-limits",
+      expectedDigest: null,
+      format: "json",
+      input: null,
+      stateFile: null,
+    },
+  )
+  assert.deepEqual(
     parseFleetArguments(["intent", "plan", "-iintent.json", "-fjson"]),
     {
       command: "intent-plan",
@@ -459,6 +471,23 @@ test("unified CLI exposes reusable canonical alias templates without credentials
       ["strangelasers.net", "strangelasers.com", 307],
     ],
   )
+})
+
+test("unified CLI exposes the hostname-scoped Free rate-limit relationship", async () => {
+  const stdout = outputStream()
+  await runFleetCommand({
+    argv: ["intent", "rate-limits", "--format=json"],
+    environment: {},
+    stderr: outputStream().stream,
+    stdout: stdout.stream,
+  })
+
+  const result = JSON.parse(stdout.value())
+  assert.equal(result.facet.key, "hostname-scoped-free-rate-limit")
+  assert.equal(result.relationship.firstPhase, "http_request_firewall_custom")
+  assert.equal(result.relationship.ratePhase, "http_ratelimit")
+  assert.equal(result.templates[0].value.rateRules.length, 0)
+  assert.equal(result.templates[1].value.skipRules.length, 1)
 })
 
 test("unified CLI exports intent documents and accepts bounded JSON input", async () => {
@@ -564,6 +593,7 @@ test("unified CLI delegates dashboard arguments through the canonical command", 
   let arguments_
   const result = await runFleetCommand({
     argv: ["dashboard", "-rf", "--debug-port=9224"],
+    environment: {},
     dashboardRunner(argv) {
       arguments_ = argv
       return "launched"

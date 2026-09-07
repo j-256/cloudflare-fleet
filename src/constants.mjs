@@ -15,6 +15,7 @@ export const WAF_PHASE = "http_request_firewall_custom"
 
 export const MATRIX_CATEGORY = Object.freeze({
   LEGACY_FIREWALL_VIEW: "Legacy firewall view",
+  RATE_LIMITING: "Rate limiting",
   REDIRECTS: "Redirects",
   RULESET_RULES: "Ruleset rules",
   ZONE_ALIASES: "Zone aliases",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { setImmediate as flushAsyncWork } from "node:timers/promises"
 import test from "node:test"
 
 import {
@@ -95,6 +96,96 @@ test("read requests stop after the bounded throttle retry budget", async () => {
     (error) => error instanceof CloudflareApiError && error.status === 429,
   )
   assert.equal(calls, 4)
+})
+
+test("concurrent reads recheck a throttle deadline extended while they wait", async (context) => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 })
+  const calls = []
+  const initialResponses = new Map()
+  const controller = new AbortController()
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname
+      const firstRead = !calls.some((call) => call.path === path)
+      calls.push({ path, time: Date.now() })
+      if (firstRead) {
+        return new Promise((resolve) => initialResponses.set(path, resolve))
+      }
+      return jsonResponse({ result: [], success: true })
+    },
+  })
+  const paths = ["zones/zone-one/settings", "zones/zone-two/settings"]
+  const reads = paths.map((path) => api.request(path, { signal: controller.signal }))
+  context.after(async () => {
+    controller.abort()
+    await Promise.allSettled(reads)
+  })
+  await flushAsyncWork()
+  initialResponses.get(`/client/v4/${paths[0]}`)(throttledResponse("1"))
+  await flushAsyncWork()
+  context.mock.timers.tick(500)
+  initialResponses.get(`/client/v4/${paths[1]}`)(throttledResponse("2"))
+  await flushAsyncWork()
+
+  context.mock.timers.tick(500)
+  await flushAsyncWork()
+  assert.equal(calls.length, 2, "The original deadline must not release a waiting read")
+  context.mock.timers.tick(1499)
+  await flushAsyncWork()
+  assert.equal(calls.length, 2)
+  context.mock.timers.tick(1)
+  await Promise.all(reads)
+  assert.deepEqual(calls.slice(2).map((call) => call.time), [3500, 3500])
+})
+
+test("canceling a throttled read prevents another fetch", async (context) => {
+  context.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 })
+  const controller = new AbortController()
+  let calls = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => {
+      calls += 1
+      return calls === 1
+        ? throttledResponse("60")
+        : jsonResponse({ result: [], success: true })
+    },
+  })
+  const read = api.request("zones/zone-one/settings", { signal: controller.signal })
+  const rejection = assert.rejects(read, (error) => error instanceof CloudflareApiError)
+  await flushAsyncWork()
+  controller.abort()
+
+  await rejection
+  assert.equal(calls, 1)
+})
+
+test("already canceled requests do not dispatch a fetch", async () => {
+  const controller = new AbortController()
+  controller.abort()
+  let calls = 0
+  const api = new CloudflareApi({
+    accountId: "account-id",
+    apiToken: "secret-token",
+    fetchImpl: async () => {
+      calls += 1
+      return jsonResponse({ result: [], success: true })
+    },
+  })
+
+  for (const method of ["GET", "PATCH"]) {
+    await assert.rejects(
+      api.request("zones/zone-one/settings/always_use_https", {
+        method,
+        signal: controller.signal,
+      }),
+      (error) => error instanceof CloudflareApiError && error.method === method,
+    )
+  }
+  assert.equal(calls, 0)
 })
 
 test("mutating requests are not retried after throttling", async () => {

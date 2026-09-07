@@ -17,6 +17,29 @@ test("loads the cached fleet into a useful review surface", async ({ dashboard }
   )
 })
 
+test("refresh recovers from a proxied rate limit using the upstream retry delay", async ({ dashboard }) => {
+  const { allowBrowserError, page, queueFailure, requests } = dashboard
+  allowBrowserError(/429/)
+  queueFailure({
+    headers: { "Retry-After": "2" },
+    method: "GET",
+    path: "zones",
+    status: 429,
+  })
+  const rateLimitedResponse = page.waitForResponse((response) => (
+    response.status() === 429 && new URL(response.url()).pathname.endsWith("/zones")
+  ))
+
+  await page.locator("#refresh").click()
+
+  const response = await rateLimitedResponse
+  expect(response.headers()["retry-after"]).toBe("2")
+  await expect(page.locator("#status-text")).toHaveText("Fleet loaded")
+  await expect(page.locator("#zone-count")).toHaveText("3")
+  expect(requests.filter((request) => request.path.startsWith("zones?"))).toHaveLength(2)
+  expect(requests.every((request) => request.method === "GET")).toBe(true)
+})
+
 test("filters the matrix and preserves the view in the address bar", async ({ dashboard }) => {
   const { page } = dashboard
   const matrixRows = page.locator("#matrix-body tr")

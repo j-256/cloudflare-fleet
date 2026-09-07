@@ -102,7 +102,7 @@
       <div class="section-heading">
         <p class="eyebrow">From intent to action</p>
         <h2 id="alignment-heading">Review a complete convergence plan</h2>
-        <p>Exact and forbidden intent can produce first-class alignment actions on a policy, matrix row, or individual drifting cell. Supported adapters include zone settings, Email Routing subaddressing and wizard preferences, DNS, DNSSEC, API-managed routes, redirects, rules, and strict canonical domain passthroughs. Fleet refreshes the latest intent and the relevant facet across the account, then blocks the whole selected scope if any drift cell is conflicting, ambiguous, or unsupported.</p>
+        <p>Exact and forbidden intent can produce first-class alignment actions on a policy, matrix row, or individual drifting cell. Supported adapters include zone settings, Email Routing subaddressing and wizard preferences, DNS, DNSSEC, API-managed routes, redirects, rules, strict canonical domain passthroughs, and paired hostname-scoped rate limits. Fleet refreshes the latest intent and the relevant facet across the account, then blocks the whole selected scope if any drift cell is conflicting, ambiguous, or unsupported.</p>
       </div>
       <figure class="screenshot-frame">
         <img src="screenshots/intent-alignment.png" width="1440" height="1000" alt="Cloudflare Fleet intent alignment confirmation for a synthetic zone setting, showing the target zone, live current and desired values, API endpoint, method, and review acknowledgement.">
@@ -123,6 +123,18 @@
       <div class="callout">
         <strong>Strict by construction</strong>
         <p>Alias intent is always required and exact. Unread relevant surfaces block convergence, supported cleanup cannot remove serving DNS or the canonical redirect as collateral, and every write still passes through fresh planning, explicit confirmation, durable activity, verification, and guarded recovery.</p>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="rate-limit-heading">
+      <div class="section-heading">
+        <p class="eyebrow">One scarce rule, one complete meaning</p>
+        <h2 id="rate-limit-heading">Keep a Free rate limit inside its hostname boundary</h2>
+        <p>The typed rate-limit facet treats the zone's one path-based rate rule and the earlier custom WAF skip that excludes every other hostname as one required-and-exact value. An extra or missing skip is drift because it changes where the rule can act.</p>
+      </div>
+      <div class="callout">
+        <strong>Fail safe across phases</strong>
+        <p>Cloudflare custom WAF rules execute before rate limiting. Fleet therefore creates the skip first, disables the rate rule before a hostname change, enables it last, and removes it before deleting the skip. A failed partial transition leaves the rule disabled or more broadly skipped, not active on an unintended host.</p>
       </div>
     </section>
 
