@@ -497,6 +497,61 @@ test("buildAdoptionDocument adopts a candidate as required and acknowledges exem
   assert.deepEqual(preview.policyIds, ["gap-policy"])
 })
 
+test("buildAdoptionDocument builds an identical document across passes for a fixed base", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidate = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((entry) => entry.key === "missing")
+  const request = {
+    adopt: [{ candidateId: candidate.id, policyId: "gap-policy" }],
+    exempt: [{
+      candidateId: candidate.id,
+      reason: "No mail on these zones",
+      zones: [
+        { id: "zone-2", name: "beta.example" },
+        { id: "zone-3", name: "gamma.example" },
+        { id: "zone-4", name: "delta.example" },
+      ],
+    }],
+  }
+
+  const first = buildAdoptionDocument(document, inventory, matrix, request)
+  const second = buildAdoptionDocument(document, inventory, matrix, request)
+
+  // The reviewed-plan digest hashes the whole desired document, exemption
+  // acknowledgements included, so two builds for the same base must be
+  // byte-identical or the apply-time digest guard rejects every exemption
+  assert.deepEqual(first.document, second.document)
+  assert.equal(first.document.acknowledgements.length, 3)
+})
+
+test("adoption acknowledgements derive timestamps from the base document, not wall-clock", () => {
+  const { document, inventory, matrix } = fixture()
+  const candidate = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((entry) => entry.key === "missing")
+  const request = {
+    adopt: [{ candidateId: candidate.id, policyId: "gap-policy" }],
+    exempt: [{
+      candidateId: candidate.id,
+      reason: "No mail on this zone",
+      zones: [{ id: "zone-2", name: "beta.example" }],
+    }],
+  }
+
+  // A base document that has never been persisted (updatedAt null) falls back to
+  // a fixed sentinel so the value stays deterministic
+  const [fallback] = buildAdoptionDocument(document, inventory, matrix, request)
+    .document.acknowledgements
+  assert.equal(fallback.createdAt, "1970-01-01T00:00:00.000Z")
+  assert.equal(fallback.updatedAt, "1970-01-01T00:00:00.000Z")
+
+  // A persisted base revision stamps its own updatedAt onto new acknowledgements
+  const revisioned = { ...document, updatedAt: "2026-01-02T03:04:05.000Z" }
+  const [stamped] = buildAdoptionDocument(revisioned, inventory, matrix, request)
+    .document.acknowledgements
+  assert.equal(stamped.createdAt, "2026-01-02T03:04:05.000Z")
+  assert.equal(stamped.updatedAt, "2026-01-02T03:04:05.000Z")
+})
+
 test("applyAdoptionFilters gaps lens keeps only gap candidates", () => {
   const { document, inventory, matrix } = fixture()
   const candidates = buildIntentAdoptionCandidates(document, inventory, matrix)

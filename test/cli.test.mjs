@@ -283,6 +283,23 @@ test("unified CLI help documents the bounded agent surface", () => {
   assert.match(usage, /cloudflare-fleet doctor/)
 })
 
+test("adoption list accepts a positive integer limit and rejects other values", () => {
+  assert.equal(
+    parseFleetArguments(["adoption", "list", "--limit", "5"]).filters.limit,
+    5,
+  )
+  assert.equal(
+    parseFleetArguments(["adoption", "list"]).filters.limit,
+    null,
+  )
+  for (const value of ["0", "-3", "abc", "2.5"]) {
+    assert.throws(
+      () => parseFleetArguments(["adoption", "list", "--limit", value]),
+      /--limit must be a positive integer/,
+    )
+  }
+})
+
 test("unified CLI parses configuration and doctor diagnostics", () => {
   assert.deepEqual(
     parseFleetArguments([

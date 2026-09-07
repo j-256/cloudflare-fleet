@@ -276,15 +276,26 @@ export function createIntentAdoptionPolicy(candidate, selection) {
   }
 }
 
-function buildAdoptionAcknowledgement(exemption) {
-  const now = new Date().toISOString()
+// Fixed sentinel for acknowledgements built against a base document that has
+// never been persisted (updatedAt === null). Any valid ISO string works; the
+// epoch keeps the value deterministic so plan and apply hash identically
+const ADOPTION_ACKNOWLEDGEMENT_EPOCH = "1970-01-01T00:00:00.000Z"
+
+function buildAdoptionAcknowledgement(exemption, document) {
+  // Derive timestamps from the base document's revision, never wall-clock, so a
+  // fixed base yields a byte-identical acknowledgement across the plan and apply
+  // passes and the reviewed-plan digest stays stable. Preserve an existing
+  // acknowledgement's createdAt so re-adoption keeps its honest first-seen time
+  const id = `ack-${exemption.policyId}-${exemption.zoneId}`
+  const timestamp = document.updatedAt ?? ADOPTION_ACKNOWLEDGEMENT_EPOCH
+  const existing = document.acknowledgements.find((entry) => entry.id === id)
   return {
-    createdAt: now,
-    id: `ack-${exemption.policyId}-${exemption.zoneId}`,
+    createdAt: existing?.createdAt ?? timestamp,
+    id,
     observedCanonical: exemption.observedCanonical ?? FLEET_INTENT_MISSING_CANONICAL,
     policyId: exemption.policyId,
     reason: exemption.reason,
-    updatedAt: now,
+    updatedAt: timestamp,
     zoneId: exemption.zoneId,
     zoneName: exemption.zoneName,
   }
@@ -301,7 +312,7 @@ export function previewIntentAdoption(document, inventory, matrix, entries, exem
   for (const exemption of exemptions) {
     nextDocument = replaceFleetIntentAcknowledgement(
       nextDocument,
-      buildAdoptionAcknowledgement(exemption),
+      buildAdoptionAcknowledgement(exemption, document),
     )
   }
   const evaluation = evaluateFleetIntent(nextDocument, inventory, matrix)
@@ -343,7 +354,7 @@ export function buildAdoptionDocument(document, inventory, matrix, request) {
       .map((candidate) => [candidate.id, candidate]),
   )
   const policyIdByCandidate = new Map()
-  const entries = request.adopt.map((item) => {
+  const entries = (request.adopt || []).map((item) => {
     const candidate = byId.get(item.candidateId)
     if (!candidate) {
       throw new TypeError(`Unknown adoption candidate: ${item.candidateId}`)

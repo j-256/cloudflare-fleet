@@ -24,6 +24,9 @@ import {
   OPERATION_ACTIVITY_STATUS,
 } from "../src/operation-history.mjs"
 import { AlignmentPlanChangedError } from "../src/write-executor.mjs"
+import { buildIntentAdoptionCandidates } from "../src/intent-adoption.mjs"
+import { buildMatrix } from "../src/matrix.mjs"
+import { makeInventory, makeZone } from "./fixtures.mjs"
 
 const SELECTOR = Object.freeze({ policyId: "policy-one" })
 const BATCH_SELECTORS = Object.freeze([
@@ -596,4 +599,70 @@ test("applyAdoption persists the built document through the revision guard", asy
 
   assert.equal(result.applied, true)
   assert.equal(applied.length, 1)
+})
+
+test("adoption plan and apply agree on the real digest and persist an exemption", async () => {
+  // A real missing-coverage candidate: brotli is present only on alpha, so
+  // adopting it as required makes beta actionable until an exemption clears it
+  const inventory = makeInventory([
+    makeZone("alpha.example", {
+      dns: [],
+      settings: [
+        { editable: true, id: "always_use_https", value: "on" },
+        { editable: true, id: "brotli", value: "on" },
+      ],
+    }),
+    makeZone("beta.example", {
+      dns: [],
+      settings: [{ editable: true, id: "always_use_https", value: "on" }],
+    }),
+  ])
+  // makeZone derives zone ids from the name ("zone-beta.example"); real Cloudflare
+  // zone ids are identifier-safe, and the acknowledgement id (ack-<policy>-<zone>)
+  // must be too, so give the zones dot-free ids that also match at evaluation
+  const betaZoneId = "zone-beta"
+  inventory.zones[0].meta.id = "zone-alpha"
+  inventory.zones[1].meta.id = betaZoneId
+  const intent = createEmptyFleetIntentDocument("account-id")
+  const brotli = buildIntentAdoptionCandidates(intent, inventory, buildMatrix(inventory))
+    .find((candidate) => candidate.key === "brotli")
+  assert.ok(brotli, "expected a missing-coverage candidate to adopt")
+
+  const request = {
+    adopt: [{ candidateId: brotli.id, policyId: "gap-policy" }],
+    exempt: [{
+      candidateId: brotli.id,
+      reason: "No brotli on this zone",
+      zones: [{ id: betaZoneId, name: "beta.example" }],
+    }],
+  }
+
+  const persisted = []
+  const service = createFleetService({
+    accountId: "account-id",
+    api: { fetch: async () => ({}) },
+    stateFile: "unused.json",
+    // prepareIntentChange is left as the real prepareFleetIntentChange, so the
+    // digest is genuinely recomputed at apply and must match the plan's digest
+    readState: async () => ({ intent }),
+    readIntent: async () => intent,
+    loadInventory: async () => inventory,
+    persistIntent: async (_stateFile, _accountId, _revision, desired) => {
+      persisted.push(desired)
+      return { ...desired, revision: "a".repeat(64), updatedAt: "2026-09-07T00:00:00.000Z" }
+    },
+    withWriteLock: async (operation) => operation(),
+  })
+
+  const plan = await service.planAdoption(request)
+  assert.match(plan.planSet.digest, /^sha256:[0-9a-f]{64}$/)
+  assert.equal(plan.adoption.impact.actionableCells, 0)
+
+  // Under the wall-clock bug this apply rejects with AlignmentPlanChangedError
+  const result = await service.applyAdoption(request, plan.planSet.digest)
+
+  assert.equal(result.applied, true)
+  assert.equal(persisted.length, 1)
+  assert.equal(persisted[0].acknowledgements.length, 1)
+  assert.equal(persisted[0].acknowledgements[0].policyId, "gap-policy")
 })
