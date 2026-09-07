@@ -5909,10 +5909,6 @@ dialog details > summary {
     grid-row: 4;
   }
 
-  .intent-adoption-candidate {
-    grid-template-columns: 1fr;
-  }
-
   .intent-adoption-heading {
     grid-template-columns: 1fr;
   }

@@ -6389,9 +6389,14 @@ async function saveIntentGroup(event) {
         if (candidate) applyIntentAdoptionSelectionDefaults(candidate, selection)
       }
       renderIntentAdoptionCandidates()
-      adoptionGroupSelect = state.intentAdoptionDraft.controls.get(
+      const returningControls = state.intentAdoptionDraft.controls.get(
         groupDraft.adoptionCandidateId,
-      )?.groupSelect || null
+      )
+      // Rows render with their policy controls collapsed; expand the returning
+      // candidate so the newly created scope is visible and its select is
+      // focusable (focusing an element inside a closed <details> is a no-op)
+      if (returningControls?.config) returningControls.config.open = true
+      adoptionGroupSelect = returningControls?.groupSelect || null
     }
     completeIntentWorkflowScreen(elements.intentGroupDialog)
     if (adoptionGroupSelect) {
@@ -7991,6 +7996,7 @@ function renderIntentAdoptionCandidate(candidate, index) {
   draft.controls.set(candidate.id, {
     card,
     checkbox,
+    config,
     groupSelect,
   })
   return card
@@ -8016,21 +8022,33 @@ function renderIntentAdoptionSummary() {
       className: "intent-adoption-summary-zones-label",
       text: "Riskiest zones:",
     }))
+    const chips = []
+    // Toggle each chip's state in place rather than re-rendering the summary, so
+    // a keyboard user keeps focus on the chip and the live region does not
+    // re-announce on every toggle
+    const syncZoneChips = () => {
+      for (const chip of chips) {
+        const active = draft.zoneFilter === chip.dataset.zone
+        chip.classList.toggle("active", active)
+        chip.setAttribute("aria-pressed", String(active))
+      }
+    }
     for (const entry of model.topZones) {
-      const active = draft.zoneFilter === entry.zone
       const chip = createElement("button", {
-        className: `intent-adoption-zone-chip${active ? " active" : ""}`,
+        className: "intent-adoption-zone-chip",
         text: `${entry.zone} (${entry.count})`,
       })
       chip.type = "button"
-      chip.setAttribute("aria-pressed", String(active))
+      chip.dataset.zone = entry.zone
       chip.addEventListener("click", () => {
         draft.zoneFilter = draft.zoneFilter === entry.zone ? null : entry.zone
-        renderIntentAdoptionSummary()
+        syncZoneChips()
         filterIntentAdoptionCandidates()
       })
+      chips.push(chip)
       zones.append(chip)
     }
+    syncZoneChips()
     children.push(zones)
   }
   elements.intentAdoptionSummary.replaceChildren(...children)
@@ -8101,7 +8119,9 @@ function openIntentAdoption() {
     ])),
   }
   elements.intentAdoptionSearch.value = ""
-  elements.intentAdoptionPattern.value = INTENT_ADOPTION_FILTER.HIGH
+  // Lead with every ungoverned facet, worst first, matching the summary tier's
+  // fleet-wide gap counts rather than pre-filtering to fleet-level consensus
+  elements.intentAdoptionPattern.value = ""
   elements.intentAdoptionCategory.replaceChildren(
     createElement("option", { text: "All categories" }),
     ...[...new Set(candidates.map((candidate) => candidate.category))]
