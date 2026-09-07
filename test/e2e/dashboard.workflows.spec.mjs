@@ -912,3 +912,22 @@ test("shows a custom tooltip on hover over an intent section info icon", async (
   await help.hover()
   await expect(tooltip).toBeVisible()
 })
+
+test("clickable summary metrics filter and navigate the intent panel", async ({ dashboard }) => {
+  const { page } = dashboard
+
+  await page.getByRole("button", { name: "Manage fleet intent" }).click()
+  const dialog = page.getByRole("dialog", { name: "Fleet intent" })
+  await expect(dialog).toBeVisible()
+  const metrics = page.locator("#intent-metrics")
+
+  // The coverage pill jumps to the Coverage section
+  await expect(page.locator("#intent-coverage-section")).toBeHidden()
+  await metrics.getByRole("button", { name: /coverage$/ }).click()
+  await expect(page.locator("#intent-coverage-section")).toBeVisible()
+
+  // The actionable pill returns to Policies and applies the needs-attention filter
+  await metrics.getByRole("button", { name: /actionable$/ }).click()
+  await expect(page.locator("#intent-policies-section")).toBeVisible()
+  await expect(page.locator("#intent-policy-status-filter")).toHaveValue("attention")
+})

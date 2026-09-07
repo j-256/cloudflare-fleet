@@ -3976,6 +3976,24 @@ dialog form {
   color: var(--danger);
 }
 
+.intent-metric {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.intent-metric:hover {
+  border-color: var(--slate);
+  background: rgba(127, 149, 171, 0.12);
+}
+
+.intent-metric:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .intent-status-badge.active,
 .intent-status-badge.aligned,
 .intent-status-badge.remediable {
@@ -4283,7 +4301,25 @@ dialog form > .intent-field-help {
   border: 1px solid var(--line);
   border-radius: 99px;
   color: var(--ink);
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
   font: 700 var(--fs-2xs)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.intent-result-chip.interactive {
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.intent-result-chip.interactive:hover {
+  border-color: var(--slate);
+  background: rgba(127, 149, 171, 0.12);
+}
+
+.intent-result-chip.interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .intent-result-chip .icon {
