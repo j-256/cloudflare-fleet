@@ -6662,14 +6662,20 @@ function intentActionButton(label, action, options = {}) {
 // Compact "icon + number" chip for the policy row's effective-result counts. The
 // word (and, for need-attention, the affected zones) lives in the hover tooltip
 // and aria-label, so the counts read at a glance instead of as a pipe-run
-function intentResultChip(iconName, count, label, tone = "", title = "") {
-  const chip = createElement("span", {
-    className: `intent-result-chip${tone ? ` ${tone}` : ""}${count === 0 ? " zero" : ""}`,
+function intentResultChip(iconName, count, label, options = {}) {
+  const { tone = "", title = "", onClick = null } = options
+  const interactive = typeof onClick === "function"
+  const chip = createElement(interactive ? "button" : "span", {
+    className: `intent-result-chip${tone ? ` ${tone}` : ""}${count === 0 ? " zero" : ""}${interactive ? " interactive" : ""}`,
   })
   const description = title || `${count} ${label}`
   chip.setAttribute("aria-label", description)
   chip.append(icon(iconName), document.createTextNode(String(count)))
-  attachTooltip(chip, description)
+  if (interactive) {
+    chip.type = "button"
+    chip.addEventListener("click", onClick)
+  }
+  attachTooltip(chip, interactive ? `${description} (click to filter)` : description)
   return chip
 }
 
@@ -7074,6 +7080,33 @@ function setIntentManagerSection(section, options = {}) {
   }
 }
 
+// Jump the intent manager to a section and, for Policies, apply a status filter.
+// Shared by the clickable summary metrics and the per-policy result chips so
+// each click filters to exactly what it represents
+function applyIntentManagerFilter(target = {}) {
+  const section = target.section || INTENT_MANAGER_SECTION.POLICIES
+  setIntentManagerSection(section)
+  if (section === INTENT_MANAGER_SECTION.POLICIES) {
+    elements.intentPolicyStatusFilter.value = target.status || ""
+    filterIntentPolicies()
+    elements.intentPolicyStatusFilter.focus()
+  } else {
+    elements.intentManagerSectionButtons.find(
+      (entry) => entry.dataset.intentManagerSection === section,
+    )?.focus()
+  }
+}
+
+function intentMetricButton(text, { tone = "", target } = {}) {
+  const button = createElement("button", {
+    className: `intent-metric${tone ? ` ${tone}` : ""}`,
+    text,
+  })
+  button.type = "button"
+  button.addEventListener("click", () => applyIntentManagerFilter(target))
+  return button
+}
+
 function showIntentPoliciesForGroup(groupId) {
   elements.intentPolicySearch.value = ""
   elements.intentPolicyStatusFilter.value = ""
@@ -7268,18 +7301,34 @@ function renderIntentPolicies() {
     chips.append(
       intentResultChip("align", policyState?.targetCount || 0, "targeted"),
       intentResultChip("active", policyState?.effectiveCount || 0, "effective"),
-      intentResultChip("ok", policyState?.matchCount || 0, "matching", "aligned"),
-      intentResultChip("ack", policyState?.acknowledgementCount || 0, "acknowledged"),
-      intentResultChip(
-        "drift",
-        problemCells.length,
-        "need attention",
-        problemCells.length > 0 ? "actionable" : "",
-        problemCells.length > 0
+      intentResultChip("ok", policyState?.matchCount || 0, "matching", {
+        tone: "aligned",
+        onClick: () => applyIntentManagerFilter({
+          section: INTENT_MANAGER_SECTION.POLICIES,
+          status: INTENT_POLICY_DISPLAY_STATUS.ALIGNED,
+        }),
+      }),
+      intentResultChip("ack", policyState?.acknowledgementCount || 0, "acknowledged", {
+        onClick: () => applyIntentManagerFilter({
+          section: INTENT_MANAGER_SECTION.ACKNOWLEDGEMENTS,
+        }),
+      }),
+      intentResultChip("drift", problemCells.length, "need attention", {
+        tone: problemCells.length > 0 ? "actionable" : "",
+        title: problemCells.length > 0
           ? `${problemCells.length} need attention: ${attentionZones.join(", ")}`
           : "",
-      ),
-      intentResultChip("layers", policyState?.overriddenCount || 0, "overridden"),
+        onClick: () => applyIntentManagerFilter({
+          section: INTENT_MANAGER_SECTION.POLICIES,
+          status: INTENT_MANAGER_POLICY_FILTER.ATTENTION,
+        }),
+      }),
+      intentResultChip("layers", policyState?.overriddenCount || 0, "overridden", {
+        onClick: () => applyIntentManagerFilter({
+          section: INTENT_MANAGER_SECTION.POLICIES,
+          status: INTENT_POLICY_DISPLAY_STATUS.OVERRIDDEN,
+        }),
+      }),
     )
     result.append(createElement("strong", { text: "Effective result" }), chips)
     if (policyState?.reason) {
@@ -8290,25 +8339,26 @@ function renderIntentManager() {
       : "This debug session can inspect injected intent but cannot persist changes."
   elements.intentSummary.textContent = modeDetail
   elements.intentMetrics.replaceChildren(
-    createElement("span", {
-      className: "intent-metric",
-      text: `${summary.governedRows} governed`,
+    intentMetricButton(`${summary.governedRows} governed`, {
+      target: { section: INTENT_MANAGER_SECTION.POLICIES },
     }),
-    createElement("span", {
-      className: `intent-metric${summary.actionableCells > 0 ? " actionable" : ""}`,
-      text: `${summary.actionableCells} actionable`,
+    intentMetricButton(`${summary.actionableCells} actionable`, {
+      tone: summary.actionableCells > 0 ? "actionable" : "",
+      target: {
+        section: INTENT_MANAGER_SECTION.POLICIES,
+        status: INTENT_MANAGER_POLICY_FILTER.ATTENTION,
+      },
     }),
-    createElement("span", {
-      className: "intent-metric",
-      text: `${summary.acknowledgedCells} acknowledged`,
+    intentMetricButton(`${summary.acknowledgedCells} acknowledged`, {
+      target: { section: INTENT_MANAGER_SECTION.ACKNOWLEDGEMENTS },
     }),
-    createElement("span", {
-      className: `intent-metric${summary.staleAcknowledgements > 0 ? " actionable" : ""}`,
-      text: `${summary.staleAcknowledgements} stale`,
+    intentMetricButton(`${summary.staleAcknowledgements} stale`, {
+      tone: summary.staleAcknowledgements > 0 ? "actionable" : "",
+      target: { section: INTENT_MANAGER_SECTION.ACKNOWLEDGEMENTS },
     }),
-    createElement("span", {
-      className: `intent-metric${(state.coverageEvaluation?.summary.changed || 0) > 0 ? " actionable" : ""}`,
-      text: `${state.intent.coverageExpectations.length} coverage`,
+    intentMetricButton(`${state.intent.coverageExpectations.length} coverage`, {
+      tone: (state.coverageEvaluation?.summary.changed || 0) > 0 ? "actionable" : "",
+      target: { section: INTENT_MANAGER_SECTION.COVERAGE },
     }),
   )
   elements.intentAddGroup.disabled = !intentWritable()
