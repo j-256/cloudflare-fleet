@@ -743,6 +743,16 @@ export function parseFleetArguments(argv) {
     const options = parseOptions(rest, definitions)
     if (options.help) return { command: "adoption-help" }
     if (action === "list") {
+      let limit = null
+      if (options.limit) {
+        // Match the MCP schema's int().positive() so a non-numeric or negative
+        // value is rejected rather than silently becoming no-limit or slicing
+        // from the end (an absent --limit defaults to null, i.e. no limit)
+        limit = Number(options.limit)
+        if (!Number.isInteger(limit) || limit <= 0) {
+          throw new CliUsageError("adoption list --limit must be a positive integer")
+        }
+      }
       return {
         command: "adoption-list",
         filters: {
@@ -750,7 +760,7 @@ export function parseFleetArguments(argv) {
           classification: options.classification ?? null,
           confidence: options.confidence ?? null,
           lens: options.lens ?? "gaps",
-          limit: options.limit ? Number(options.limit) : null,
+          limit,
           search: options.search ?? null,
           zone: options.zone ?? null,
         },
