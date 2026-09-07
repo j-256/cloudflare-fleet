@@ -520,7 +520,7 @@ test("buildAdoptionDocument generates an identifier-safe policy id when none is 
 
   // (a) the built document is valid and the generated policy id is identifier-safe
   assert.equal(isFleetIntentDocument(preview.document, "account-id"), true)
-  assert.match(preview.policyIds[0], /^adopt-[0-9a-f]{40}$/)
+  assert.match(preview.policyIds[0], /^adopt-[0-9a-f]{14}$/)
   // (c) the candidateId-only exemption resolves to the same generated policy id
   assert.equal(preview.document.acknowledgements.length, 1)
   assert.equal(preview.document.acknowledgements[0].policyId, preview.policyIds[0])

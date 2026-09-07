@@ -728,7 +728,7 @@ test("adoption plan and apply succeed for a candidateId-only adopt with a genera
   assert.equal(result.applied, true)
   assert.equal(persisted.length, 1)
   const [policy] = persisted[0].policies
-  assert.match(policy.id, /^adopt-[0-9a-f]{40}$/)
+  assert.match(policy.id, /^adopt-[0-9a-f]{14}$/)
   assert.equal(persisted[0].acknowledgements.length, 1)
   assert.equal(persisted[0].acknowledgements[0].policyId, policy.id)
 })

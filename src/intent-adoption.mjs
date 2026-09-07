@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto"
-
 import {
   evaluateFleetIntent,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
@@ -353,15 +351,30 @@ export function previewIntentAdoption(document, inventory, matrix, entries, exem
 // Default policy id when a caller adopts a candidate without supplying one. A
 // candidate id is a JSON-array string (see fleetIntentFacetId) whose brackets,
 // quotes, and commas fail IDENTIFIER_PATTERN, so a raw `adopt-${candidateId}`
-// would be rejected by replaceFleetIntentPolicy. A sha256 hex prefix is
-// identifier-safe and a pure function of the candidate id, so the same facet
-// yields the same policy id across the plan and apply passes and the
-// reviewed-plan digest stays stable
-const ADOPTION_POLICY_ID_HASH_LENGTH = 40
+// would be rejected by replaceFleetIntentPolicy. This module is loaded by the
+// browser dashboard as well as Node, so the id is derived with a dependency-free
+// deterministic hash (cyrb53, no node:crypto): identifier-safe and a pure
+// function of the candidate id, so the same facet yields the same policy id
+// across the plan and apply passes (in either runtime) and the reviewed-plan
+// digest stays stable
+const ADOPTION_POLICY_ID_HASH_LENGTH = 14
+
+function candidateIdHash(candidateId) {
+  let h1 = 0xdeadbeef
+  let h2 = 0x41c6ce57
+  for (let index = 0; index < candidateId.length; index += 1) {
+    const code = candidateId.charCodeAt(index)
+    h1 = Math.imul(h1 ^ code, 2654435761)
+    h2 = Math.imul(h2 ^ code, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  const value = 4294967296 * (2097151 & h2) + (h1 >>> 0)
+  return value.toString(16).padStart(ADOPTION_POLICY_ID_HASH_LENGTH, "0")
+}
 
 function defaultAdoptionPolicyId(candidateId) {
-  const digest = createHash("sha256").update(candidateId).digest("hex")
-  return `adopt-${digest.slice(0, ADOPTION_POLICY_ID_HASH_LENGTH)}`
+  return `adopt-${candidateIdHash(candidateId)}`
 }
 
 export function buildAdoptionDocument(document, inventory, matrix, request) {
