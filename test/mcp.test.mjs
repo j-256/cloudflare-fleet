@@ -69,6 +69,9 @@ const TOOL_NAMES = Object.freeze([
   "get_fleet_intent",
   "plan_fleet_intent",
   "apply_fleet_intent",
+  "list_adoption_candidates",
+  "plan_fleet_adoption",
+  "apply_fleet_adoption",
   "list_alignment_candidates",
   "plan_alignment",
   "apply_alignment",
@@ -278,6 +281,7 @@ function verifiedAlignmentBatch() {
 
 function serviceFixture(overrides = {}) {
   const calls = {
+    applyAdoption: [],
     applyChange: [],
     applyIntent: [],
     applyUndo: [],
@@ -285,8 +289,10 @@ function serviceFixture(overrides = {}) {
     applyBatch: [],
     getIntent: 0,
     listActivity: 0,
+    listAdoption: 0,
     listAlignments: 0,
     plan: [],
+    planAdoption: [],
     planBatch: [],
     planChange: [],
     planIntent: [],
@@ -300,6 +306,21 @@ function serviceFixture(overrides = {}) {
         ...verifiedAlignment(),
         activityId,
         selector: undefined,
+      }
+    },
+    async applyAdoption(request, digest) {
+      calls.applyAdoption.push({ digest, request })
+      return {
+        accountId: "account-one",
+        applied: true,
+        document: {
+          ...INTENT_DOCUMENT,
+          revision: "c".repeat(64),
+          updatedAt: "2026-08-28T00:00:00.000Z",
+        },
+        planDigest: digest,
+        schemaVersion: 1,
+        status: "saved",
       }
     },
     async applyAlignment(selector, digest) {
@@ -355,6 +376,83 @@ function serviceFixture(overrides = {}) {
         updatedAt: null,
       }
     },
+    async listAdoptionCandidates() {
+      calls.listAdoption += 1
+      return {
+        accountId: "account-one",
+        candidates: [
+          {
+            category: "Zone settings",
+            classification: "strong-consensus",
+            confidence: "high",
+            description: "",
+            id: "zone-settings:brotli",
+            key: "brotli",
+            label: "Brotli",
+            missingCount: 0,
+            missingZones: [],
+            phase: "",
+            presentCount: 3,
+            presentZones: ["one.example", "two.example", "three.example"],
+            recommendation: {
+              expectedCanonical: "on",
+              presenceConstraint: "required",
+              reason: "Use the clear leading value as exact intent",
+              valueConstraint: "exact",
+            },
+            search: "zone settings brotli",
+            variants: [
+              { canonical: "on", count: 2, zones: ["one.example", "three.example"] },
+              { canonical: "off", count: 1, zones: ["two.example"] },
+            ],
+          },
+          {
+            category: "Zone settings",
+            classification: "tied-variants",
+            confidence: "review",
+            description: "",
+            id: "zone-settings:min_tls_version",
+            key: "min_tls_version",
+            label: "Minimum TLS Version",
+            missingCount: 0,
+            missingZones: [],
+            phase: "",
+            presentCount: 2,
+            presentZones: ["one.example", "two.example"],
+            recommendation: {
+              expectedCanonical: null,
+              presenceConstraint: "required",
+              reason: "Allow the tied present values to differ",
+              valueConstraint: "may-differ",
+            },
+            search: "zone settings minimum tls version",
+            variants: [
+              { canonical: "1.2", count: 1, zones: ["one.example"] },
+              { canonical: "1.3", count: 1, zones: ["two.example"] },
+            ],
+          },
+        ],
+        coverageComplete: true,
+        gaps: {
+          perZoneOutlierTally: { "two.example": 1 },
+          presenceGaps: [],
+          valueGaps: [{
+            candidate: { id: "zone-settings:brotli" },
+            gapKind: "value",
+            outlierZones: ["two.example"],
+          }],
+        },
+        intentRevision: "intent-one",
+        schemaVersion: 1,
+        status: "ok",
+        summary: {
+          candidates: 2,
+          incompleteZones: [],
+          presenceGaps: 0,
+          valueGaps: 1,
+        },
+      }
+    },
     async listAlignments() {
       calls.listAlignments += 1
       return {
@@ -389,6 +487,29 @@ function serviceFixture(overrides = {}) {
         activityId,
         entry: { id: activityId, title: "Enable HTTPS" },
       })
+    },
+    async planAdoption(request) {
+      calls.planAdoption.push(request)
+      const result = reviewedPlan({
+        document: INTENT_DOCUMENT,
+        kind: "fleet-intent-replace",
+      }, {
+        adoption: {
+          impact: { policiesAdded: request.adopt.length },
+          policyIds: request.adopt.map(
+            (item) => item.policyId || `adopt-${item.candidateId}`,
+          ),
+        },
+        diff: {
+          acknowledgements: { added: [], changed: [], removed: [] },
+          coverageExpectations: { added: [], changed: [], removed: [] },
+          groups: { added: [], changed: [], removed: [] },
+          policies: { added: [], changed: [], removed: [] },
+        },
+      })
+      result.planSet.plans = []
+      result.planSet.preview = []
+      return result
     },
     async planChange(change) {
       calls.planChange.push(change)
@@ -582,6 +703,19 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   assert.match(JSON.stringify(change.outputSchema), /"operations"/)
   const intentApply = result.tools.find((entry) => entry.name === "apply_fleet_intent")
   assert.equal(intentApply.annotations.openWorldHint, false)
+  const adoptionCandidates = result.tools.find(
+    (entry) => entry.name === "list_adoption_candidates",
+  )
+  assert.equal(adoptionCandidates.annotations.readOnlyHint, true)
+  assert.equal(adoptionCandidates.annotations.openWorldHint, true)
+  assert.match(JSON.stringify(adoptionCandidates.outputSchema), /coverageComplete/)
+  const adoptionPlan = result.tools.find((entry) => entry.name === "plan_fleet_adoption")
+  assert.equal(adoptionPlan.annotations.readOnlyHint, true)
+  assert.equal(adoptionPlan.annotations.openWorldHint, true)
+  const adoptionApply = result.tools.find((entry) => entry.name === "apply_fleet_adoption")
+  assert.equal(adoptionApply.annotations.readOnlyHint, false)
+  assert.equal(adoptionApply.annotations.openWorldHint, true)
+  assert.deepEqual(adoptionApply.inputSchema.required, ["request", "planDigest"])
   const aliases = result.tools.find(
     (entry) => entry.name === "describe_zone_alias_policy",
   )
@@ -1126,4 +1260,67 @@ test("MCP stdio entrypoint negotiates the modern protocol without stdout noise",
   )
   assert.match(diagnostics, /stdio server ready/)
   assert.doesNotMatch(diagnostics, new RegExp(SECRET))
+})
+
+test("list_adoption_candidates applies the gaps lens over the service result", async (context) => {
+  const { calls, client } = await connectedFixture(context)
+
+  const gaps = await client.callTool({
+    arguments: {},
+    name: "list_adoption_candidates",
+  })
+  const all = await client.callTool({
+    arguments: { filters: { lens: "all" } },
+    name: "list_adoption_candidates",
+  })
+
+  assert.equal(calls.listAdoption, 2)
+  assert.equal(gaps.structuredContent.status, "ok")
+  assert.equal(gaps.structuredContent.summary.candidates, 1)
+  assert.equal(gaps.structuredContent.summary.valueGaps, 1)
+  assert.match(gaps.content[0].text, /0 presence gaps, 1 value gaps/)
+  assert.equal(all.structuredContent.summary.candidates, 2)
+  assert.equal(all.structuredContent.summary.valueGaps, 1)
+})
+
+test("plan_fleet_adoption returns the digest-bound adoption plan", async (context) => {
+  const { calls, client } = await connectedFixture(context)
+
+  const result = await client.callTool({
+    arguments: { request: { adopt: [{ candidateId: "zone-settings:brotli" }] } },
+    name: "plan_fleet_adoption",
+  })
+
+  assert.equal(result.structuredContent.status, "planned")
+  assert.equal(result.structuredContent.planSet.digest, DIGEST)
+  assert.deepEqual(result.structuredContent.adoption.policyIds, ["adopt-zone-settings:brotli"])
+  assert.match(result.content[0].text, /no Cloudflare API writes/)
+  assert.equal(calls.planAdoption.length, 1)
+  assert.equal(calls.planAdoption[0].adopt[0].candidateId, "zone-settings:brotli")
+})
+
+test("apply_fleet_adoption binds the reviewed adoption to signed confirmation", async (context) => {
+  let request
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async (incoming) => {
+      request = incoming
+      return approvedElicitation(incoming)
+    },
+  })
+
+  const result = await client.callTool({
+    arguments: {
+      planDigest: DIGEST,
+      request: { adopt: [{ candidateId: "zone-settings:brotli" }] },
+    },
+    name: "apply_fleet_adoption",
+  })
+
+  assert.equal(result.structuredContent.status, "saved")
+  assert.equal(result.isError, undefined)
+  assert.equal(calls.planAdoption.length, 1)
+  assert.equal(calls.applyAdoption.length, 1)
+  assert.equal(calls.applyAdoption[0].digest, DIGEST)
+  assert.equal(calls.applyAdoption[0].request.adopt[0].candidateId, "zone-settings:brotli")
+  assert.match(elicitationReviewText(request), /Cloudflare API writes: none/)
 })

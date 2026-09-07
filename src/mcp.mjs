@@ -69,6 +69,10 @@ import {
   describeHostnameScopedFreeRateLimitPolicy,
   HOSTNAME_SCOPED_RATE_LIMIT_KIND,
 } from "./rate-limit-intent.mjs"
+import {
+  applyAdoptionFilters,
+  INTENT_ADOPTION_CONFIDENCE,
+} from "./intent-adoption.mjs"
 
 const MCP_SERVER_NAME = "cloudflare-fleet"
 const CONFIRMATION_KEY = "confirm_action"
@@ -291,6 +295,72 @@ const applyOutputSchema = z.union([
       total: z.number().int(),
     }).optional(),
     reason: z.string().optional(),
+  }),
+  errorOutputSchema,
+])
+const adoptionFiltersSchema = z.object({
+  category: z.string().nullish(),
+  classification: z.string().nullish(),
+  confidence: z.enum([
+    INTENT_ADOPTION_CONFIDENCE.HIGH,
+    INTENT_ADOPTION_CONFIDENCE.REVIEW,
+  ]).nullish(),
+  lens: z.enum(["gaps", "all"]).default("gaps"),
+  limit: z.number().int().positive().nullish(),
+  search: z.string().nullish(),
+  zone: z.string().nullish(),
+}).describe("Optional adoption listing filters")
+const adoptionListInputSchema = z.strictObject({
+  filters: adoptionFiltersSchema.optional(),
+})
+const adoptionZoneSchema = z.object({ id: z.string(), name: z.string() })
+const adoptionRequestSchema = z.object({
+  adopt: z.array(z.object({
+    candidateId: z.string(),
+    policyId: z.string().optional(),
+    overrides: z.object({}).loose().optional(),
+  })).default([]),
+  exempt: z.array(z.object({
+    candidateId: z.string().optional(),
+    policyId: z.string().optional(),
+    reason: z.string(),
+    zones: z.array(adoptionZoneSchema).min(1),
+  })).optional(),
+})
+const adoptionPlanInputSchema = z.strictObject({ request: adoptionRequestSchema })
+const adoptionApplyInputSchema = adoptionPlanInputSchema.extend({
+  planDigest: digestSchema.describe("Exact digest returned by plan_fleet_adoption"),
+})
+const adoptionCandidateOutputSchema = z.looseObject({
+  category: z.string(),
+  classification: z.string(),
+  confidence: z.string(),
+  id: z.string(),
+  key: z.string(),
+  missingZones: z.array(z.string()),
+  presentZones: z.array(z.string()),
+})
+const adoptionGapOutputSchema = z.looseObject({
+  candidate: z.looseObject({ id: z.string() }),
+  gapKind: z.string(),
+  outlierZones: z.array(z.string()),
+})
+const adoptionCandidatesOutputSchema = z.union([
+  accountOutputSchema.extend({
+    candidates: z.array(adoptionCandidateOutputSchema),
+    coverageComplete: z.boolean(),
+    gaps: z.looseObject({
+      perZoneOutlierTally: z.record(z.string(), z.number().int()),
+      presenceGaps: z.array(adoptionGapOutputSchema),
+      valueGaps: z.array(adoptionGapOutputSchema),
+    }),
+    intentRevision: z.string(),
+    summary: z.looseObject({
+      candidates: z.number().int(),
+      incompleteZones: z.array(z.string()),
+      presenceGaps: z.number().int(),
+      valueGaps: z.number().int(),
+    }),
   }),
   errorOutputSchema,
 ])
@@ -813,7 +883,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Use list_adoption_candidates to see ungoverned facets and coverage gaps with named outlier zones, then plan_fleet_adoption and apply_fleet_adoption to govern them; adoption persists intent, not Cloudflare resources, and defaults new presence to required so gaps surface as drift. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -1167,6 +1237,69 @@ export function createFleetMcpServer(options = {}) {
       request: (input) => input.document,
       title: "fleet intent persistence",
       toolName: "apply_fleet_intent",
+    }),
+  )
+
+  server.registerTool(
+    "list_adoption_candidates",
+    {
+      annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description: "Read complete live fleet inventory and list ungoverned facets as adoption candidates, with a gaps lens (present-on-most/missing-on-few) and named outlier zones. Incomplete inventory is reported, never treated as absence.",
+      inputSchema: adoptionListInputSchema,
+      outputSchema: adoptionCandidatesOutputSchema,
+      title: "List fleet adoption candidates",
+    },
+    safeToolHandler(async ({ filters }, context) => {
+      const result = await service.listAdoptionCandidates({
+        onProgress: createProgressReporter(stderr, "[mcp:list_adoption_candidates]"),
+        signal: context.mcpReq.signal,
+      })
+      const filtered = applyAdoptionFilters(result, filters || {})
+      return toolResult(
+        filtered,
+        `${filtered.summary.presenceGaps} presence gaps, ${filtered.summary.valueGaps} value gaps`,
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "plan_fleet_adoption",
+    {
+      annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description: "Build the next fleet intent document from selected adoption candidates (required presence by default) plus any exemptions, and return an exact digest-bound diff without persisting it.",
+      inputSchema: adoptionPlanInputSchema,
+      outputSchema: planOutputSchema,
+      title: "Plan fleet adoption",
+    },
+    safeToolHandler(async ({ request }, context) => {
+      const result = await service.planAdoption(request, {
+        onProgress: createProgressReporter(stderr, "[mcp:plan_fleet_adoption]"),
+        signal: context.mcpReq.signal,
+      })
+      return toolResult(result, intentPlanSummary(result))
+    }, secrets),
+  )
+
+  server.registerTool(
+    "apply_fleet_adoption",
+    {
+      annotations: APPLY_ANNOTATIONS,
+      description: "Persist only the exact reviewed adoption after signed interactive confirmation, exclusive locking, fresh revision validation, and digest comparison. Adds governance policies (and any exemption acknowledgements) to fleet intent; performs no Cloudflare write.",
+      inputSchema: adoptionApplyInputSchema,
+      outputSchema: applyOutputSchema,
+      title: "Apply reviewed fleet adoption",
+    },
+    reviewedMutationHandler({
+      action: "fleet-adoption-apply",
+      apply: (request, digest, commandOptions) => (
+        service.applyAdoption(request, digest, commandOptions)
+      ),
+      plan: (request, commandOptions) => (
+        service.planAdoption(request, commandOptions)
+      ),
+      request: (input) => input.request,
+      title: "fleet adoption",
+      toolName: "apply_fleet_adoption",
     }),
   )
 
