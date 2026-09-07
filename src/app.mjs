@@ -108,13 +108,19 @@ import {
   matrixRenderKey,
 } from "./matrix.mjs"
 import {
+  buildAdoptionGapsView,
   buildIntentAdoptionCandidates,
   INTENT_ADOPTION_CLASSIFICATION,
   INTENT_ADOPTION_CONFIDENCE,
+  INTENT_ADOPTION_GAP_KIND,
   intentAdoptionVisibleSummary,
   previewIntentAdoption,
   selectIntentAdoptionGroup,
 } from "./intent-adoption.mjs"
+import {
+  adoptionGapRows,
+  adoptionSummaryModel,
+} from "./intent-adoption-view.mjs"
 import {
   assessIntentAlignment,
 } from "./intent-alignment.mjs"
@@ -695,6 +701,7 @@ const elements = {
   intentAdoptionSave: document.querySelector("#intent-adoption-save"),
   intentAdoptionSearch: document.querySelector("#intent-adoption-search"),
   intentAdoptionSelectClear: document.querySelector("#intent-adoption-select-clear"),
+  intentAdoptionSummary: document.querySelector("#intent-adoption-gap-summary"),
   intentAdoptionVisible: document.querySelector("#intent-adoption-visible"),
   intentAddGroup: document.querySelector("#intent-add-group"),
   intentDeleteApply: document.querySelector("#intent-delete-apply"),
@@ -7489,6 +7496,7 @@ function intentAdoptionSelectedEntries() {
 }
 
 function intentAdoptionCandidateMatches(candidate) {
+  const draft = state.intentAdoptionDraft
   const search = elements.intentAdoptionSearch.value.trim().toLowerCase()
   const category = elements.intentAdoptionCategory.value
   const pattern = elements.intentAdoptionPattern.value
@@ -7503,6 +7511,10 @@ function intentAdoptionCandidateMatches(candidate) {
   if (pattern === INTENT_ADOPTION_FILTER.ZONE_SPECIFIC
     && candidate.classification
       !== INTENT_ADOPTION_CLASSIFICATION.ZONE_SPECIFIC) return false
+  if (draft?.zoneFilter) {
+    const row = draft.rowsById?.get(candidate.id)
+    if (!row || !row.outlierZones.includes(draft.zoneFilter)) return false
+  }
   return true
 }
 
@@ -7735,10 +7747,11 @@ function intentAdoptionVariantList(candidate) {
 function renderIntentAdoptionCandidate(candidate, index) {
   const draft = state.intentAdoptionDraft
   const selection = draft.selections.get(candidate.id)
+  const rowModel = draft.rowsById?.get(candidate.id) || null
   const card = createElement("article", {
-    className: `intent-adoption-candidate${selection.selected ? " selected" : ""}`,
+    className: `intent-adoption-row${selection.selected ? " selected" : ""}`,
   })
-  const overview = createElement("div", { className: "intent-adoption-overview" })
+  const head = createElement("div", { className: "intent-adoption-row-head" })
   const selectionLabel = createElement("label", {
     className: "intent-adoption-select",
   })
@@ -7759,33 +7772,44 @@ function renderIntentAdoptionCandidate(candidate, index) {
   )
   selectionLabel.htmlFor = checkbox.id
   selectionLabel.append(checkbox, title)
-  const badges = createElement("div", { className: "intent-item-badges" })
+  const meta = createElement("div", { className: "intent-adoption-row-meta" })
   const presentation = INTENT_ADOPTION_CLASSIFICATION_PRESENTATION[
     candidate.classification
   ]
-  badges.append(intentStatusBadge(presentation.label, presentation.status))
+  meta.append(intentStatusBadge(presentation.label, presentation.status))
   if (candidate.missingCount > 0
     && candidate.classification !== INTENT_ADOPTION_CLASSIFICATION.MISSING_COVERAGE) {
-    badges.append(intentStatusBadge(`${candidate.missingCount} absent`, "allowance"))
+    meta.append(intentStatusBadge(`${candidate.missingCount} absent`, "allowance"))
   }
-  const heading = createElement("div", { className: "intent-adoption-candidate-heading" })
-  heading.append(selectionLabel, badges)
-  const leadingCount = candidate.variants[0]?.count || 0
-  overview.append(
-    heading,
-    createElement("p", {
-      className: "intent-adoption-observation",
-      text: `${candidate.presentCount}/${state.inventory.zones.length} present | ${candidate.variants.length} observed variant${candidate.variants.length === 1 ? "" : "s"} | leading value ${leadingCount}/${candidate.presentCount}`,
-    }),
-    createElement("p", {
-      className: "intent-adoption-recommendation",
-      text: `Suggestion: ${candidate.recommendation.reason}`,
-    }),
-    createFacetEquivalencePanel(candidate, {
-      compact: true,
-      includeKey: false,
-    }),
-  )
+  meta.append(createElement("span", {
+    className: "intent-adoption-row-coverage",
+    text: `${candidate.presentCount}/${state.inventory.zones.length} present`,
+  }))
+  head.append(selectionLabel, meta)
+
+  const rowChildren = [head]
+  if (rowModel && rowModel.outlier.shown.length > 0) {
+    const names = rowModel.outlier.shown.join(", ")
+      + (rowModel.outlier.remaining > 0 ? ` +${rowModel.outlier.remaining} more` : "")
+    const outliers = createElement("p", { className: "intent-adoption-row-outliers" })
+    outliers.append(
+      createElement("strong", {
+        text: rowModel.gapKind === INTENT_ADOPTION_GAP_KIND.PRESENCE ? "Missing on" : "Differs on",
+      }),
+      createElement("span", { text: ` ${names}` }),
+    )
+    rowChildren.push(outliers)
+  }
+  rowChildren.push(createElement("p", {
+    className: "intent-adoption-row-suggestion",
+    text: `Suggestion: ${candidate.recommendation.reason}`,
+  }))
+
+  const configBody = createElement("div", { className: "intent-adoption-config-body" })
+  configBody.append(createFacetEquivalencePanel(candidate, {
+    compact: true,
+    includeKey: false,
+  }))
   const variants = document.createElement("details")
   variants.className = "intent-adoption-variants"
   variants.append(createElement("summary", {
@@ -7794,7 +7818,7 @@ function renderIntentAdoptionCandidate(candidate, index) {
   variants.addEventListener("toggle", () => {
     if (variants.open) variants.append(intentAdoptionVariantList(candidate))
   }, { once: true })
-  overview.append(variants)
+  configBody.append(variants)
 
   const controls = createElement("div", { className: "intent-adoption-controls" })
   const groupField = createElement("label", { className: "intent-adoption-field" })
@@ -7885,7 +7909,15 @@ function renderIntentAdoptionCandidate(candidate, index) {
     groupDetails,
     valuePreview,
   )
-  card.append(overview, controls)
+  configBody.append(controls)
+  const config = document.createElement("details")
+  config.className = "intent-adoption-row-config"
+  config.append(
+    createElement("summary", { text: "Configure policy" }),
+    configBody,
+  )
+  rowChildren.push(config)
+  card.append(...rowChildren)
 
   const syncValueControls = () => {
     const valuesApply = selection.presenceConstraint
@@ -7964,6 +7996,46 @@ function renderIntentAdoptionCandidate(candidate, index) {
   return card
 }
 
+function renderIntentAdoptionSummary() {
+  const draft = state.intentAdoptionDraft
+  if (!draft) return
+  const model = adoptionSummaryModel({ gaps: draft.gaps })
+  const counts = createElement("p", { className: "intent-adoption-summary-counts" })
+  counts.append(
+    createElement("strong", {
+      text: `${model.totalGaps} coverage gap${model.totalGaps === 1 ? "" : "s"}`,
+    }),
+    createElement("span", {
+      text: `${model.presenceGapCount} missing on some zones | ${model.valueGapCount} value differs | ${model.highConfidenceGapCount} high confidence`,
+    }),
+  )
+  const children = [counts]
+  if (model.topZones.length > 0) {
+    const zones = createElement("div", { className: "intent-adoption-summary-zones" })
+    zones.append(createElement("span", {
+      className: "intent-adoption-summary-zones-label",
+      text: "Riskiest zones:",
+    }))
+    for (const entry of model.topZones) {
+      const active = draft.zoneFilter === entry.zone
+      const chip = createElement("button", {
+        className: `intent-adoption-zone-chip${active ? " active" : ""}`,
+        text: `${entry.zone} (${entry.count})`,
+      })
+      chip.type = "button"
+      chip.setAttribute("aria-pressed", String(active))
+      chip.addEventListener("click", () => {
+        draft.zoneFilter = draft.zoneFilter === entry.zone ? null : entry.zone
+        renderIntentAdoptionSummary()
+        filterIntentAdoptionCandidates()
+      })
+      zones.append(chip)
+    }
+    children.push(zones)
+  }
+  elements.intentAdoptionSummary.replaceChildren(...children)
+}
+
 function renderIntentAdoptionCandidates() {
   const draft = state.intentAdoptionDraft
   if (!draft) return
@@ -7972,10 +8044,16 @@ function renderIntentAdoptionCandidates() {
     className: "intent-empty",
     text: "No suggestions match these filters.",
   })
+  const rank = new Map(draft.rows.map((row, index) => [row.id, index]))
+  const ordered = [...draft.candidates].sort((left, right) => (
+    (rank.has(left.id) ? rank.get(left.id) : Number.MAX_SAFE_INTEGER)
+    - (rank.has(right.id) ? rank.get(right.id) : Number.MAX_SAFE_INTEGER)
+  ))
   elements.intentAdoptionList.replaceChildren(
-    ...draft.candidates.map(renderIntentAdoptionCandidate),
+    ...ordered.map(renderIntentAdoptionCandidate),
     draft.empty,
   )
+  renderIntentAdoptionSummary()
   filterIntentAdoptionCandidates()
   renderIntentAdoptionImpact()
 }
@@ -7998,11 +8076,17 @@ function openIntentAdoption() {
     toast("Every drifted facet already has intent")
     return
   }
+  const gaps = buildAdoptionGapsView(candidates)
+  const rows = adoptionGapRows({ gaps }, state.inventory.zones.length)
   state.intentAdoptionDraft = {
     baseRevision: state.intent.revision,
     candidates,
     controls: new Map(),
+    gaps,
     preview: null,
+    rows,
+    rowsById: new Map(rows.map((row) => [row.id, row])),
+    zoneFilter: null,
     selections: new Map(candidates.map((candidate) => [
       candidate.id,
       {
