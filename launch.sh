@@ -144,7 +144,7 @@ info() {
 _expand_short_opts() {
     # $1 = string of short-opt letters that take a value (e.g. "nXHd"); "" for flag-only scripts
     # $2..$N = "$@"
-    # Populates _EXPANDED; caller does: set -- "${_EXPANDED[@]}"; unset _EXPANDED
+    # Populates _EXPANDED for the caller
     local value_opts="$1"; shift
     _EXPANDED=()
     local passthru=""
@@ -339,7 +339,12 @@ start_session_watcher() {
 }
 
 _expand_short_opts "dps" "$@"
-set -- "${_EXPANDED[@]}"; unset _EXPANDED
+if [ "${#_EXPANDED[@]}" -gt 0 ]; then
+    set -- "${_EXPANDED[@]}"
+else
+    set --
+fi
+unset _EXPANDED
 
 PASSTHROUGH=false
 while [ "$#" -gt 0 ]; do
