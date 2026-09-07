@@ -860,3 +860,40 @@ test("removes write affordances and rejects broker mutation in read-only mode", 
   )
   expect(requests).toHaveLength(0)
 })
+
+test("reviews ungoverned drift through the summary-first adoption screen", async ({ dashboard }) => {
+  const { page } = dashboard
+
+  await page.getByRole("button", { name: "Manage fleet intent" }).click()
+  await page.locator("#intent-review-ungoverned").click()
+
+  const dialog = page.locator("#intent-adoption-dialog")
+  await expect(dialog).toBeVisible()
+
+  // Summary tier leads with the gap counts, before any editing surface
+  const summary = page.locator("#intent-adoption-gap-summary")
+  await expect(summary).toContainText("coverage gap")
+
+  // Rows are scannable: each row's editing controls are collapsed by default
+  const firstRow = page.locator(".intent-adoption-row").first()
+  await expect(firstRow).toBeVisible()
+  const config = firstRow.locator(".intent-adoption-row-config")
+  await expect(config).toBeVisible()
+  await expect(firstRow.locator(".intent-adoption-row-config[open]")).toHaveCount(0)
+
+  // The presence/value selects appear only on demand (progressive disclosure)
+  await config.locator("> summary").click()
+  await expect(firstRow.getByLabel("Presence")).toBeVisible()
+
+  // Legibility floor: key adoption text renders at 11px or larger
+  const titleSize = await firstRow.locator(".intent-adoption-select strong").first()
+    .evaluate((node) => parseFloat(getComputedStyle(node).fontSize))
+  expect(titleSize).toBeGreaterThanOrEqual(11)
+  const labelSize = await firstRow.locator(".intent-adoption-field > span").first()
+    .evaluate((node) => parseFloat(getComputedStyle(node).fontSize))
+  expect(labelSize).toBeGreaterThanOrEqual(11)
+
+  // Selecting a row still reaches the existing digest-guarded save path
+  await firstRow.getByRole("checkbox").check()
+  await expect(page.locator("#intent-adoption-save")).toBeEnabled()
+})

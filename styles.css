@@ -3281,7 +3281,7 @@ dialog form {
 .intent-adoption-workspace {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto auto minmax(180px, 1fr) auto;
+  grid-template-rows: auto auto auto auto minmax(180px, 1fr) auto;
   gap: 12px;
   height: var(--dialog-workspace-height);
   padding: 20px;
@@ -3345,7 +3345,7 @@ dialog form {
 .intent-adoption-impact p:not(.dialog-kicker, .field-error) {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
@@ -3379,7 +3379,7 @@ dialog form {
 
 #intent-adoption-visible {
   color: var(--muted);
-  font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
 
@@ -3391,34 +3391,145 @@ dialog form {
   overflow: auto;
 }
 
-.intent-adoption-candidate {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.85fr) minmax(460px, 1.4fr);
-  gap: 12px;
-  align-items: start;
-  padding: 11px;
+.intent-adoption-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--slate);
   border-radius: 9px;
   background: #0d161f;
 }
 
-.intent-adoption-candidate.selected {
+.intent-adoption-row.selected {
   border-color: rgba(89, 215, 196, 0.62);
   border-left-color: var(--accent);
   background: rgba(89, 215, 196, 0.055);
 }
 
-.intent-adoption-overview,
 .intent-adoption-controls {
   min-width: 0;
 }
 
-.intent-adoption-candidate-heading {
+.intent-adoption-row-head {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
   justify-content: space-between;
+}
+
+.intent-adoption-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.intent-adoption-row-coverage {
+  color: var(--muted);
+  font: var(--fs-2xs)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.intent-adoption-row-outliers {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+}
+
+.intent-adoption-row-outliers strong {
+  color: var(--accent-2);
+}
+
+.intent-adoption-row-suggestion {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-normal);
+}
+
+.intent-adoption-row-config {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+}
+
+.intent-adoption-row-config > summary {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.intent-adoption-config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.intent-adoption-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-raised);
+}
+
+.intent-adoption-summary-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  margin: 0;
+}
+
+.intent-adoption-summary-counts strong {
+  font-size: var(--fs-md);
+}
+
+.intent-adoption-summary-counts span {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.intent-adoption-summary-zones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.intent-adoption-summary-zones-label {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.intent-adoption-zone-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  background: #0b131c;
+  font: var(--fs-2xs)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.intent-adoption-zone-chip:hover {
+  border-color: var(--slate);
+}
+
+.intent-adoption-zone-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(89, 215, 196, 0.1);
 }
 
 .intent-adoption-dialog .intent-adoption-select {
@@ -3448,36 +3559,28 @@ dialog form {
 
 .intent-adoption-select strong {
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .intent-adoption-select small {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   line-height: 1.3;
 }
 
-.intent-adoption-observation,
-.intent-adoption-recommendation {
-  margin: 6px 0 0;
-  font-size: 10px;
-  line-height: 1.4;
+.intent-adoption-heading h2 {
+  font-size: var(--fs-xl);
 }
 
-.intent-adoption-observation {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.intent-adoption-recommendation {
-  color: var(--ink);
+.intent-adoption-impact h3 {
+  font-size: var(--fs-lg);
 }
 
 .intent-adoption-variants {
   margin-top: 8px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .intent-adoption-variant-list {
@@ -3524,7 +3627,7 @@ dialog form {
   display: block;
   margin-bottom: 4px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   line-height: 1.3;
 }
@@ -3533,14 +3636,14 @@ dialog form {
   min-height: 34px;
   padding: 6px 8px;
   border-radius: 7px;
-  font-size: 10px;
+  font-size: var(--fs-sm);
 }
 
 .intent-adoption-scope {
   grid-column: 1 / -1;
   min-width: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-xs);
 }
 
 .intent-adoption-scope > summary {
@@ -3560,7 +3663,7 @@ dialog form {
   border: 1px solid rgba(43, 59, 77, 0.72);
   border-radius: 7px;
   background: rgba(11, 19, 28, 0.62);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -3619,13 +3722,13 @@ dialog form {
 }
 
 .intent-adoption-impact-metric strong {
-  font: 700 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-md)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .intent-adoption-impact-metric span {
   margin-top: 1px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
