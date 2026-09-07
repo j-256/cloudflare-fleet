@@ -39,6 +39,19 @@ const ICONS = Object.freeze({
     { tag: "path", d: "M12 4 4 12" },
   ],
   chevron: [{ tag: "path", d: "M4 6 8 10 12 6" }],
+  matrix: [
+    { tag: "path", d: "M2.5 2.5 6.5 2.5 6.5 6.5 2.5 6.5Z" },
+    { tag: "path", d: "M9.5 2.5 13.5 2.5 13.5 6.5 9.5 6.5Z" },
+    { tag: "path", d: "M2.5 9.5 6.5 9.5 6.5 13.5 2.5 13.5Z" },
+    { tag: "path", d: "M9.5 9.5 13.5 9.5 13.5 13.5 9.5 13.5Z" },
+  ],
+  align: [
+    { tag: "circle", cx: "8", cy: "8", r: "3.5" },
+    { tag: "path", d: "M8 1 8 3.5" },
+    { tag: "path", d: "M8 12.5 8 15" },
+    { tag: "path", d: "M1 8 3.5 8" },
+    { tag: "path", d: "M12.5 8 15 8" },
+  ],
 })
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS))

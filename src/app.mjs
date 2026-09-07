@@ -6601,11 +6601,21 @@ function showIntentPolicyInMatrix(policy) {
   }
 }
 
+const INTENT_STATUS_ICON = Object.freeze({
+  aligned: "ok",
+  actionable: "drift",
+  attention: "drift",
+  drift: "drift",
+  blocked: "drift",
+  allowance: "absent",
+})
+
 function intentStatusBadge(text, status) {
-  return createElement("span", {
-    className: `intent-status-badge ${status}`,
-    text,
-  })
+  const badge = createElement("span", { className: `intent-status-badge ${status}` })
+  const iconName = INTENT_STATUS_ICON[status]
+  if (iconName) badge.append(icon(iconName))
+  badge.append(document.createTextNode(text))
+  return badge
 }
 
 function intentItemActions() {
@@ -6613,17 +6623,23 @@ function intentItemActions() {
 }
 
 function intentActionButton(label, action, options = {}) {
+  const iconOnly = Boolean(options.iconOnly && options.icon)
   const button = createElement("button", {
-    className: `button ${options.danger ? "button-danger" : "button-quiet"}`,
-    text: label,
+    className: `button ${options.danger ? "button-danger" : "button-quiet"}${iconOnly ? " button-icon" : ""}`,
   })
+  if (options.icon) button.append(icon(options.icon))
+  if (!iconOnly) {
+    button.append(document.createTextNode(options.icon ? ` ${label}` : label))
+  }
   button.type = "button"
   button.disabled = Boolean(options.disabled || (options.write && !intentWritable()))
   if (options.write) button.dataset.intentWrite = ""
-  if (options.context) {
-    button.setAttribute("aria-label", contextualActionLabel(label, options.context))
-  }
+  const accessibleName = options.context
+    ? contextualActionLabel(label, options.context)
+    : label
+  if (options.context || iconOnly) button.setAttribute("aria-label", accessibleName)
   if (options.title) button.title = options.title
+  else if (iconOnly) button.title = accessibleName
   button.addEventListener("click", action)
   return button
 }
@@ -6636,6 +6652,8 @@ function intentPolicyMatrixButton(policy, row, context) {
     {
       context,
       disabled: !available,
+      icon: "matrix",
+      iconOnly: true,
       title: available
         ? "Close fleet intent and focus this facet in the matrix"
         : "This saved facet is absent from every loaded zone, so the matrix has no observed row to show",
@@ -6850,7 +6868,7 @@ function renderIntentGroups() {
       actions.append(intentActionButton(
         "Edit",
         () => openIntentGroupEditor(group),
-        { context: group.name, write: true },
+        { context: group.name, icon: "edit", iconOnly: true, write: true },
       ))
       if (policies.length === 0) {
         actions.append(intentActionButton("Remove", () => requestIntentRemoval({
@@ -6861,6 +6879,8 @@ function renderIntentGroups() {
         }), {
           context: group.name,
           danger: true,
+          icon: "remove",
+          iconOnly: true,
           write: true,
         }))
       }
@@ -7281,6 +7301,7 @@ function renderIntentPolicies() {
         {
           context: actionContext,
           disabled: !alignment.available,
+          icon: "align",
           title: alignment.reason,
           write: true,
         },
@@ -7298,6 +7319,8 @@ function renderIntentPolicies() {
       actions.append(
         intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), {
           context: actionContext,
+          icon: "edit",
+          iconOnly: true,
           write: true,
         }),
       )
@@ -7308,6 +7331,7 @@ function renderIntentPolicies() {
           () => openIntentPolicyEditor(row, null, { selectUnconfigured: true }),
           {
             context: actionContext,
+            icon: "add",
             title: "Add another zone scope with its own presence and value rules",
             write: true,
           },
@@ -7320,7 +7344,7 @@ function renderIntentPolicies() {
         successMessage: `${policy.facet.label} intent removed`,
         summary: `Remove intent for ${policy.facet.label}? Its acknowledgements will also be removed.`,
         title: "Remove facet intent",
-      }), { context: actionContext, danger: true, write: true }),
+      }), { context: actionContext, danger: true, icon: "remove", iconOnly: true, write: true }),
     )
     item.append(actions)
     fragment.append(item)
@@ -7416,7 +7440,7 @@ function renderIntentCoverageExpectations() {
       }, { context: actionContext }),
       intentActionButton("Edit", () => {
         openCoverageIntentEditor(expectationState.issue, expectation)
-      }, { context: actionContext, write: true }),
+      }, { context: actionContext, icon: "edit", iconOnly: true, write: true }),
       intentActionButton("Remove", () => requestIntentRemoval({
         remove: (document) => removeFleetIntentCoverageExpectation(
           document,
@@ -7425,7 +7449,7 @@ function renderIntentCoverageExpectations() {
         successMessage: `Expected coverage removed for ${coverageTargetLabel(expectation)}`,
         summary: `Remove expected coverage for ${coverageTargetLabel(expectation)}? A matching failure will return to unexpected coverage.`,
         title: "Remove expected coverage",
-      }), { context: actionContext, danger: true, write: true }),
+      }), { context: actionContext, danger: true, icon: "remove", iconOnly: true, write: true }),
     )
     item.append(actions)
     fragment.append(item)
@@ -7478,7 +7502,7 @@ function renderIntentAcknowledgements() {
       successMessage: `Acknowledgement removed for ${acknowledgement.zoneName}`,
       summary: `Remove this acknowledgement for ${acknowledgement.zoneName}? The observed difference will return to actionable drift when its policy still applies.`,
       title: "Remove acknowledgement",
-    }), { context: actionContext, danger: true, write: true }))
+    }), { context: actionContext, danger: true, icon: "remove", iconOnly: true, write: true }))
     item.append(actions)
     fragment.append(item)
   }
