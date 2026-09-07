@@ -15,6 +15,7 @@ import {
 import {
   createEmptyFleetIntentDocument,
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
+  FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
   replaceFleetIntentPolicy,
@@ -417,4 +418,28 @@ test("adoption selection defaults presence to required", () => {
   assert.equal(selection.groupId, FLEET_INTENT_ALL_ZONES_GROUP_ID)
   assert.equal(selection.policyId, "gap-policy")
   assert.equal(selection.expectedCanonical, missing.recommendation.expectedCanonical)
+})
+
+test("adopting a missing facet as required surfaces gaps that exemptions acknowledge", () => {
+  const { document, inventory, matrix } = fixture()
+  const missing = buildIntentAdoptionCandidates(document, inventory, matrix)
+    .find((candidate) => candidate.key === "missing")
+  const selection = defaultAdoptionSelection(missing, { policyId: "gap-policy" })
+  const entries = [{ candidate: missing, selection }]
+
+  const surfaced = previewIntentAdoption(document, inventory, matrix, entries)
+  assert.equal(surfaced.summary.actionableCells, 3)
+  assert.equal(surfaced.summary.missingCells, 3)
+
+  const exemptions = ["beta.example", "gamma.example", "delta.example"].map((zoneName) => ({
+    policyId: "gap-policy",
+    zoneName,
+    zoneId: inventory.zones.find((zone) => zone.meta.name === zoneName).meta.id,
+    reason: "No mail on this zone",
+    observedCanonical: FLEET_INTENT_MISSING_CANONICAL,
+  }))
+  const exempted = previewIntentAdoption(document, inventory, matrix, entries, exemptions)
+  assert.equal(exempted.summary.actionableCells, 0)
+  assert.equal(exempted.summary.missingCells, 0)
+  assert.equal(exempted.document.acknowledgements.length, 3)
 })

@@ -3,9 +3,11 @@ import {
   FLEET_INTENT_ALL_ZONES_GROUP_ID,
   FLEET_INTENT_CELL_STATUS,
   FLEET_INTENT_EXPECTED_ORIGIN,
+  FLEET_INTENT_MISSING_CANONICAL,
   FLEET_INTENT_PRESENCE_CONSTRAINT,
   FLEET_INTENT_VALUE_CONSTRAINT,
   fleetIntentFacetId,
+  replaceFleetIntentAcknowledgement,
   replaceFleetIntentPolicy,
 } from "./fleet-intent.mjs"
 import { facetCellComparisonValue } from "./facet-equivalence.mjs"
@@ -274,13 +276,33 @@ export function createIntentAdoptionPolicy(candidate, selection) {
   }
 }
 
-export function previewIntentAdoption(document, inventory, matrix, entries) {
+function buildAdoptionAcknowledgement(exemption) {
+  const now = new Date().toISOString()
+  return {
+    createdAt: now,
+    id: `ack-${exemption.policyId}-${exemption.zoneId}`,
+    observedCanonical: exemption.observedCanonical ?? FLEET_INTENT_MISSING_CANONICAL,
+    policyId: exemption.policyId,
+    reason: exemption.reason,
+    updatedAt: now,
+    zoneId: exemption.zoneId,
+    zoneName: exemption.zoneName,
+  }
+}
+
+export function previewIntentAdoption(document, inventory, matrix, entries, exemptions = []) {
   let nextDocument = document
   const policies = entries.map(({ candidate, selection }) => (
     createIntentAdoptionPolicy(candidate, selection)
   ))
   for (const policy of policies) {
     nextDocument = replaceFleetIntentPolicy(nextDocument, policy)
+  }
+  for (const exemption of exemptions) {
+    nextDocument = replaceFleetIntentAcknowledgement(
+      nextDocument,
+      buildAdoptionAcknowledgement(exemption),
+    )
   }
   const evaluation = evaluateFleetIntent(nextDocument, inventory, matrix)
   const policyIds = new Set(policies.map((policy) => policy.id))
