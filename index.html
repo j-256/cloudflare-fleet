@@ -1036,12 +1036,14 @@
     </div>
   </dialog>
 
-  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-summary">
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-summary confirm-note">
     <form method="dialog">
-      <button class="dialog-close" type="button" data-dialog-close aria-label="Close write confirmation">&times;</button>
+      <button class="dialog-close" id="confirm-close" type="button" data-dialog-close aria-label="Close write confirmation">&times;</button>
       <p class="dialog-kicker">Explicit Cloudflare write</p>
       <h2 id="confirm-title">Review changes</h2>
-      <p id="confirm-summary"></p>
+      <div class="confirm-facts" id="confirm-facts" role="list" aria-label="Live validation and write summary"></div>
+      <p class="sr-only" id="confirm-summary"></p>
+      <p class="confirm-note" id="confirm-note" hidden></p>
       <div class="operation-list" id="confirm-operations" role="list" aria-label="Planned API operations"></div>
       <details>
         <summary>Request payloads</summary>
