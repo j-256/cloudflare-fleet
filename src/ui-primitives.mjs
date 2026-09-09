@@ -7,6 +7,8 @@ const TOOLTIP_ALIGNMENT_CLASS = Object.freeze({
   end: " tooltip--align-end",
   start: " tooltip--align-start",
 })
+const tooltipActivationHosts = new WeakSet()
+const tooltipEscapeHosts = new WeakSet()
 
 function dismissTooltipOnEscape(event) {
   if (event.key !== ESCAPE_KEY) return
@@ -32,16 +34,25 @@ export function attachTooltip(element, text, options = {}) {
   const alignmentClass = TOOLTIP_ALIGNMENT_CLASS[options.align] || ""
   element.classList.add("tooltip-host")
   if (options.focusable && element.tabIndex < 0) element.tabIndex = 0
-  const tip = element.ownerDocument.createElement("span")
+  const existingTip = typeof element.querySelector === "function"
+    ? element.querySelector(":scope > .tooltip")
+    : [...(element.children || [])].find((child) => (
+        child.classList?.contains("tooltip")
+      ))
+  const tip = existingTip || element.ownerDocument.createElement("span")
   tip.className = `tooltip${options.below ? " tooltip--below" : ""}${alignmentClass}`
   tip.textContent = content
   tip.setAttribute("aria-hidden", "true")
-  element.append(tip)
-  element.addEventListener("keydown", dismissTooltipOnEscape)
-  if (options.dismissOnActivation) {
+  if (!existingTip) element.append(tip)
+  if (!tooltipEscapeHosts.has(element)) {
+    element.addEventListener("keydown", dismissTooltipOnEscape)
+    tooltipEscapeHosts.add(element)
+  }
+  if (options.dismissOnActivation && !tooltipActivationHosts.has(element)) {
     element.addEventListener("click", dismissTooltipOnActivation)
     element.addEventListener("blur", restoreTooltip)
     element.addEventListener("pointerenter", restoreTooltip)
+    tooltipActivationHosts.add(element)
   }
   return element
 }

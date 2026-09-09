@@ -143,6 +143,24 @@ test("attachTooltip creates a positioned focus target that Escape dismisses", ()
   assert.equal(event.propagationStopped, true)
 })
 
+test("attachTooltip updates one tooltip without duplicating listeners", () => {
+  const document = new FakeDocument()
+  const host = document.createElement("span")
+  attachTooltip(host, "Initial explanation", {
+    dismissOnActivation: true,
+  })
+  attachTooltip(host, "Updated explanation", {
+    dismissOnActivation: true,
+  })
+
+  assert.equal(host.children.length, 1)
+  assert.equal(host.children[0].textContent, "Updated explanation")
+  assert.equal(host.listeners.get("keydown").length, 1)
+  assert.equal(host.listeners.get("click").length, 1)
+  assert.equal(host.listeners.get("blur").length, 1)
+  assert.equal(host.listeners.get("pointerenter").length, 1)
+})
+
 test("actionButton preserves an accessible label and tooltip for icon-only actions", () => {
   const document = new FakeDocument()
   globalThis.document = document

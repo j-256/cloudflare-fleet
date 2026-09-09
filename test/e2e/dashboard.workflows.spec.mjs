@@ -50,9 +50,16 @@ test("turns a compared fleet value into persisted intent and undoes it", async (
   await expect(comparison).toContainText("2 normalized values are present")
   await expect(comparison).toContainText("alpha.example")
   await expect(comparison).toContainText("bravo.example")
-  await comparison.getByRole("button", {
+  const useAsIntent = comparison.getByRole("button", {
     name: "Use as exact intent: Fleet consensus for always_use_https",
-  }).click()
+  })
+  await expect(useAsIntent.locator(":scope > .icon")).toHaveCount(1)
+  await expect(useAsIntent).not.toHaveAttribute("title", /.+/)
+  await useAsIntent.focus()
+  await expect(useAsIntent.locator(":scope > .tooltip")).toHaveCSS("opacity", "1")
+  await useAsIntent.press("Escape")
+  await expect(useAsIntent.locator(":scope > .tooltip")).toHaveCSS("opacity", "0")
+  await useAsIntent.click()
 
   const policy = page.getByRole("dialog", { name: "Set facet intent" })
   await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
@@ -783,10 +790,16 @@ test("persists an expected coverage decision and reverses it", async ({ dashboar
     name: "Mark expected: Legacy Page Rules | Fleet-wide limitation",
   }).click()
   const editor = page.getByRole("dialog", { name: "Mark gap as expected" })
-  await editor.getByLabel("Why is this unavailable by design?").fill(
+  await expect(editor.locator("#coverage-intent-preview strong > .icon"))
+    .toHaveCount(1)
+  await expect(editor.locator("#coverage-intent-exact-fact > .icon")).toHaveCount(1)
+  const saveExpectation = editor.getByRole("button", { name: "Mark expected" })
+  await expect(saveExpectation.locator(":scope > .icon")).toHaveCount(1)
+  await expect(editor.locator("[title]")).toHaveCount(0)
+  await editor.getByLabel("Why is this expected?").fill(
     "Account tokens cannot read this legacy endpoint",
   )
-  await editor.getByRole("button", { name: "Mark expected" }).click()
+  await saveExpectation.click()
 
   await expect(page.locator("#toast-message")).toHaveText(
     "Expected coverage saved for Legacy Page Rules | Fleet-wide limitation",

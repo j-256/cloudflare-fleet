@@ -247,7 +247,7 @@ summary:focus-visible,
 .dialog-kicker {
   margin: 0 0 5px;
   color: var(--accent);
-  font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
@@ -270,13 +270,13 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(17, 25, 35, 0.66);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .session-state small {
   grid-column: 2;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .session-state .refresh-detail {
@@ -353,7 +353,7 @@ h1 {
   display: block;
   margin-top: 1px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -450,7 +450,7 @@ h1 {
 
 .intent-verdict-label {
   color: var(--muted);
-  font: 700 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -470,7 +470,7 @@ h1 {
 
 .intent-verdict-copy > span:last-child {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -586,6 +586,60 @@ h1 {
   gap: 6px;
   align-items: center;
   justify-content: center;
+}
+
+.dialog-control-action {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+
+.dialog-control-action > .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.value-editor-action {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+}
+
+.value-editor-action > .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.dialog-context-row {
+  margin: 8px 0 0 !important;
+}
+
+.dialog-context-fact {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  width: fit-content;
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid rgba(90, 169, 255, 0.42);
+  border-radius: 99px;
+  color: var(--blue);
+  background: rgba(90, 169, 255, 0.07);
+  cursor: help;
+  font: 700 var(--fs-2xs)/var(--lh-tight) ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.dialog-context-fact > .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.dialog-context-fact:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 .matrix-control-action > .icon,
@@ -724,7 +778,7 @@ dialog h2 {
   max-width: 920px;
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -781,14 +835,14 @@ dialog h2 {
   place-items: center;
   color: var(--ink);
   background: rgba(10, 17, 24, 0.56);
-  font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .task-kind,
 .workflow-type {
   margin: 0 0 3px;
   color: var(--muted);
-  font: 700 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -804,14 +858,14 @@ dialog h2 {
 .task-card > p:not(.task-card-detail) {
   margin: 10px 0 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.5;
 }
 
 .task-card-detail {
   margin: 10px 0 0;
   color: var(--purple);
-  font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .task-card-status {
@@ -829,7 +883,7 @@ dialog h2 {
 
 .task-card-status span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .task-card-status-grid {
@@ -857,7 +911,7 @@ dialog h2 {
 
 .task-card-status-metric > span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
 }
 
 .task-card-status-metric.intent strong {
@@ -896,12 +950,12 @@ dialog h2 {
 }
 
 .operational-review-copy strong {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .operational-review-copy > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .operational-review-actions {
@@ -949,14 +1003,14 @@ dialog h2 {
 
 .change-readiness > span {
   color: var(--muted);
-  font: 700 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 #write-readiness {
   color: var(--accent-2);
-  font: 700 9px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 #write-readiness.ready {
@@ -998,19 +1052,19 @@ dialog h2 {
 }
 
 .workflow-targeting strong {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 
 .workflow-targeting span {
   color: var(--accent);
-  font: 700 9px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-transform: uppercase;
 }
 
 .workflow-targeting p {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -1028,7 +1082,7 @@ dialog h2 {
   min-height: 31px;
   margin: 10px 0 0;
   color: var(--ink);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   line-height: 1.45;
 }
@@ -1040,7 +1094,7 @@ dialog h2 {
   border-radius: 99px;
   color: var(--purple);
   background: rgba(180, 151, 255, 0.08);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -1082,7 +1136,7 @@ dialog h2 {
 
 .workflow-scope dt {
   color: var(--muted);
-  font: 700 8px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -1090,7 +1144,7 @@ dialog h2 {
 .workflow-scope dd {
   margin: 0;
   color: #c7d1dc;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -1267,7 +1321,7 @@ dialog h2 {
   border-radius: 99px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.02);
-  font: 700 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .intent-save-status::before {
@@ -1299,7 +1353,7 @@ dialog h2 {
   border-radius: 99px;
   color: var(--accent-2);
   background: rgba(255, 180, 84, 0.08);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -1334,7 +1388,7 @@ button.drift-badge:disabled {
   border-radius: 99px;
   color: var(--danger);
   background: rgba(255, 107, 120, 0.08);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -1345,7 +1399,7 @@ button.drift-badge:disabled {
   color: var(--blue);
   background: rgba(90, 169, 255, 0.09);
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -1530,7 +1584,7 @@ button.drift-badge:disabled {
   max-width: 920px;
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -1566,7 +1620,7 @@ button.drift-badge:disabled {
   padding: 28px;
   place-items: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   text-align: center;
 }
@@ -2482,7 +2536,7 @@ pre {
   max-height: 300px;
   margin: 8px 0 0;
   white-space: pre-wrap;
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .rule-summary {
@@ -2532,7 +2586,7 @@ pre {
 
 .redirect-node > span {
   color: var(--muted);
-  font-size: 8px;
+  font-size: var(--fs-2xs);
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2540,7 +2594,7 @@ pre {
 
 .redirect-node code {
   min-width: 0;
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
 
@@ -2565,7 +2619,7 @@ pre {
 
 .matrix-cell .redirect-arrow {
   justify-self: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   transform: rotate(90deg);
 }
 
@@ -2578,7 +2632,7 @@ pre {
 
 .rule-facts dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -2591,7 +2645,7 @@ pre {
 
 .rule-facts code,
 .rule-section code {
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .rule-token {
@@ -2608,7 +2662,7 @@ pre {
 .rule-section h4 {
   margin: 0 0 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -2622,7 +2676,7 @@ pre {
 
 .structured-object dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .structured-object dd {
@@ -2716,7 +2770,7 @@ pre {
 .facet-equivalence-title-source {
   margin: 3px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .facet-equivalence {
@@ -2737,7 +2791,7 @@ pre {
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 5px 10px;
   margin: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .facet-equivalence-facts dt {
@@ -2778,20 +2832,20 @@ pre {
 .facet-observed-value h4 {
   margin: 0 0 5px;
   color: var(--ink);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .facet-compared-value > p {
   margin: 0 0 7px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
 .facet-observed-value > summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -2799,7 +2853,7 @@ pre {
   display: block;
   margin-bottom: 6px;
   color: var(--accent);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .raw-value {
@@ -2810,7 +2864,7 @@ pre {
 
 .raw-value > summary {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700 !important;
   text-transform: uppercase;
 }
@@ -2833,7 +2887,7 @@ pre {
   display: block;
   margin-bottom: 4px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -2866,12 +2920,12 @@ pre {
 .inline-editor-actions .button {
   min-height: 27px;
   padding: 3px 7px;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
 }
 
 .inline-editor-error {
   margin: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .matrix-cell.inline-editing .cell-actions {
@@ -2943,7 +2997,7 @@ pre {
   max-width: 680px;
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -2996,7 +3050,7 @@ pre {
 
 .coverage-group-toggle small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .coverage-disclosure-icon {
@@ -3114,9 +3168,17 @@ pre {
 }
 
 .coverage-intent-preview strong {
-  display: block;
+  display: flex;
+  gap: 5px;
+  align-items: center;
   margin-bottom: 3px;
   color: var(--ink);
+}
+
+.coverage-intent-preview strong > .icon {
+  width: 13px;
+  height: 13px;
+  color: var(--accent-2);
 }
 
 #coverage-intent-reason {
@@ -3136,7 +3198,7 @@ footer {
   justify-content: space-between;
   padding: 0 var(--page-gutter) 28px;
   color: var(--muted);
-  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 body.matrix-focus {
@@ -3285,7 +3347,7 @@ dialog form {
 .activity-heading p:last-child {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -3303,7 +3365,7 @@ dialog form {
 .activity-toolbar label,
 .activity-visible-count {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -3392,13 +3454,13 @@ dialog form {
 
 .activity-entry-heading h3 {
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .activity-entry-heading p {
   margin: 3px 0 0;
   color: var(--muted);
-  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .activity-status {
@@ -3406,7 +3468,7 @@ dialog form {
   border: 1px solid var(--line);
   border-radius: 99px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3452,7 +3514,7 @@ dialog form {
 
 .activity-operation-change > strong {
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -3462,7 +3524,7 @@ dialog form {
   border-radius: 99px;
   color: var(--muted);
   background: rgba(20, 31, 42, 0.72);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
 }
 
 .activity-undo-state,
@@ -3473,7 +3535,7 @@ dialog form {
   border-radius: 8px;
   color: var(--muted);
   background: rgba(8, 15, 22, 0.55);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -3509,7 +3571,7 @@ dialog form {
 .activity-detail-section h4 {
   margin-bottom: 5px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -3525,14 +3587,14 @@ dialog form {
 .activity-detail-section li {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
 .activity-detail-section code {
   margin-right: 5px;
   color: var(--accent-2);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 800;
 }
 
@@ -3599,7 +3661,7 @@ dialog form {
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   background: #111923;
-  font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .intent-workflow-dialog .dialog-close {
@@ -4170,7 +4232,7 @@ dialog form {
 #intent-group-visible,
 #intent-policy-zone-visible {
   color: var(--muted);
-  font: 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
 
@@ -4325,7 +4387,7 @@ dialog form {
 .intent-item h4 {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 #intent-group-list .intent-group-card-name {
@@ -4336,7 +4398,7 @@ dialog form {
 .intent-item-summary {
   margin: 6px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -4379,7 +4441,7 @@ dialog .intent-field-heading > label {
 .intent-policy-scope-editor > .intent-field-help {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .intent-policy-scope-shortcut {
@@ -4445,7 +4507,7 @@ dialog .intent-field-heading > label {
   border: 1px solid rgba(43, 59, 77, 0.72);
   border-radius: 7px;
   background: rgba(11, 19, 28, 0.62);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -4460,9 +4522,20 @@ dialog .intent-field-heading > label {
 .intent-zone-scope-row strong,
 .intent-zone-group-label strong {
   color: var(--muted);
-  font: 700 9px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.03em;
   text-transform: uppercase;
+}
+
+.intent-zone-scope-row strong {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.intent-zone-scope-row strong > .icon {
+  width: 11px;
+  height: 11px;
 }
 
 .intent-zone-scope-row span,
@@ -4488,7 +4561,7 @@ dialog .intent-field-heading > label {
 
 dialog form > .intent-field-help {
   margin: 5px 0 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .intent-zone-unavailable {
@@ -4612,7 +4685,7 @@ dialog form > .intent-field-help {
 .intent-item-details > summary {
   color: var(--muted);
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .intent-item-details > :not(summary) {
@@ -4620,7 +4693,7 @@ dialog form > .intent-field-help {
 }
 
 .intent-item-value code {
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: normal;
 }
 
@@ -4659,7 +4732,7 @@ dialog form > .intent-field-help {
   border: 1px dashed var(--line);
   border-radius: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   text-align: center;
 }
 
@@ -4688,7 +4761,7 @@ dialog form > .intent-field-help {
 
 .intent-policy-preset span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .intent-draft-impact {
@@ -4705,13 +4778,13 @@ dialog form > .intent-field-help {
 
 .intent-draft-impact h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .intent-draft-impact p:not(.dialog-kicker) {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -4722,7 +4795,7 @@ dialog form > .intent-field-help {
 .intent-value-source > legend {
   margin-bottom: 7px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -4769,7 +4842,7 @@ dialog .intent-value-source-option {
 .intent-value-source-option small {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
   line-height: 1.35;
 }
@@ -4784,14 +4857,14 @@ dialog .intent-value-source-option {
 .intent-observed-values > legend {
   margin-bottom: 3px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
 .intent-observed-values > .intent-field-help {
   margin: 0 0 8px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -4854,25 +4927,25 @@ dialog .intent-policy-value-option {
 }
 
 .intent-policy-value-option-heading strong {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .intent-policy-value-option-heading small {
   color: var(--muted);
-  font: 700 9px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
 
 .intent-policy-value-option-summary {
   color: var(--ink);
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
 
 .intent-policy-value-option-source,
 .intent-policy-value-option-empty {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -4888,7 +4961,7 @@ dialog .intent-policy-value-option {
   border: 1px dashed var(--line);
   border-radius: 8px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .intent-policy-differences {
@@ -4899,13 +4972,13 @@ dialog .intent-policy-value-option {
 
 .intent-policy-differences-heading h3 {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .intent-policy-differences-heading p {
   margin: 3px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -4928,7 +5001,7 @@ dialog .intent-policy-value-option {
 
 .intent-policy-complete > summary {
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -4972,7 +5045,7 @@ dialog .intent-policy-value-option {
   border-radius: 8px;
   color: var(--muted);
   background: rgba(11, 19, 28, 0.5);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -5003,7 +5076,7 @@ dialog .intent-policy-value-option {
   border-radius: 7px;
   color: var(--accent-2);
   background: rgba(255, 180, 84, 0.06);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -5046,7 +5119,7 @@ dialog .intent-policy-value-option {
 
 .facet-equivalence-zone {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -5073,7 +5146,7 @@ dialog .intent-policy-value-option {
 .facet-equivalence-access-status {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -5100,13 +5173,13 @@ dialog .intent-policy-value-option {
 
 .facet-equivalence-values h3 {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .facet-equivalence-value-help {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.45;
 }
 
@@ -5190,14 +5263,14 @@ dialog .intent-policy-value-option {
 
 .value-comparison-group h4 {
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
 .value-comparison-group-summary {
   margin: 0;
   color: var(--muted);
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
 
@@ -5216,7 +5289,7 @@ dialog .intent-policy-value-option {
   border: 1px solid rgba(43, 60, 75, 0.68);
   border-radius: 99px;
   color: var(--muted);
-  font: 9px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
 
@@ -5230,7 +5303,7 @@ dialog .intent-policy-value-option {
 .value-comparison-group-actions .button {
   min-height: 28px;
   padding: 4px 8px;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
 }
 
 .value-comparison-table-wrap {
@@ -5249,7 +5322,7 @@ dialog .intent-policy-value-option {
   width: fit-content;
   padding: 3px 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -5262,7 +5335,7 @@ dialog .intent-policy-value-option {
   width: max-content;
   min-width: 100%;
   border-spacing: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .value-comparison-table th,
@@ -5301,7 +5374,7 @@ dialog .intent-policy-value-option {
   max-width: 220px;
   color: var(--muted);
   background: #111c26;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.03em;
   overflow-wrap: anywhere;
   text-transform: uppercase;
@@ -5316,7 +5389,7 @@ dialog .intent-policy-value-option {
   display: block;
   max-height: 180px;
   overflow: auto;
-  font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -5345,7 +5418,7 @@ dialog .intent-policy-value-option {
 
 .value-comparison-missing-field {
   color: var(--danger);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -5442,7 +5515,7 @@ dialog .intent-policy-value-option {
   border: 1px solid var(--line);
   border-radius: 99px;
   color: var(--muted);
-  font: 700 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .ruleset-description,
@@ -5461,7 +5534,7 @@ dialog .intent-policy-value-option {
 .ruleset-deployment h3 {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -5492,7 +5565,7 @@ dialog .intent-policy-value-option {
 .ruleset-status {
   margin: -4px 0 0;
   color: var(--muted);
-  font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .ruleset-rule-list {
@@ -5536,7 +5609,7 @@ dialog .intent-policy-value-option {
 .rule-card-position {
   flex: 0 0 auto;
   color: var(--muted);
-  font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .rule-card-title h3 {
@@ -5551,6 +5624,20 @@ dialog .intent-policy-value-option {
   flex-wrap: wrap;
   gap: 5px;
   justify-content: flex-end;
+}
+
+.ruleset-metadata-badge,
+.rule-card-badge {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  cursor: help;
+}
+
+.ruleset-metadata-badge > .icon,
+.rule-card-badge > .icon {
+  width: 11px;
+  height: 11px;
 }
 
 .rule-card-badge.enabled {
@@ -5583,7 +5670,7 @@ dialog .intent-policy-value-option {
 
 .rule-card-preview span {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -5591,7 +5678,7 @@ dialog .intent-policy-value-option {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }
 
@@ -5603,7 +5690,7 @@ dialog .intent-policy-value-option {
   width: fit-content;
   color: var(--muted);
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -5628,6 +5715,17 @@ dialog .intent-policy-value-option {
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+.ruleset-icon-action {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+}
+
+.rule-move-up > .icon {
+  transform: rotate(180deg);
 }
 
 .rule-card-more {
@@ -5714,7 +5812,7 @@ dialog label:not(.confirm-check) {
   display: block;
   margin: 18px 0 7px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
 }
 
@@ -5733,7 +5831,7 @@ dialog select {
 
 dialog textarea {
   min-height: 180px;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-xs)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   resize: vertical;
 }
 
@@ -5757,7 +5855,7 @@ dialog details > summary {
 
 .editor-json > p {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 
@@ -5785,7 +5883,7 @@ dialog details > summary {
 .value-editor-heading p {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .value-editor-fields,
@@ -5830,7 +5928,7 @@ dialog details > summary {
 
 .redirect-editor-field .value-help {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   line-height: 1.35;
 }
 
@@ -5862,7 +5960,7 @@ dialog details > summary {
   border: 1px solid var(--line);
   border-radius: 99px;
   color: var(--muted);
-  font: 8px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -5884,7 +5982,7 @@ dialog details > summary {
 .value-group legend {
   padding: 0 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -5939,7 +6037,7 @@ dialog details > summary {
 .empty-value {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 
 .rule-preview {
@@ -5986,7 +6084,7 @@ dialog details > summary {
   border: 1px solid rgba(90, 169, 255, 0.46);
   border-radius: 99px;
   color: var(--blue);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -6012,7 +6110,7 @@ dialog details > summary {
 
 .policy-exception-fields dt {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
 }
 
@@ -6031,7 +6129,7 @@ dialog details > summary {
 .dns-policy-value code {
   overflow-wrap: anywhere;
   white-space: normal;
-  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: var(--fs-2xs)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .dns-policy-value small {
@@ -6046,7 +6144,7 @@ dialog details > summary {
 
 .field-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .dialog-actions {
@@ -6303,7 +6401,7 @@ dialog details > summary {
 .target-selection-summary {
   margin: 12px 0 8px;
   color: var(--accent);
-  font: 700 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-transform: uppercase;
 }
 
@@ -6344,6 +6442,40 @@ dialog details > summary {
 .target-option small {
   margin-top: 3px;
   color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.target-option .target-option-status {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.target-option-status > .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.target-option-status.aligned {
+  color: var(--green);
+}
+
+.target-option-status.drift,
+.target-option-status.unavailable {
+  color: var(--danger);
+}
+
+#target-description,
+#editor-target {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.editor-target-context {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .confirm-check {
@@ -6600,7 +6732,7 @@ dialog details > summary {
   }
 
   #status-text {
-    font-size: 12px;
+    font-size: var(--fs-xs);
     white-space: nowrap;
   }
 
@@ -6618,7 +6750,7 @@ dialog details > summary {
   }
 
   .summary-card span {
-    font-size: 8px;
+    font-size: var(--fs-2xs);
   }
 
   .intent-verdict-main {

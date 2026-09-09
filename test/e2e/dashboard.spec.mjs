@@ -3,6 +3,40 @@ import {
   test,
 } from "./dashboard.fixture.mjs"
 
+const MINIMUM_VISIBLE_FONT_SIZE = 11
+
+async function expectKeyboardTooltip(control) {
+  const tooltip = control.locator(":scope > .tooltip")
+  await control.focus()
+  await expect(tooltip).toHaveCSS("opacity", "1")
+  await control.press("Escape")
+  await expect(tooltip).toHaveCSS("opacity", "0")
+}
+
+async function expectLegibleSurface(surface, options = {}) {
+  await expect(surface.locator("[title]")).toHaveCount(0)
+  if (options.checkOverflow !== false) {
+    expect(await surface.evaluate(
+      (node) => node.scrollWidth <= node.clientWidth + 1,
+    )).toBe(true)
+  }
+  const undersized = await surface.locator("*").evaluateAll(
+    (nodes, minimumSize) => nodes.filter((node) => {
+      const style = getComputedStyle(node)
+      return node.getClientRects().length > 0
+        && style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number.parseFloat(style.fontSize) < minimumSize
+    }).map((node) => ({
+      className: String(node.className),
+      fontSize: getComputedStyle(node).fontSize,
+      tagName: node.tagName,
+    })),
+    MINIMUM_VISIBLE_FONT_SIZE,
+  )
+  expect(undersized).toEqual([])
+}
+
 test("loads the cached fleet into a useful review surface", async ({ dashboard }) => {
   const { page } = dashboard
 
@@ -90,7 +124,7 @@ test("keeps dense matrix controls legible and self-explanatory", async ({ dashbo
   })
   await expect(edit).toHaveClass(/matrix-icon-action/)
   await expect(edit.locator(":scope > .icon")).toHaveCount(1)
-  await expect(edit.locator(":scope > .matrix-control-label")).toHaveCount(0)
+  await expect(edit.locator(":scope > .control-label")).toHaveCount(0)
   await edit.hover()
   await expect(edit.locator(":scope > .tooltip")).toHaveCSS("opacity", "1")
 
@@ -100,17 +134,18 @@ test("keeps dense matrix controls legible and self-explanatory", async ({ dashbo
 
   await page.setViewportSize({ height: 844, width: 390 })
   const undersized = await page.locator(".configuration-explorer *").evaluateAll(
-    (nodes) => nodes.filter((node) => {
+    (nodes, minimumSize) => nodes.filter((node) => {
       const style = getComputedStyle(node)
       return node.getClientRects().length > 0
         && style.display !== "none"
         && style.visibility !== "hidden"
-        && Number.parseFloat(style.fontSize) < 11
+        && Number.parseFloat(style.fontSize) < minimumSize
     }).map((node) => ({
       className: String(node.className),
       fontSize: getComputedStyle(node).fontSize,
       tagName: node.tagName,
     })),
+    MINIMUM_VISIBLE_FONT_SIZE,
   )
   expect(undersized).toEqual([])
   expect(await page.evaluate(
@@ -124,6 +159,13 @@ test("selects target zones and restores the selection after reload", async ({ da
   await page.locator("#matrix-choose-targets").click()
   const dialog = page.getByRole("dialog", { name: "Choose zones" })
   await expect(dialog).toBeVisible()
+  await expect(dialog.locator("#target-scope-fact > .icon")).toHaveCount(1)
+  await expect(dialog.locator(".target-option-status > .icon")).toHaveCount(3)
+  const selectAll = dialog.getByRole("button", { name: "Select all" })
+  await expect(selectAll.locator(":scope > .icon")).toHaveCount(1)
+  await expectKeyboardTooltip(selectAll)
+  await expect(dialog).toBeVisible()
+  await expectLegibleSurface(dialog)
   await dialog.getByRole("checkbox", { name: new RegExp(zoneNames[0]) }).check()
   await dialog.getByRole("checkbox", { name: new RegExp(zoneNames[1]) }).check()
   await dialog.getByRole("button", { name: "Done" }).click()
@@ -156,6 +198,17 @@ test("persists a saved intent scope and lets browser Back exit the workspace", a
   await intentDialog.getByRole("button", { name: "Create saved scope" }).click()
 
   const scopeDialog = page.getByRole("dialog", { name: "New saved scope" })
+  await expect(
+    scopeDialog.locator("#intent-group-membership-fact > .icon"),
+  ).toHaveCount(1)
+  await expect(
+    scopeDialog.getByRole("button", { name: "Select visible" })
+      .locator(":scope > .icon"),
+  ).toHaveCount(1)
+  await expect(scopeDialog.locator(
+    "#intent-group-selection-summary .intent-zone-scope-row > strong > .icon",
+  )).toHaveCount(2)
+  await expectLegibleSurface(scopeDialog)
   await scopeDialog.getByRole("checkbox", { name: zoneNames[0] }).check()
   await scopeDialog.getByRole("checkbox", { name: zoneNames[1] }).check()
   await scopeDialog.getByRole("textbox", { name: /Custom name/ }).fill("Primary sites")
@@ -183,8 +236,12 @@ test("applies and verifies a setting change through the reviewed write flow", as
     name: `Edit always_use_https on ${targetZone}`,
   }).click()
   const inlineEditor = page.locator("form.inline-value-editor")
+  const inlineReview = inlineEditor.getByRole("button", { name: "Review" })
+  await expect(inlineReview.locator(":scope > .icon")).toHaveCount(1)
+  await expectKeyboardTooltip(inlineReview)
+  await expectLegibleSurface(inlineEditor, { checkOverflow: false })
   await inlineEditor.getByLabel("Desired value").fill("on")
-  await inlineEditor.getByRole("button", { name: "Review" }).click()
+  await inlineReview.click()
 
   const confirmation = page.getByRole("dialog", { name: "Update zone setting" })
   await expect(confirmation).toBeVisible()
@@ -211,5 +268,43 @@ test("applies and verifies a setting change through the reviewed write flow", as
   const activity = page.getByRole("dialog", { name: "Operation history" })
   await expect(activity).toContainText("Update zone setting")
   await expect(activity).toContainText("Verified")
-  await expect(activity.getByRole("button", { name: "Review guarded undo" })).toBeVisible()
+  const refreshHistory = activity.getByRole("button", { name: "Refresh history" })
+  await expect(refreshHistory.locator(":scope > .icon")).toHaveCount(1)
+  await expectKeyboardTooltip(refreshHistory)
+  const guardedUndo = activity.getByRole("button", { name: "Review guarded undo" })
+  await expect(guardedUndo.locator(":scope > .icon")).toHaveCount(1)
+  await expectLegibleSurface(activity)
+})
+
+test("keeps the ruleset workspace and desired-state editor legible", async ({ dashboard }) => {
+  const { page } = dashboard
+
+  await page.locator("#category").selectOption("Ruleset rules")
+  await page.getByRole("button", {
+    name: /^Open the parent ruleset for Protect service on /,
+  }).first().click()
+
+  const ruleset = page.locator("#ruleset-dialog")
+  await expect(ruleset).toBeVisible()
+  await expect(ruleset.locator(".ruleset-metadata-badge > .icon"))
+    .toHaveCount(3)
+  await expect(ruleset.locator(".rule-card-badge > .icon")).toHaveCount(2)
+  const edit = ruleset.getByRole("button", { name: "Edit Protect service" })
+  await expect(edit).toHaveClass(/ruleset-icon-action/)
+  await expect(edit.locator(":scope > .icon")).toHaveCount(1)
+  await expect(edit.locator(":scope > .control-label")).toHaveCount(0)
+  await expectKeyboardTooltip(edit)
+  await expect(ruleset).toBeVisible()
+  await expectLegibleSurface(ruleset)
+
+  await edit.click()
+  const editor = page.locator("#editor-dialog")
+  await expect(editor).toBeVisible()
+  await expect(editor.locator("#editor-target .dialog-context-fact > .icon"))
+    .toHaveCount(1)
+  const review = editor.getByRole("button", { name: "Review desired state" })
+  await expect(review.locator(":scope > .icon")).toHaveCount(1)
+  await expectKeyboardTooltip(review)
+  await expect(editor).toBeVisible()
+  await expectLegibleSurface(editor)
 })
