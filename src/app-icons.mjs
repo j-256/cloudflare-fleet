@@ -64,6 +64,33 @@ const ICONS = Object.freeze({
     { tag: "path", d: "M8 2.5 14 5.5 8 8.5 2 5.5Z" },
     { tag: "path", d: "M2 9 8 12 14 9" },
   ],
+  inspect: [
+    { tag: "circle", cx: "6.75", cy: "6.75", r: "4.25" },
+    { tag: "path", d: "M10 10 13.5 13.5" },
+  ],
+  record: [
+    { tag: "path", d: "M3 2.5 10 2.5 13 5.5 13 13.5 3 13.5Z" },
+    { tag: "path", d: "M10 2.5 10 5.5 13 5.5" },
+    { tag: "circle", cx: "8", cy: "9.5", r: "2" },
+  ],
+  history: [
+    { tag: "circle", cx: "8", cy: "8", r: "5.5" },
+    { tag: "path", d: "M8 4.5 8 8 10.5 9.5" },
+  ],
+  schedule: [
+    { tag: "path", d: "M2.5 4.5 13.5 4.5 13.5 13.5 2.5 13.5Z" },
+    { tag: "path", d: "M5 2.5 5 6" },
+    { tag: "path", d: "M11 2.5 11 6" },
+    { tag: "path", d: "M5 8 5.1 8" },
+    { tag: "path", d: "M8 8 8.1 8" },
+    { tag: "path", d: "M11 8 11.1 8" },
+    { tag: "path", d: "M5 11 5.1 11" },
+    { tag: "path", d: "M8 11 8.1 11" },
+  ],
+  undo: [
+    { tag: "path", d: "M5.5 4 2.5 7 5.5 10" },
+    { tag: "path", d: "M3 7 9.5 7C11.7 7 13.5 8.8 13.5 11" },
+  ],
 })
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS))

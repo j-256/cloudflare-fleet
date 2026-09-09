@@ -34,12 +34,18 @@ test("information-heavy dialogs use available desktop space and stay within smal
     await expectWorkspaceBounds(activity, viewport)
     await activity.getByRole("button", { name: "Close operation history" }).click()
 
-    await page.getByRole("button", { name: "Workers", exact: true }).click()
-    const workers = page.getByRole("dialog", { name: "Worker diagnostics", exact: true })
+    await page.getByRole("button", { name: "Diagnose Worker", exact: true }).click()
+    const workers = page.getByRole("dialog", { name: "Diagnose a Worker", exact: true })
     await workers.getByLabel("Worker name or finding ID").fill("example-worker")
     await workers.getByRole("button", { name: "Inspect Worker", exact: true }).click()
-    await expect(workers.getByRole("status")).toContainText("Trigger compatibility: mismatch")
+    await expect(workers.getByRole("status")).toHaveText("Inspection complete")
     await expectWorkspaceBounds(workers, viewport)
-    await workers.getByRole("button", { name: "Close", exact: true }).click()
+    if (viewport.width === 390) {
+      await expect(workers.locator(".worker-report .worker-fact")).toHaveCount(4)
+      expect(await workers.locator(".worker-report").evaluate(
+        (node) => node.scrollWidth <= node.clientWidth + 1,
+      )).toBe(true)
+    }
+    await workers.getByRole("button", { name: "Close Worker diagnosis", exact: true }).click()
   }
 })
