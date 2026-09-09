@@ -2,6 +2,7 @@ import { contextualActionLabel } from "./accessibility.mjs"
 import { icon as createIcon } from "./app-icons.mjs"
 
 const ESCAPE_KEY = "Escape"
+const TOOLTIP_DISMISSED_CLASS = "tooltip-dismissed"
 const TOOLTIP_ALIGNMENT_CLASS = Object.freeze({
   end: " tooltip--align-end",
   start: " tooltip--align-start",
@@ -17,6 +18,14 @@ function dismissTooltipOnEscape(event) {
   active?.blur()
 }
 
+function dismissTooltipOnActivation(event) {
+  event.currentTarget.classList.add(TOOLTIP_DISMISSED_CLASS)
+}
+
+function restoreTooltip(event) {
+  event.currentTarget.classList.remove(TOOLTIP_DISMISSED_CLASS)
+}
+
 export function attachTooltip(element, text, options = {}) {
   const content = String(text || "").trim()
   if (!content) return element
@@ -29,6 +38,11 @@ export function attachTooltip(element, text, options = {}) {
   tip.setAttribute("aria-hidden", "true")
   element.append(tip)
   element.addEventListener("keydown", dismissTooltipOnEscape)
+  if (options.dismissOnActivation) {
+    element.addEventListener("click", dismissTooltipOnActivation)
+    element.addEventListener("blur", restoreTooltip)
+    element.addEventListener("pointerenter", restoreTooltip)
+  }
   return element
 }
 
@@ -50,6 +64,7 @@ export function actionButton(label, action, options = {}) {
   attachTooltip(button, options.title || (iconOnly ? accessibleName : ""), {
     align: options.tooltipAlign,
     below: options.tooltipBelow,
+    dismissOnActivation: true,
   })
   button.addEventListener("click", action)
   return button

@@ -181,7 +181,7 @@ Recovery preserves the original plan as a failed execution with an explicitly un
 
 ## Worker diagnostics and schedule recovery
 
-Open **Workers** in the dashboard, or use `cloudflare-fleet worker inspect --input FILE --format json` and MCP `inspect_worker`. Select one exact Worker name or a `deep.worker-scheduled-handler-missing:WORKER` finding ID. Inspection defaults to the preceding hour; explicit UTC `start` and `end` must describe a past window of at most 24 hours. Evidence pages contain at most 200 records. Continue with `nextCursor` and the original window; counts describe each page, not an account-wide total. Optional `zoneIds` narrow route reads to the supplied zones.
+Open **Diagnose Worker** in the dashboard after an alert, failed request, or unexpected scheduled behavior, or use `cloudflare-fleet worker inspect --input FILE --format json` and MCP `inspect_worker`. Select one exact Worker name or a `deep.worker-scheduled-handler-missing:WORKER` finding ID. Inspection defaults to the preceding hour; explicit UTC `start` and `end` must describe a past window of at most 24 hours. Evidence pages contain at most 200 records. Continue with `nextCursor` and the original window; counts describe each page, not an account-wide total. Optional `zoneIds` narrow route reads to the supplied zones.
 
 ```json
 {"worker":"example-worker","limit":50,"zoneIds":["example-zone-id"]}

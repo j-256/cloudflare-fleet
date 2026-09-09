@@ -192,15 +192,17 @@ export async function capturePublicationScreenshots(options = {}) {
       "reviewed-write.png",
     ))
     await overview.getByRole("dialog", { name: "Update zone setting" }).getByRole("button", { name: "Cancel" }).click()
-    await overview.getByRole("button", { name: "Workers", exact: true }).click()
-    const workerDialog = overview.getByRole("dialog", { name: "Worker diagnostics" })
+    await overview.getByRole("button", { name: "Diagnose Worker", exact: true }).click()
+    const workerDialog = overview.getByRole("dialog", { name: "Diagnose a Worker" })
     await workerDialog.getByLabel("Worker name or finding ID").fill("example-worker")
+    await workerDialog.getByText("Evidence scope", { exact: true }).click()
     await workerDialog.getByLabel("Window start (UTC ISO, optional)").fill("2026-08-12T11:00:00.000Z")
     await workerDialog.getByLabel("Window end (UTC ISO, optional)").fill(FIXED_TIME)
+    await workerDialog.getByText("Evidence scope", { exact: true }).click()
     await workerDialog.getByRole("button", { name: "Inspect Worker" }).click()
-    await workerDialog.getByRole("status").filter({ hasText: "Trigger compatibility: mismatch" }).waitFor()
+    await workerDialog.getByRole("status").filter({ hasText: "Inspection complete" }).waitFor()
     screenshots.push(await capture(overview, outputDirectory, "worker-diagnostics.png"))
-    await workerDialog.getByRole("button", { name: "Close", exact: true }).click()
+    await workerDialog.getByRole("button", { name: "Close Worker diagnosis", exact: true }).click()
 
     const mobile = await openDashboardPage(
       context,

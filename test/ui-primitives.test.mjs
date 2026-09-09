@@ -20,6 +20,12 @@ class FakeClassList {
     this.element.className = [...classes].join(" ")
   }
 
+  remove(...names) {
+    const classes = new Set(this.element.className.split(/\s+/).filter(Boolean))
+    for (const name of names) classes.delete(name)
+    this.element.className = [...classes].join(" ")
+  }
+
   contains(name) {
     return this.element.className.split(/\s+/).includes(name)
   }
@@ -157,4 +163,7 @@ test("actionButton preserves an accessible label and tooltip for icon-only actio
   assert.equal(button.children[1].textContent, "Remove: Policy for All zones")
   button.dispatch("click")
   assert.equal(clicks, 1)
+  assert.equal(button.classList.contains("tooltip-dismissed"), true)
+  button.dispatch("pointerenter")
+  assert.equal(button.classList.contains("tooltip-dismissed"), false)
 })
