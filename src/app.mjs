@@ -364,6 +364,8 @@ const COMPACT_FILTER_MEDIA_QUERY = "(max-width: 1179px)"
 const COMPACT_TOOLBAR_MEDIA_QUERY = "(max-width: 620px)"
 const MATRIX_FOCUS_CLASS = "matrix-focus"
 const MATRIX_COLUMN_HIDDEN_CLASS = "matrix-column-hidden"
+const MATRIX_CONTROL_LABEL_CLASS = "matrix-control-label"
+const MATRIX_DIRECT_TOOLTIP_SELECTOR = ":scope > .tooltip"
 const MATRIX_REVEAL_CLASS = Object.freeze({
   CELL: "matrix-reveal-cell",
   COLUMN: "matrix-reveal-column",
@@ -942,6 +944,7 @@ const elements = {
   zoneCount: document.querySelector("#zone-count"),
 }
 
+decorateMatrixOverview()
 decorateConfirmationDialog()
 elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentPolicyScopeName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
@@ -985,13 +988,14 @@ function setRefreshDetail(message = "", mode = "") {
 
 function updateTransportDependentControls() {
   elements.refresh.disabled = state.busy || !state.transportAvailable
-  elements.refresh.title = !state.transportAvailable
+  const refreshTooltip = !state.transportAvailable
     ? state.transportReconnectEscalated
       ? "Session broker still offline; relaunch the dashboard to restore refresh"
       : "Session broker offline; refresh returns after reconnection"
     : state.busy
       ? "Another fleet operation is in progress"
       : "Run a complete live fleet audit"
+  setMatrixControlTooltip(elements.refresh, refreshTooltip)
   updateActionButtons()
   updateRulesetActionAvailability()
   renderIntentSaveStatus()
@@ -1408,6 +1412,179 @@ function createElement(tag, options = {}) {
   return node
 }
 
+function setMatrixControlLabel(control, label) {
+  const labelElement = control.querySelector(
+    `:scope > .${MATRIX_CONTROL_LABEL_CLASS}`,
+  )
+  if (labelElement) {
+    labelElement.textContent = label
+    return
+  }
+  control.textContent = label
+}
+
+function setMatrixControlTooltip(control, text) {
+  const tooltip = control.querySelector(MATRIX_DIRECT_TOOLTIP_SELECTOR)
+  if (tooltip) tooltip.textContent = text
+  control.removeAttribute("title")
+}
+
+function decorateMatrixControl(control, iconName, tooltip, options = {}) {
+  if (!control) return
+  const label = control.textContent.trim()
+  if (options.preserveChildren) {
+    control.prepend(icon(iconName))
+  } else {
+    control.replaceChildren(
+      icon(iconName),
+      createElement("span", {
+        className: MATRIX_CONTROL_LABEL_CLASS,
+        text: label,
+      }),
+    )
+  }
+  control.classList.add("matrix-control-action")
+  control.removeAttribute("title")
+  attachTooltip(control, tooltip, {
+    align: options.align,
+    below: options.below,
+    dismissOnActivation: true,
+  })
+}
+
+function decorateMatrixReferenceItem(control, iconName, tooltip, options = {}) {
+  control.prepend(icon(iconName))
+  control.setAttribute("role", "note")
+  control.setAttribute("aria-label", `${control.textContent.trim()}. ${tooltip}`)
+  attachTooltip(control, tooltip, {
+    align: options.align,
+    below: options.below,
+    focusable: true,
+  })
+}
+
+function decorateMatrixOverview() {
+  const controls = [
+    [
+      elements.differenceToggle,
+      "drift",
+      "Show only facets that differ across zones or do not satisfy fleet intent",
+      { align: "start" },
+    ],
+    [
+      elements.changeSupportToggle,
+      "edit",
+      "Show only facets with a supported matrix change path",
+      { align: "end" },
+    ],
+    [
+      elements.filterPanelToggle,
+      "filter",
+      "Show or hide secondary matrix filters and sort controls",
+      { align: "start" },
+    ],
+    [elements.filterReset, "undo", "Restore the default matrix filters and sort order"],
+    [
+      elements.showActivity,
+      "history",
+      "Open recorded, verified Cloudflare operations and guarded recovery",
+      { align: "start", preserveChildren: true },
+    ],
+    [
+      elements.refresh,
+      "refresh",
+      "Reload every readable Cloudflare surface for the fleet",
+      { align: "end" },
+    ],
+    [
+      elements.matrixChooseTargets,
+      "active",
+      "Choose zones used by matrix copy and fill actions",
+      { align: "start" },
+    ],
+    [
+      elements.selectedColumnsOnly,
+      "matrix",
+      "Hide unselected zone columns without changing fleet comparisons",
+    ],
+    [
+      elements.targetHoles,
+      "absent",
+      "Show only facets missing from at least one selected target zone",
+    ],
+    [
+      elements.selectDrifted,
+      "drift",
+      "Select zones with automated-workflow or fleet-intent drift",
+    ],
+    [
+      elements.clearSelection,
+      "close",
+      "Clear every selected matrix target zone",
+      { align: "end" },
+    ],
+    [
+      elements.matrixFocus,
+      "matrix",
+      "Use the full viewport for the comparison matrix",
+      { align: "end" },
+    ],
+    [
+      elements.mobileMatrixFocus,
+      "matrix",
+      "Use the full viewport for the comparison matrix",
+      { align: "end" },
+    ],
+  ]
+  for (const [control, iconName, tooltip, options] of controls) {
+    decorateMatrixControl(control, iconName, tooltip, options)
+  }
+
+  const guideSummary = elements.matrixGuide.querySelector("summary")
+  setMatrixControlLabel(guideSummary, "Legend & shortcuts")
+  decorateMatrixControl(
+    guideSummary,
+    "info",
+    "Explain matrix colors, available actions, selection scope, and keyboard shortcuts",
+    { align: "end" },
+  )
+
+  const capabilityItems = [
+    [
+      ".observe",
+      "inspect",
+      "Reads Cloudflare state and compares values across the loaded zones",
+      { align: "start", below: true },
+    ],
+    [".plan", "layers", "Evaluates saved expected state without changing Cloudflare"],
+    [
+      ".change",
+      "ack",
+      "Builds a fresh, reviewed Cloudflare write plan only where a bounded change path exists",
+      { align: "end", below: true },
+    ],
+  ]
+  for (const [selector, iconName, tooltip, options = { below: true }] of capabilityItems) {
+    const control = document.querySelector(`.capability-key ${selector}`)
+    decorateMatrixReferenceItem(control, iconName, tooltip, options)
+  }
+
+  const legendItems = [
+    [".same", "ok", "Matches the unique most-common present value in this row"],
+    [".variant", "drift", "Differs from the unique row consensus"],
+    [".hole", "absent", "No value was observed for this facet and zone"],
+    [".editable", "edit", "A direct edit targets only the opened matrix cell"],
+    [".copyable", "copy", "Copy and fill actions use the selected matrix target zones"],
+    [".renameable", "edit", "A reviewed fleet action can rename every live rule instance"],
+    [".intent-drift", "drift", "The observed state does not satisfy saved fleet intent"],
+    [".acknowledged", "ack", "This exact observed difference has been acknowledged intentionally"],
+  ]
+  for (const [selector, iconName, tooltip] of legendItems) {
+    const control = elements.matrixGuide.querySelector(`.legend ${selector}`)
+    decorateMatrixReferenceItem(control, iconName, tooltip, { below: true })
+  }
+}
+
 function structuredValueElement(value) {
   if (Array.isArray(value)) {
     if (value.length === 0) return createElement("span", { text: "None" })
@@ -1476,6 +1653,18 @@ function createFacetPhaseElement(facet, className = "") {
     "aria-label",
     `Phase: ${description.phaseLabel}, ${description.phase}`,
   )
+  if (className === "matrix-facet-phase") {
+    phase.append(
+      icon("layers"),
+      createElement("strong", { text: description.phaseLabel }),
+    )
+    phase.setAttribute("role", "note")
+    return attachTooltip(
+      phase,
+      `Ruleset phase: ${description.phaseLabel} (${description.phase})`,
+      { align: "start" },
+    )
+  }
   const friendly = createElement("span", {
     className: "facet-phase-friendly",
   })
@@ -3464,10 +3653,10 @@ function setMatrixFocus(focused) {
   document.body.classList.toggle(MATRIX_FOCUS_CLASS, focused)
   for (const button of [elements.matrixFocus, elements.mobileMatrixFocus]) {
     button.setAttribute("aria-pressed", String(focused))
-    button.textContent = focused ? "Exit focus" : "Focus matrix"
-    button.title = focused
+    setMatrixControlLabel(button, focused ? "Exit focus" : "Focus matrix")
+    setMatrixControlTooltip(button, focused
       ? "Return to the fleet overview"
-      : "Use the full viewport for the matrix"
+      : "Use the full viewport for the matrix")
   }
   if (!focused) {
     requestAnimationFrame(() => {
@@ -3695,33 +3884,125 @@ function categoryChangeDetail(capabilities) {
   return details.join(" ")
 }
 
+function matrixCapabilityFact(iconName, label, description, tone = "neutral") {
+  const fact = createElement("span", {
+    className: `category-capability-fact ${tone}`,
+  })
+  fact.append(
+    icon(iconName),
+    createElement("span", { text: label }),
+  )
+  fact.setAttribute("role", "note")
+  fact.setAttribute("aria-label", `${label}. ${description}`)
+  return attachTooltip(fact, description, {
+    below: true,
+    focusable: true,
+  })
+}
+
 function renderCategoryCapability() {
   if (!state.matrix) return
   const selectedCategory = elements.category.value
   const categories = matrixCategoryCapabilities(state.matrix)
   const counts = matrixCapabilityCounts(state.matrix)
-  const readOnlyNote = readOnly
-    ? " This read-only session can inspect capabilities and intent, but cannot save expected state or apply Cloudflare writes."
-    : ""
+  const facts = []
   if (!selectedCategory) {
     elements.categoryCapabilityTitle.textContent = "All categories"
-    elements.categoryCapabilityDetail.textContent = `${counts.rows} facets across ${counts.categories} categories. ${counts.changeableRows} facets in ${counts.changeableCategories} categories have a supported matrix change path; ${counts.compareOnlyCategories} categories are comparison and expected-state only. Row and cell actions show the available path; multi-setting workflows are scoped separately above.${readOnlyNote}`
+    facts.push(
+      matrixCapabilityFact(
+        "matrix",
+        `${counts.rows} facets`,
+        `${counts.rows} readable configuration facets across ${counts.categories} categories`,
+      ),
+      matrixCapabilityFact(
+        "edit",
+        `${counts.changeableRows} changeable`,
+        `${counts.changeableRows} facets in ${counts.changeableCategories} categories have a supported matrix change path`,
+        counts.changeableRows > 0 ? "change" : "neutral",
+      ),
+      matrixCapabilityFact(
+        "inspect",
+        `${counts.compareOnlyCategories} compare-only`,
+        `${counts.compareOnlyCategories} categories support comparison and expected state without a matrix Cloudflare change path`,
+        "compare",
+      ),
+      matrixCapabilityFact(
+        "info",
+        "Cell-scoped paths",
+        "Row and cell actions show the available path; multi-setting workflows remain scoped separately above",
+      ),
+    )
   } else {
     const entry = categories.find((candidate) => candidate.category === selectedCategory)
     elements.categoryCapabilityTitle.textContent = selectedCategory
     if (!entry) {
-      elements.categoryCapabilityDetail.textContent = "This category is not available in the loaded fleet snapshot."
+      facts.push(matrixCapabilityFact(
+        "drift",
+        "Unavailable",
+        "This category is not available in the loaded fleet snapshot",
+        "danger",
+      ))
     } else if (entry.changeableRows === 0) {
-      elements.categoryCapabilityDetail.textContent = `${entry.rows} facet${entry.rows === 1 ? "" : "s"}. The dashboard can compare these values and evaluate expected state, but it cannot change Cloudflare configuration in this category.${readOnlyNote}`
+      facts.push(
+        matrixCapabilityFact(
+          "matrix",
+          `${entry.rows} facet${entry.rows === 1 ? "" : "s"}`,
+          `Every loaded ${selectedCategory} facet remains available for comparison`,
+        ),
+        matrixCapabilityFact(
+          "inspect",
+          "Compare + intent",
+          "The dashboard can compare these values and evaluate expected state, but it cannot change Cloudflare configuration in this category",
+          "compare",
+        ),
+      )
     } else if (entry.changeableRows === entry.rows) {
       const capabilities = new Set(entry.capabilities)
-      elements.categoryCapabilityDetail.textContent = `${entry.rows} facet${entry.rows === 1 ? "" : "s"}. Every facet has at least one supported matrix change path. ${categoryChangeDetail(capabilities)}${readOnlyNote}`
+      facts.push(
+        matrixCapabilityFact(
+          "matrix",
+          `${entry.rows} facet${entry.rows === 1 ? "" : "s"}`,
+          `Every loaded ${selectedCategory} facet remains available for comparison`,
+        ),
+        matrixCapabilityFact(
+          "edit",
+          "All changeable",
+          `Every facet has at least one supported matrix change path. ${categoryChangeDetail(capabilities)}`,
+          "change",
+        ),
+      )
     } else {
       const capabilities = new Set(entry.capabilities)
       const remainingRows = entry.rows - entry.changeableRows
-      elements.categoryCapabilityDetail.textContent = `${entry.rows} facets. ${entry.changeableRows} facet${entry.changeableRows === 1 ? " has" : "s have"} a supported matrix change path; the remaining ${remainingRows} facet${remainingRows === 1 ? "" : "s"} can still be compared and assigned expected state. ${categoryChangeDetail(capabilities)}${readOnlyNote}`
+      facts.push(
+        matrixCapabilityFact(
+          "matrix",
+          `${entry.rows} facets`,
+          `Every loaded ${selectedCategory} facet remains available for comparison`,
+        ),
+        matrixCapabilityFact(
+          "edit",
+          `${entry.changeableRows} changeable`,
+          `${entry.changeableRows} facet${entry.changeableRows === 1 ? " has" : "s have"} a supported matrix change path. ${categoryChangeDetail(capabilities)}`,
+          "change",
+        ),
+        matrixCapabilityFact(
+          "inspect",
+          `${remainingRows} compare-only`,
+          `${remainingRows} facet${remainingRows === 1 ? "" : "s"} can still be compared and assigned expected state`,
+          "compare",
+        ),
+      )
     }
   }
+  if (readOnly) {
+    facts.push(matrixCapabilityFact(
+      "info",
+      "Read-only",
+      "This session can inspect capabilities and intent, but cannot save expected state or apply Cloudflare writes",
+    ))
+  }
+  elements.categoryCapabilityDetail.replaceChildren(...facts)
 }
 
 function renderTaskSummaries() {
@@ -3762,12 +4043,12 @@ function renderScopes() {
   const previous = elements.scope.value || DEFAULT_MATRIX_SCOPE
   const zoneCount = state.inventory.zones.length
   const scopes = [
-    [MATRIX_SCOPE.FLEET_PATTERNS, "Fleet patterns", "Present in at least two zones"],
-    [MATRIX_SCOPE.FLEET_WIDE, "Fleet-wide", "Present in every zone"],
-    [MATRIX_SCOPE.ZONE_SPECIFIC, "Zone-specific", "Present in one zone"],
-    [MATRIX_SCOPE.ALL, "Everything", "No coverage filter"],
+    [MATRIX_SCOPE.FLEET_PATTERNS, "Fleet patterns"],
+    [MATRIX_SCOPE.FLEET_WIDE, "Fleet-wide"],
+    [MATRIX_SCOPE.ZONE_SPECIFIC, "Zone-specific"],
+    [MATRIX_SCOPE.ALL, "Everything"],
   ]
-  elements.scope.replaceChildren(...scopes.map(([value, label, title]) => {
+  elements.scope.replaceChildren(...scopes.map(([value, label]) => {
     const count = state.matrix.rows.filter(
       (row) => facetMatchesScope(row.presentCount, zoneCount, value),
     ).length
@@ -3775,7 +4056,6 @@ function renderScopes() {
       text: `${label} (${count})`,
     })
     option.value = value
-    option.title = title
     return option
   }))
   elements.scope.value = scopes.some(([value]) => value === previous)
@@ -3786,13 +4066,13 @@ function renderScopes() {
 function renderIntentStatuses() {
   const previous = elements.intentStatus.value
   const statuses = [
-    [MATRIX_INTENT_FILTER.ALL, "All intent results", "No facet intent-result filter"],
-    [MATRIX_INTENT_FILTER.MATCH, "Matches intent", "Every applicable loaded zone satisfies composed fleet intent"],
-    [MATRIX_INTENT_FILTER.DRIFT, "Intent drift", "At least one applicable loaded zone does not satisfy composed fleet intent"],
-    [MATRIX_INTENT_FILTER.REVIEW, "Needs intent review", "Saved intent cannot be fully evaluated against the loaded zones"],
-    [MATRIX_INTENT_FILTER.UNGOVERNED, "Intent not set", "No fleet intent policy governs the facet"],
+    [MATRIX_INTENT_FILTER.ALL, "All intent results"],
+    [MATRIX_INTENT_FILTER.MATCH, "Matches intent"],
+    [MATRIX_INTENT_FILTER.DRIFT, "Intent drift"],
+    [MATRIX_INTENT_FILTER.REVIEW, "Needs intent review"],
+    [MATRIX_INTENT_FILTER.UNGOVERNED, "Intent not set"],
   ]
-  elements.intentStatus.replaceChildren(...statuses.map(([value, label, title]) => {
+  elements.intentStatus.replaceChildren(...statuses.map(([value, label]) => {
     const count = value
       ? state.matrix.rows.filter((row) => row.intentState.status === value).length
       : state.matrix.rows.length
@@ -3800,7 +4080,6 @@ function renderIntentStatuses() {
       text: `${label} (${count})`,
     })
     option.value = value
-    option.title = title
     return option
   }))
   elements.intentStatus.value = statuses.some(([value]) => value === previous)
@@ -3826,7 +4105,6 @@ function renderPhases() {
       text: `${rulePhaseLabel(phase)} | ${phase} (${count})`,
     })
     option.value = phase
-    option.title = phase
     elements.phase.append(option)
   }
   if (counts.has(previous)) elements.phase.value = previous
@@ -3904,9 +4182,13 @@ function syncDnsTypeAvailability() {
   const available = !category || DNS_MATRIX_CATEGORY_SET.has(category)
   elements.dnsType.hidden = category === MATRIX_CATEGORY.REDIRECTS
   elements.dnsType.disabled = !available
-  elements.dnsType.title = available
-    ? "Limit DNS rows to one record type"
-    : "DNS type applies only to DNS categories"
+  elements.dnsType.setAttribute(
+    "aria-label",
+    available
+      ? "Filter DNS rows by record type"
+      : "DNS record type filter unavailable because it applies only to DNS categories",
+  )
+  elements.dnsType.removeAttribute("title")
   if (!available) elements.dnsType.value = ""
   syncTxtPurposeAvailability()
 }
@@ -3915,9 +4197,13 @@ function syncTxtPurposeAvailability() {
   const available = !elements.dnsType.disabled && elements.dnsType.value === "TXT"
   elements.txtPurpose.hidden = !available
   elements.txtPurpose.disabled = !available
-  elements.txtPurpose.title = available
-    ? "Limit individual TXT record rows to one purpose"
-    : "TXT purpose is available when DNS type is TXT"
+  elements.txtPurpose.setAttribute(
+    "aria-label",
+    available
+      ? "Filter individual TXT record rows by purpose"
+      : "TXT purpose filter unavailable until the DNS record type is TXT",
+  )
+  elements.txtPurpose.removeAttribute("title")
   if (!available) elements.txtPurpose.value = ""
 }
 
@@ -3925,9 +4211,13 @@ function syncRedirectTypeAvailability() {
   const available = elements.category.value === MATRIX_CATEGORY.REDIRECTS
   elements.redirectType.hidden = !available
   elements.redirectType.disabled = !available
-  elements.redirectType.title = available
-    ? "Limit redirects to static or computed destinations"
-    : "Redirect target type applies only to redirects"
+  elements.redirectType.setAttribute(
+    "aria-label",
+    available
+      ? "Filter redirects by static or computed destination"
+      : "Redirect target filter unavailable outside the redirects category",
+  )
+  elements.redirectType.removeAttribute("title")
   if (!available) elements.redirectType.value = ""
 }
 
@@ -4324,7 +4614,7 @@ function syncMatrixFilterControls(filters = currentMatrixFilters()) {
     : label
   elements.filterReset.hidden = changeCount === 0
   elements.filterReset.disabled = changeCount === 0
-  elements.filterPanelToggle.textContent = visibleLabel
+  setMatrixControlLabel(elements.filterPanelToggle, visibleLabel)
   elements.filterPanelToggle.setAttribute(
     "aria-label",
     contextualActionLabel(
@@ -4358,7 +4648,7 @@ function resetMatrixFilters() {
     "aria-pressed",
     String(DEFAULT_MATRIX_FILTERS.targetHolesOnly),
   )
-  elements.targetHoles.textContent = "Target holes"
+  setMatrixControlLabel(elements.targetHoles, "Target holes")
   state.filterPanelExpanded = false
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
@@ -4379,7 +4669,10 @@ function applyViewFilters(view) {
   elements.changeSupportToggle.setAttribute("aria-pressed", String(view.changeableOnly))
   elements.differenceToggle.setAttribute("aria-pressed", String(view.differencesOnly))
   elements.targetHoles.setAttribute("aria-pressed", String(view.targetHolesOnly))
-  elements.targetHoles.textContent = view.targetHolesOnly ? "Target holes only" : "Target holes"
+  setMatrixControlLabel(
+    elements.targetHoles,
+    view.targetHolesOnly ? "Target holes only" : "Target holes",
+  )
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
   renderCategoryCapability()
@@ -4570,7 +4863,7 @@ function showPolicyExceptionInMatrix(exception) {
     elements.redirectType.value = ""
     elements.differenceToggle.setAttribute("aria-pressed", "false")
     elements.targetHoles.setAttribute("aria-pressed", "false")
-    elements.targetHoles.textContent = "Target holes"
+    setMatrixControlLabel(elements.targetHoles, "Target holes")
     syncDnsTypeAvailability()
     syncRedirectTypeAvailability()
     filterRows()
@@ -6598,7 +6891,7 @@ function showIntentPolicyInMatrix(policy) {
   elements.redirectType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
   elements.targetHoles.setAttribute("aria-pressed", "false")
-  elements.targetHoles.textContent = "Target holes"
+  setMatrixControlLabel(elements.targetHoles, "Target holes")
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
   filterRows()
@@ -8511,12 +8804,12 @@ function cellComparisonStatus(row, cell) {
           label: "No consensus",
           title: "The most common present values are tied",
         }
-  const element = createElement("span", {
-    className: `cell-comparison-status ${status.className}`,
-    text: status.label,
-  })
-  element.title = status.title
-  element.setAttribute("aria-label", status.title)
+  const element = matrixStatusChip(
+    status.className === MATRIX_COMPARISON_STATE.MATCH ? "ok" : "drift",
+    status.label,
+    status.title,
+    `cell-comparison-status ${status.className}`,
+  )
   return {
     className: status.className,
     element,
@@ -8529,13 +8822,21 @@ function cellIntentState(row, zone) {
 
 function facetIntentStatus(row) {
   const presentation = fleetIntentFacetResultPresentation(row.intentState)
-  const element = createElement("small", {
-    className: `facet-intent-status ${presentation.status}`,
-    text: presentation.label,
-  })
-  element.title = presentation.title
-  element.setAttribute("aria-label", presentation.title)
-  return element
+  const iconName = presentation.status === MATRIX_INTENT_FILTER.MATCH
+    ? "ok"
+    : presentation.status === MATRIX_INTENT_FILTER.DRIFT
+      ? "drift"
+      : presentation.status === MATRIX_INTENT_FILTER.UNGOVERNED
+        ? "absent"
+        : "info"
+  return matrixStatusChip(
+    iconName,
+    presentation.label,
+    presentation.title,
+    `facet-intent-status ${presentation.status}`,
+    "small",
+    "start",
+  )
 }
 
 function cellIntentStatus(state) {
@@ -8588,13 +8889,17 @@ function cellIntentStatus(state) {
   }
   const definition = definitions[state.status]
   if (!definition) return null
-  const element = createElement("span", {
-    className: `cell-intent-status ${state.status}`,
-    text: definition.label,
-  })
-  element.title = definition.title
-  element.setAttribute("aria-label", definition.title)
-  return element
+  const iconName = state.status === FLEET_INTENT_CELL_STATUS.MATCH
+    ? "ok"
+    : state.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED
+      ? "ack"
+      : "drift"
+  return matrixStatusChip(
+    iconName,
+    definition.label,
+    definition.title,
+    `cell-intent-status ${state.status}`,
+  )
 }
 
 function applyIntentCellPresentation(td, row, zone) {
@@ -8630,6 +8935,53 @@ function alignmentBlockerDetail(alignment, control) {
   return detail
 }
 
+function matrixStatusChip(
+  iconName,
+  label,
+  description,
+  className,
+  tag = "span",
+  tooltipAlign = "",
+) {
+  const status = createElement(tag, { className })
+  status.append(
+    icon(iconName),
+    createElement("span", { text: label }),
+  )
+  status.setAttribute("role", "note")
+  status.setAttribute("aria-label", description)
+  return attachTooltip(status, description, { align: tooltipAlign })
+}
+
+function matrixActionButton(label, className, options = {}) {
+  const button = actionButton(label, () => {}, {
+    context: options.context,
+    disabled: options.disabled,
+    icon: options.icon,
+    iconOnly: options.iconOnly,
+    title: options.title,
+    tooltipAlign: options.tooltipAlign,
+    tooltipBelow: options.tooltipBelow,
+  })
+  button.classList.remove("button", "button-quiet", "button-icon")
+  button.classList.add("cell-action", ...className.split(" ").filter(Boolean))
+  if (options.iconOnly) button.classList.add("matrix-icon-action")
+  if (options.icon && !options.iconOnly) {
+    const iconElement = button.querySelector(":scope > .icon")
+    const tooltip = button.querySelector(MATRIX_DIRECT_TOOLTIP_SELECTOR)
+    button.replaceChildren(
+      iconElement,
+      createElement("span", {
+        className: MATRIX_CONTROL_LABEL_CLASS,
+        text: label,
+      }),
+    )
+    if (tooltip) button.append(tooltip)
+  }
+  if (options.accessibleName) button.setAttribute("aria-label", options.accessibleName)
+  return button
+}
+
 function appendIntentCellAction(actions, row, zone, intentCell) {
   const actionable = intentCell?.status === FLEET_INTENT_CELL_STATUS.CONFLICT
     || intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
@@ -8639,22 +8991,27 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
     const alignment = assessIntentAlignment(row, {
       zoneIds: [zone.meta.id],
     })
-    const alignmentButton = createElement("button", {
-      className: "cell-action align-intent-cell",
-      text: alignment.available ? "Align to intent" : "Alignment blocked",
-    })
-    alignmentButton.type = "button"
+    const alignmentLabel = alignment.available ? "Align to intent" : "Alignment blocked"
+    const alignmentButton = matrixActionButton(
+      alignmentLabel,
+      "align-intent-cell",
+      {
+        context: `${row.label} on ${zone.meta.name}`,
+        icon: alignment.available ? "align" : "drift",
+        iconOnly: true,
+        title: alignment.reason,
+      },
+    )
     alignmentButton.disabled = !alignment.available
     alignmentButton.dataset.alignmentBlocked = String(!alignment.available)
     alignmentButton.dataset.actionTitle = alignment.reason
     alignmentButton.setAttribute(
       "aria-label",
       contextualActionLabel(
-        alignmentButton.textContent,
+        alignmentLabel,
         `${row.label} on ${zone.meta.name}`,
       ),
     )
-    alignmentButton.title = alignment.reason
     intentAlignmentByButton.set(
       alignmentButton,
       intentAlignmentAction(row, { zoneIds: [zone.meta.id] }),
@@ -8670,13 +9027,12 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
   }
   if (intentCell?.status === FLEET_INTENT_CELL_STATUS.MISSING
     || intentCell?.status === FLEET_INTENT_CELL_STATUS.VARIANT) {
-    const button = createElement("button", {
-      className: "cell-action acknowledge-intent",
-      text: "Acknowledge",
+    const button = matrixActionButton("Acknowledge", "acknowledge-intent", {
+      accessibleName: `Acknowledge ${row.label} on ${zone.meta.name}`,
+      icon: "ack",
+      iconOnly: true,
+      title: "Accept only this exact observed state as intentional",
     })
-    button.type = "button"
-    button.setAttribute("aria-label", `Acknowledge ${row.label} on ${zone.meta.name}`)
-    button.title = "Accept only this exact observed state as intentional"
     button.disabled = !intentWritable()
     intentCellActionByButton.set(button, {
       intentCell,
@@ -8688,19 +9044,16 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
   }
   if (intentCell?.status === FLEET_INTENT_CELL_STATUS.ACKNOWLEDGED) {
     const actionLabel = "Unacknowledge"
-    const button = createElement("button", {
-      className: "cell-action remove-acknowledgement",
-      text: actionLabel,
-    })
-    button.type = "button"
-    button.setAttribute(
-      "aria-label",
-      contextualActionLabel(
-        actionLabel,
-        `Remove acknowledgement for ${row.label} on ${zone.meta.name}`,
-      ),
+    const button = matrixActionButton(
+      actionLabel,
+      "remove-acknowledgement",
+      {
+        context: `Remove acknowledgement for ${row.label} on ${zone.meta.name}`,
+        icon: "remove",
+        iconOnly: true,
+        title: "Return this exact difference to actionable drift",
+      },
     )
-    button.title = "Return this exact difference to actionable drift"
     button.disabled = !intentWritable()
     intentCellActionByButton.set(button, {
       acknowledgement: intentCell.acknowledgement,
@@ -8757,20 +9110,19 @@ function matrixCell(row, zone) {
       }
       const label = `Fill ${row.label} on ${zone.meta.name}`
       td.classList.add("actionable-cell", "fillable-hole")
-      td.title = `${label}; live state and the complete API plan will be reviewed first`
-      td.dataset.editTitle = td.title
       fillActionByCell.set(td, action)
-      const fillButton = createElement("button", {
-        className: "cell-action fill-hole",
-        text: "Fill",
+      const fillButton = matrixActionButton("Fill", "fill-hole", {
+        accessibleName: label,
+        icon: "add",
+        iconOnly: true,
+        title: "Build a live plan from the fleet value",
+        tooltipAlign: "end",
+        tooltipBelow: true,
       })
-      fillButton.type = "button"
-      fillButton.setAttribute("aria-label", label)
-      fillButton.title = "Build a live plan from the fleet value"
       fillButton.disabled = state.busy
       td.append(fillButton)
     } else if (intentPolicy && resolution?.available && !intentResolutionAvailable) {
-      td.title = intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
+      const reason = intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN
         ? "Intent requires this facet to remain absent, so fill actions are unavailable"
         : intentValueConstraint === FLEET_INTENT_VALUE_CONSTRAINT.MUST_DIFFER
           ? intentPresenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.OPTIONAL
@@ -8779,14 +9131,15 @@ function matrixCell(row, zone) {
           : "Intent detects this missing value, but no matching fleet source or product-specific create flow is available"
       td.setAttribute(
         "aria-label",
-        `Missing ${row.label} on ${zone.meta.name}. ${td.title}`,
+        `Missing ${row.label} on ${zone.meta.name}. ${reason}`,
       )
+      attachTooltip(td, reason, { align: "end" })
     } else if (resolution?.reason) {
-      td.title = resolution.reason
       td.setAttribute(
         "aria-label",
         `Missing ${row.label} on ${zone.meta.name}. ${resolution.reason}`,
       )
+      attachTooltip(td, resolution.reason, { align: "end" })
     }
     const intentActions = createElement("div", { className: "cell-actions intent-cell-actions" })
     appendIntentCellAction(intentActions, row, zone, intentCell)
@@ -8813,7 +9166,12 @@ function matrixCell(row, zone) {
         text: count > 1 ? `${label} ${count}` : label,
       })
       purposeLabel.dataset.txtPurpose = purpose
-      purposeLabel.title = `${count} record${count === 1 ? "" : "s"} classified as ${label}`
+      const purposeDescription = `${count} record${
+        count === 1 ? "" : "s"
+      } classified as ${label}`
+      purposeLabel.setAttribute("role", "note")
+      purposeLabel.setAttribute("aria-label", purposeDescription)
+      attachTooltip(purposeLabel, purposeDescription)
       labels.append(purposeLabel)
     }
     td.append(labels)
@@ -8827,9 +9185,7 @@ function matrixCell(row, zone) {
   }))
 
   if (directlyEditable) {
-    const label = editActionLabel(cell.action, row, zone)
     td.classList.add("actionable-cell", "editable-cell")
-    td.dataset.editTitle = `${label}; the desired state may expand into multiple API operations`
     editActionByCell.set(td, cell.action)
   }
 
@@ -8842,59 +9198,49 @@ function matrixCell(row, zone) {
   if (structuredValue || directlyEditable || hasWriteSecondaryAction || hasWorkspaceAction || hasIntentAction) {
     const actions = createElement("div", { className: "cell-actions" })
     if (structuredValue) {
-      const inspectButton = createElement("button", {
-        className: "cell-action inspect-facet-value",
-        text: "Inspect",
+      const inspectButton = matrixActionButton("Inspect", "inspect-facet-value", {
+        accessibleName: `Inspect compared and source values for ${row.label} on ${zone.meta.name}`,
+        icon: "inspect",
+        iconOnly: true,
+        title: "See the exact compared value beside its source value",
       })
-      inspectButton.type = "button"
-      inspectButton.setAttribute(
-        "aria-label",
-        `Inspect compared and source values for ${row.label} on ${zone.meta.name}`,
-      )
-      inspectButton.title = "See the exact compared value beside its source value"
       inspectButton.addEventListener("click", () => {
         openFacetEquivalence(row, zone.meta.name)
       })
       actions.append(inspectButton)
     }
     if (cell.parentAction) {
-      const parentButton = createElement("button", {
-        className: "cell-action open-ruleset",
-        text: "Ruleset",
+      const parentButton = matrixActionButton("Ruleset", "open-ruleset", {
+        accessibleName: `Open the parent ruleset for ${row.label} on ${zone.meta.name}`,
+        icon: "layers",
+        iconOnly: true,
+        title: "Open the parent ruleset workspace",
       })
-      parentButton.type = "button"
-      parentButton.setAttribute("aria-label", `Open the parent ruleset for ${row.label} on ${zone.meta.name}`)
-      parentButton.title = "Open the parent ruleset workspace"
       workspaceActionByButton.set(parentButton, cell.parentAction)
       actions.append(parentButton)
     }
     if (directlyEditable) {
-      const editButton = createElement("button", {
-        className: "cell-action edit-cell",
-        text: "Edit",
+      const editButton = matrixActionButton("Edit", "edit-cell", {
+        accessibleName: editActionLabel(cell.action, row, zone),
+        icon: "edit",
+        iconOnly: true,
+        title: "Open the desired-state editor; live state is checked before confirmation",
       })
-      editButton.type = "button"
-      editButton.setAttribute("aria-label", editActionLabel(cell.action, row, zone))
-      editButton.title = "Open the desired-state editor; live state is checked before confirmation"
       editButton.disabled = state.busy
       actions.append(editButton)
     }
     if (hasWriteSecondaryAction) {
       td.classList.add("has-secondary-action")
-      const button = createElement("button", {
-        className: "cell-action copy-rule",
-        text: "Copy",
+      const button = matrixActionButton("Copy", "copy-rule", {
+        accessibleName: `Copy ${row.label} from ${zone.meta.name} to selected zones`,
+        icon: "copy",
+        iconOnly: true,
+        title: `Copy this rule from ${zone.meta.name} to the selected zones after live validation`,
       })
-      button.type = "button"
       button.dataset.phase = cell.secondaryAction.phase
       button.dataset.ruleId = cell.secondaryAction.ruleId
       button.dataset.rulesetId = cell.secondaryAction.rulesetId
       button.dataset.sourceZoneId = cell.secondaryAction.sourceZoneId
-      button.setAttribute(
-        "aria-label",
-        `Copy ${row.label} from ${zone.meta.name} to selected zones`,
-      )
-      button.title = `Copy this rule from ${zone.meta.name} to the selected zones after live validation`
       button.disabled = state.busy
       actions.append(button)
     }
@@ -8907,11 +9253,12 @@ function matrixCell(row, zone) {
       || !cell.action
       || (cell.capability.kind === "not-copyable" && !cell.secondaryAction))
   if (showCapability) {
-    const capability = createElement("small", {
-      className: `cell-capability ${cell.capability.kind}`,
-      text: cell.capability.label,
-    })
-    if (cell.capability.reason) capability.title = cell.capability.reason
+    const capability = matrixStatusChip(
+      "info",
+      cell.capability.label,
+      cell.capability.reason || cell.capability.label,
+      `cell-capability ${cell.capability.kind}`,
+    )
     capability.setAttribute(
       "aria-label",
       cell.capability.reason
@@ -8966,16 +9313,20 @@ function renderMatrix() {
       text: matrixCategoryLabel(row.category),
     }))
     const hasConsensus = row.consensusCanonical !== null
-    const consensusBadge = createElement("small", {
-      className: `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}`,
-      text: hasConsensus
-        ? `Consensus ${row.consensusCount}/${state.inventory.zones.length}`
-        : "No consensus",
-    })
-    consensusBadge.title = hasConsensus
+    const consensusLabel = hasConsensus
+      ? `Consensus ${row.consensusCount}/${state.inventory.zones.length}`
+      : "No consensus"
+    const consensusDescription = hasConsensus
       ? `${row.consensusCount} of ${state.inventory.zones.length} zones match the unique row consensus`
       : `${row.variantCount} present variants; the most common values are tied`
-    consensusBadge.setAttribute("aria-label", consensusBadge.title)
+    const consensusBadge = matrixStatusChip(
+      hasConsensus ? "ok" : "drift",
+      consensusLabel,
+      consensusDescription,
+      `comparison-badge ${hasConsensus ? "consensus" : "no-consensus"}`,
+      "small",
+      "start",
+    )
     const intentBadge = facetIntentStatus(row)
     const facetTitle = createElement("div", { className: "facet-title" })
     const facetTitleCopy = createElement("span", {
@@ -9000,17 +9351,16 @@ function renderMatrix() {
     if (row.description) facetCell.append(createElement("small", { text: row.description }))
     const phase = createFacetPhaseElement(row, "matrix-facet-phase")
     if (phase) facetCell.append(phase)
-    const equivalenceButton = createElement("button", {
-      className: "cell-action facet-equivalence-open",
-      text: "How matching works",
-    })
-    equivalenceButton.type = "button"
-    equivalenceButton.setAttribute(
-      "aria-label",
-      contextualActionLabel(
-        "How matching works",
-        row.label,
-      ),
+    const equivalenceButton = matrixActionButton(
+      "How matching works",
+      "facet-equivalence-open",
+      {
+        context: row.label,
+        icon: "info",
+        iconOnly: true,
+        title: "Explain the exact identity, comparison value, and source fields used for this facet",
+        tooltipAlign: "start",
+      },
     )
     equivalenceButton.addEventListener("click", () => {
       openFacetEquivalence(row)
@@ -9025,16 +9375,18 @@ function renderMatrix() {
     )
     if (row.variantCount > 1) {
       const compareLabel = `Compare ${row.variantCount} values`
-      const compareButton = createElement("button", {
-        className: "cell-action compare-values",
-        text: compareLabel,
-      })
-      compareButton.type = "button"
-      compareButton.setAttribute(
-        "aria-label",
-        contextualActionLabel(compareLabel, `Observed values for ${row.label}`),
+      const compareButton = matrixActionButton(
+        `${row.variantCount} values`,
+        "compare-values",
+        {
+          accessibleName: contextualActionLabel(
+            compareLabel,
+            `Observed values for ${row.label}`,
+          ),
+          icon: "matrix",
+          title: "See the zones using each value and only the fields that differ",
+        },
       )
-      compareButton.title = "See the zones using each value and only the fields that differ"
       valueComparisonRowByButton.set(compareButton, row)
       facetActions.append(compareButton)
     }
@@ -9048,26 +9400,22 @@ function renderMatrix() {
         : policies.length === 1
           ? `Intent: ${intentPolicyConstraintLabel(policies[0])}`
           : `Intent (${policies.length})`
-      const intentButton = createElement("button", {
-        className: "cell-action intent-set-policy",
-        text: intentLabel,
-      })
-      intentButton.type = "button"
-      intentButton.disabled = !intentWritable()
-      intentButton.setAttribute(
-        "aria-label",
-        contextualActionLabel(
+      const intentDescription = policies.length > 1
+        ? "Open this facet's policy editor and switch or combine zone scopes"
+        : policies.length === 1
+          ? `${policyGroup?.name || "Configured coverage"} | ${intentPolicyConstraintLabel(policies[0])}. Click to edit.`
+          : "Choose coverage, presence, and the relationship between present values"
+      const intentButton = matrixActionButton(intentLabel, "intent-set-policy", {
+        accessibleName: contextualActionLabel(
           intentLabel,
           policies.length > 1
             ? `Edit ${policies.length} intent policies for ${row.label}`
             : `${policies.length === 1 ? "Edit" : "Set"} intent for ${row.label}`,
         ),
-      )
-      intentButton.title = policies.length > 1
-        ? "Open this facet's policy editor and switch or combine zone scopes"
-        : policies.length === 1
-          ? `${policyGroup?.name || "Configured coverage"} | ${intentPolicyConstraintLabel(policies[0])}. Click to edit.`
-          : "Choose coverage, presence, and the relationship between present values"
+        icon: "edit",
+        title: intentDescription,
+      })
+      intentButton.disabled = !intentWritable()
       intentPolicyRowByButton.set(intentButton, {
         policy: preferredIntentPolicy(policies),
         row,
@@ -9079,21 +9427,22 @@ function renderMatrix() {
       const alignmentLabel = alignment.available
         ? `Review alignment (${alignment.targets.length})`
         : `Alignment blocked (${alignment.actionableCount})`
-      const alignmentButton = createElement("button", {
-        className: "cell-action review-intent-alignment",
-        text: alignmentLabel,
-      })
-      alignmentButton.type = "button"
+      const alignmentButton = matrixActionButton(
+        alignment.available
+          ? `Align ${alignment.targets.length}`
+          : `Blocked ${alignment.actionableCount}`,
+        "review-intent-alignment",
+        {
+          accessibleName: contextualActionLabel(
+            alignmentLabel,
+            `Align ${row.label} with fleet intent`,
+          ),
+          icon: alignment.available ? "align" : "drift",
+          title: alignment.reason,
+        },
+      )
       alignmentButton.disabled = !alignment.available
       alignmentButton.dataset.alignmentBlocked = String(!alignment.available)
-      alignmentButton.setAttribute(
-        "aria-label",
-        contextualActionLabel(
-          alignmentLabel,
-          `Align ${row.label} with fleet intent`,
-        ),
-      )
-      alignmentButton.title = alignment.reason
       alignmentButton.dataset.actionTitle = alignment.reason
       intentAlignmentByButton.set(alignmentButton, intentAlignmentAction(row))
       facetActions.append(alignmentButton)
@@ -9105,23 +9454,50 @@ function renderMatrix() {
       }
     }
     if (actionTypes.has("zone-setting")) {
-      facetActions.append(createElement("small", { className: "capability-badge", text: "Edit settings" }))
+      facetActions.append(matrixStatusChip(
+        "edit",
+        "Settings",
+        "Direct editing is available for individual zone settings in this row",
+        "capability-badge",
+        "small",
+        "start",
+      ))
     }
     if (actionTypes.has("ruleset-rule")) {
-      facetActions.append(createElement("small", { className: "capability-badge rule", text: "Edit rules" }))
+      facetActions.append(matrixStatusChip(
+        "edit",
+        "Rules",
+        "Direct rule editing is available for individual zones in this row",
+        "capability-badge rule",
+        "small",
+        "start",
+      ))
     }
     if (actionTypes.has("dns-records")) {
-      facetActions.append(createElement("small", { className: "capability-badge dns", text: "Edit DNS" }))
+      facetActions.append(matrixStatusChip(
+        "edit",
+        "DNS",
+        "Direct DNS record editing is available for individual zones in this row",
+        "capability-badge dns",
+        "small",
+        "start",
+      ))
     }
     if (secondaryActionTypes.has("ruleset-rule-copy")) {
-      facetActions.append(createElement("small", { className: "capability-badge copy", text: "Copy rules" }))
+      facetActions.append(matrixStatusChip(
+        "copy",
+        "Copy",
+        "Rules in this row can be copied to selected target zones after live validation",
+        "capability-badge copy",
+        "small",
+        "start",
+      ))
     }
     if (row.resolutionKind === HOLE_RESOLUTION_KIND.DNS_RECORDS && !readOnly) {
-      const bulkFillButton = createElement("button", {
-        className: "cell-action bulk-fill",
-        text: "Fill targets",
+      const bulkFillButton = matrixActionButton("Fill targets", "bulk-fill", {
+        icon: "add",
+        title: "Choose target zones with missing values to build one reviewed DNS fill plan",
       })
-      bulkFillButton.type = "button"
       bulkFillButton.hidden = true
       bulkFillButton.disabled = true
       bulkFillRowByButton.set(bulkFillButton, row)
@@ -9129,26 +9505,28 @@ function renderMatrix() {
     }
     if (row.fleetAction?.type === FLEET_ACTION_KIND.RULE_RENAME && !readOnly) {
       const renameLabel = "Rename fleet"
-      const renameButton = createElement("button", {
-        className: "cell-action rename-rule",
-        text: renameLabel,
+      const renameDescription = `Rename ${row.fleetAction.rules.length} live rule instance${row.fleetAction.rules.length === 1 ? "" : "s"} after live validation`
+      const renameButton = matrixActionButton("Rename", "rename-rule", {
+        accessibleName: contextualActionLabel(
+          renameLabel,
+          `Rename ${row.label} across fleet`,
+        ),
+        icon: "edit",
+        title: renameDescription,
       })
-      renameButton.type = "button"
-      renameButton.setAttribute(
-        "aria-label",
-        contextualActionLabel(renameLabel, `Rename ${row.label} across fleet`),
-      )
-      renameButton.title = `Rename ${row.fleetAction.rules.length} live rule instance${row.fleetAction.rules.length === 1 ? "" : "s"} after live validation`
-      renameButton.dataset.actionTitle = renameButton.title
+      renameButton.dataset.actionTitle = renameDescription
       renameButton.disabled = state.busy
       fleetActionByButton.set(renameButton, row.fleetAction)
       facetActions.append(renameButton)
     } else if (row.fleetActionReason) {
-      const unavailable = createElement("small", {
-        className: "capability-badge unavailable",
-        text: "Rename blocked",
-      })
-      unavailable.title = row.fleetActionReason
+      const unavailable = matrixStatusChip(
+        "drift",
+        "Rename blocked",
+        row.fleetActionReason,
+        "capability-badge unavailable",
+        "small",
+        "start",
+      )
       unavailable.setAttribute(
         "aria-label",
         `Fleet rename unavailable. ${row.fleetActionReason}`,
@@ -9446,10 +9824,11 @@ function filterRows(options = {}) {
   }
   elements.matrixBody.replaceChildren(...visibleRows)
 
-  elements.visibleCount.textContent = matrixVisibleCountText(
-    rows.length,
-    visibleRows.length,
-    filters,
+  elements.visibleCount.replaceChildren(
+    icon("matrix"),
+    createElement("span", {
+      text: matrixVisibleCountText(rows.length, visibleRows.length, filters),
+    }),
   )
   const emptyMessage = matrixEmptyMessage(rows.length, visibleRows.length)
   elements.matrixEmpty.textContent = emptyMessage
@@ -9503,19 +9882,20 @@ function updateSelectionStyles() {
   elements.selectDrifted.disabled = driftCount === 0
   elements.selectedColumnsOnly.disabled = !selectionCanNarrow
   elements.selectedColumnsOnly.setAttribute("aria-pressed", String(selectedColumnsOnly))
-  elements.selectedColumnsOnly.textContent = selectedColumnsOnly
-    ? "Show all zones"
-    : "Selected zones only"
-  elements.selectedColumnsOnly.title = selectedColumnsOnly
+  setMatrixControlLabel(
+    elements.selectedColumnsOnly,
+    selectedColumnsOnly ? "Show all zones" : "Selected zones only",
+  )
+  setMatrixControlTooltip(elements.selectedColumnsOnly, selectedColumnsOnly
     ? "Show every zone column"
-    : "Hide unselected zone columns without changing fleet comparisons"
+    : "Hide unselected zone columns without changing fleet comparisons")
   elements.targetClear.disabled = count === 0
   elements.targetHoles.disabled = count === 0
   elements.targetSelectAll.disabled = zoneCount > 0 && count === zoneCount
   elements.targetSelectDrifted.disabled = driftCount === 0
   if (count === 0 && targetHolesWasActive) {
     elements.targetHoles.setAttribute("aria-pressed", "false")
-    elements.targetHoles.textContent = "Target holes"
+    setMatrixControlLabel(elements.targetHoles, "Target holes")
   }
   if (elements.targetDialog.open) updateTargetSelectionSummary()
   updateActionButtons()
@@ -9630,12 +10010,15 @@ function updateActionButtons() {
 
   for (const cell of matrixAwareQuery(".editable-cell, .fillable-hole")) {
     cell.classList.toggle("write-locked", writeLocked)
-    cell.title = writeLocked
-      ? writeLockReason
-      : cell.dataset.editTitle
   }
   for (const button of matrixAwareQuery(".edit-cell")) {
     button.disabled = writeLocked
+    setMatrixControlTooltip(
+      button,
+      writeLocked
+        ? writeLockReason
+        : "Open the desired-state editor; live state is checked before confirmation",
+    )
   }
   for (const button of matrixAwareQuery(".activity-undo")) {
     const entry = activityEntryByButton.get(button)
@@ -9646,7 +10029,10 @@ function updateActionButtons() {
   }
   for (const button of matrixAwareQuery(".fill-hole")) {
     button.disabled = writeLocked
-    if (writeLocked) button.title = writeLockReason
+    setMatrixControlTooltip(
+      button,
+      writeLocked ? writeLockReason : "Build a live plan from the fleet value",
+    )
   }
   if (state.inlineEditor) {
     setInlineEditorDisabled(state.inlineEditor, writeLocked)
@@ -9663,14 +10049,17 @@ function updateActionButtons() {
     const targetCount = batch.targetZoneIds.length
     button.hidden = targetCount === 0
     button.disabled = writeLocked || !batch.available
-    button.textContent = batch.available
-      ? `Fill ${targetCount} target${targetCount === 1 ? "" : "s"}`
-      : "Choose per cell"
-    button.title = writeLocked
+    setMatrixControlLabel(
+      button,
+      batch.available
+        ? `Fill ${targetCount} target${targetCount === 1 ? "" : "s"}`
+        : "Choose per cell",
+    )
+    setMatrixControlTooltip(button, writeLocked
       ? writeLockReason
       : batch.available
         ? `Build one live DNS plan for ${targetCount} selected target zone${targetCount === 1 ? "" : "s"}`
-        : batch.reason
+        : batch.reason)
     button.setAttribute(
       "aria-label",
       batch.available
@@ -9682,15 +10071,18 @@ function updateActionButtons() {
     const targetCount = state.selectedZoneIds.size
       - (state.selectedZoneIds.has(button.dataset.sourceZoneId) ? 1 : 0)
     button.disabled = writeLocked || targetCount === 0
-    button.title = writeLocked
+    setMatrixControlTooltip(button, writeLocked
       ? writeLockReason
       : targetCount === 0
         ? "Choose at least one destination zone other than the source"
-        : `Copy this rule to ${targetCount} selected destination zone${targetCount === 1 ? "" : "s"} after live validation`
+        : `Copy this rule to ${targetCount} selected destination zone${targetCount === 1 ? "" : "s"} after live validation`)
   }
   for (const button of matrixAwareQuery(".rename-rule")) {
     button.disabled = writeLocked
-    button.title = writeLocked ? writeLockReason : button.dataset.actionTitle
+    setMatrixControlTooltip(
+      button,
+      writeLocked ? writeLockReason : button.dataset.actionTitle,
+    )
   }
   for (const button of matrixAwareQuery(
     ".review-intent-alignment, .align-intent-cell",
@@ -9698,11 +10090,11 @@ function updateActionButtons() {
     const blocked = button.dataset.alignmentBlocked === "true"
     const intentPending = state.intentSaving || state.intentSyncing
     button.disabled = writeLocked || intentPending || blocked
-    button.title = writeLocked
+    setMatrixControlTooltip(button, writeLocked
       ? writeLockReason
       : intentPending
         ? "Wait for the fleet intent document to finish saving or syncing"
-        : button.dataset.actionTitle
+        : button.dataset.actionTitle)
   }
   const intentLocked = !intentWritable()
   for (const button of matrixAwareQuery(
@@ -9783,7 +10175,7 @@ function showExplorerView(options = {}) {
     String(Boolean(options.changeableOnly)),
   )
   elements.targetHoles.setAttribute("aria-pressed", "false")
-  elements.targetHoles.textContent = "Target holes"
+  setMatrixControlLabel(elements.targetHoles, "Target holes")
   state.filterPanelExpanded = false
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
@@ -13057,7 +13449,10 @@ elements.redirectType.addEventListener("change", filterRows)
 elements.targetHoles.addEventListener("click", () => {
   const next = elements.targetHoles.getAttribute("aria-pressed") !== "true"
   elements.targetHoles.setAttribute("aria-pressed", String(next))
-  elements.targetHoles.textContent = next ? "Target holes only" : "Target holes"
+  setMatrixControlLabel(
+    elements.targetHoles,
+    next ? "Target holes only" : "Target holes",
+  )
   filterRows()
 })
 elements.differenceToggle.addEventListener("click", () => {

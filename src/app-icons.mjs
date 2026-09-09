@@ -91,6 +91,21 @@ const ICONS = Object.freeze({
     { tag: "path", d: "M5.5 4 2.5 7 5.5 10" },
     { tag: "path", d: "M3 7 9.5 7C11.7 7 13.5 8.8 13.5 11" },
   ],
+  copy: [
+    { tag: "path", d: "M5.5 5.5 13.5 5.5 13.5 13.5 5.5 13.5Z" },
+    { tag: "path", d: "M2.5 10.5 2.5 2.5 10.5 2.5" },
+  ],
+  filter: [
+    { tag: "path", d: "M2.5 3 13.5 3 9.5 7.5 9.5 12.5 6.5 14 6.5 7.5Z" },
+  ],
+  refresh: [
+    { tag: "path", d: "M13 6A5.5 5.5 0 0 0 3.5 4.5" },
+    { tag: "path", d: "M3.5 4.5 3.5 1.8" },
+    { tag: "path", d: "M3.5 4.5 6.2 4.5" },
+    { tag: "path", d: "M3 10A5.5 5.5 0 0 0 12.5 11.5" },
+    { tag: "path", d: "M12.5 11.5 12.5 14.2" },
+    { tag: "path", d: "M12.5 11.5 9.8 11.5" },
+  ],
 })
 
 export const ICON_NAMES = Object.freeze(Object.keys(ICONS))

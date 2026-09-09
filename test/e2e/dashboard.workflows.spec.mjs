@@ -342,10 +342,14 @@ test("aligns Email Routing settings and shows unsupported reasons", async ({ ema
   const matchingCell = supportRow.locator(
     `td[data-zone-id="zone-${zoneNames[0]}"]`,
   )
-  await expect(matchingCell.locator(".cell-comparison-status")).toHaveText(
+  await expect(matchingCell.locator(
+    ".cell-comparison-status > span:not(.tooltip)",
+  )).toHaveText(
     "Consensus",
   )
-  await expect(matchingCell.locator(".cell-intent-status")).toHaveText(
+  await expect(matchingCell.locator(
+    ".cell-intent-status > span:not(.tooltip)",
+  )).toHaveText(
     "Intent match",
   )
   const verticalLayout = await matchingCell.evaluate((cell) => {
@@ -765,10 +769,10 @@ test("keeps the loaded matrix usable when the broker disconnects", async ({ dash
     name: `Edit always_use_https on ${zoneNames[1]}`,
   })
   await expect(edit).toBeDisabled()
-  await expect(edit.locator("xpath=ancestor::td[1]")).toHaveAttribute(
-    "title",
+  await expect(edit.locator(":scope > .tooltip")).toContainText(
     /Session broker offline/,
   )
+  await expect(edit).not.toHaveAttribute("title", /.+/)
   await expect(rows).toHaveCount(initialRowCount)
 })
 
