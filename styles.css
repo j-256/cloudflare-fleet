@@ -62,6 +62,7 @@
 }
 
 .tooltip {
+  --tooltip-x: -50%;
   position: absolute;
   bottom: calc(100% + 7px);
   left: 50%;
@@ -82,15 +83,26 @@
   text-align: left;
   opacity: 0;
   visibility: hidden;
-  transform: translateX(-50%) translateY(3px);
+  transform: translateX(var(--tooltip-x)) translateY(3px);
   transition: opacity 0.12s ease 0.1s, transform 0.12s ease 0.1s, visibility 0.12s linear 0.1s;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .tooltip--below {
   top: calc(100% + 7px);
   bottom: auto;
-  transform: translateX(-50%) translateY(-3px);
+  transform: translateX(var(--tooltip-x)) translateY(-3px);
+}
+
+.tooltip--align-start {
+  --tooltip-x: 0;
+  left: 0;
+}
+
+.tooltip--align-end {
+  --tooltip-x: 0;
+  right: 0;
+  left: auto;
 }
 
 .tooltip-host:hover > .tooltip,
@@ -98,7 +110,7 @@
 .tooltip-host:focus-within > .tooltip {
   opacity: 1;
   visibility: visible;
-  transform: translateX(-50%) translateY(0);
+  transform: translateX(var(--tooltip-x)) translateY(0);
 }
 
 .sr-only {
@@ -5826,6 +5838,93 @@ dialog details > summary {
   margin: 16px 0;
 }
 
+.confirm-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 16px 0;
+}
+
+.confirm-fact {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  width: fit-content;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font: 700 var(--fs-xs)/var(--lh-tight) ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.confirm-fact:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.confirm-fact .icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.75;
+}
+
+.confirm-fact.validated {
+  border-color: rgba(90, 169, 255, 0.44);
+  color: var(--blue);
+}
+
+.confirm-fact.scopes {
+  border-color: rgba(180, 151, 255, 0.44);
+  color: var(--purple);
+}
+
+.confirm-fact.writes {
+  border-color: rgba(255, 180, 84, 0.44);
+  color: var(--accent-2);
+}
+
+.confirm-fact.verification {
+  border-color: rgba(89, 215, 196, 0.44);
+  color: var(--accent);
+}
+
+.confirm-note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 180, 84, 0.36);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 180, 84, 0.08);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-normal);
+}
+
+.confirm-note .icon {
+  margin-top: 2px;
+  color: var(--accent-2);
+}
+
+#confirm-dialog .dialog-kicker,
+#confirm-dialog pre,
+#confirm-dialog .redirect-badge,
+#confirm-dialog .redirect-node > span,
+#confirm-dialog .redirect-node code,
+#confirm-dialog .rule-facts dt,
+#confirm-dialog .rule-facts code,
+#confirm-dialog .rule-section code,
+#confirm-dialog .rule-section h4,
+#confirm-dialog .structured-object dt {
+  font-size: var(--fs-2xs);
+}
+
 .operation {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -5836,20 +5935,53 @@ dialog details > summary {
   background: #0d161f;
 }
 
-.operation code {
+.operation-method {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  align-self: start;
+  min-height: 26px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 180, 84, 0.38);
+  border-radius: 6px;
   color: var(--accent-2);
-  font-size: 11px;
-  font-weight: 800;
+  background: rgba(255, 180, 84, 0.08);
 }
 
-.operation span {
-  overflow-wrap: anywhere;
-  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+.operation-method .icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.75;
 }
 
-.operation small {
-  grid-column: 2;
+.operation-method code {
+  color: var(--accent-2);
+  font: 800 var(--fs-2xs)/var(--lh-tight) ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.operation-target {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.operation-target-label {
   color: var(--muted);
+  font: 700 var(--fs-2xs)/var(--lh-tight) ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.operation-path {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  font: var(--fs-xs)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.operation-context {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-normal);
 }
 
 .operation-change {
@@ -5879,7 +6011,7 @@ dialog details > summary {
 
 .operation-change-label {
   color: var(--muted);
-  font: 700 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 700 var(--fs-2xs)/var(--lh-tight) ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -5887,7 +6019,7 @@ dialog details > summary {
 .operation-change-content {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 
 .operation-change-content code {
@@ -5897,7 +6029,7 @@ dialog details > summary {
 .operation-change-arrow {
   align-self: center;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -5909,7 +6041,7 @@ dialog details > summary {
 
 .operation-change-summary {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   line-height: 1.4;
 }
 
@@ -5922,7 +6054,7 @@ dialog details > summary {
 
 .operation-rule-summary > h4 {
   margin: 10px 0 7px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 
 .operation-rule-summary > h4:first-child {
@@ -6380,6 +6512,39 @@ dialog details > summary {
 
   .operation-change {
     grid-template-columns: 1fr;
+  }
+
+  .confirm-facts {
+    align-items: flex-start;
+  }
+
+  .confirm-fact {
+    min-width: 0;
+    font-size: var(--fs-2xs);
+  }
+
+  .confirm-fact:nth-child(odd) > .tooltip {
+    --tooltip-x: 0;
+    left: 0;
+    right: auto;
+  }
+
+  .confirm-fact:nth-child(even) > .tooltip {
+    --tooltip-x: 0;
+    right: 0;
+    left: auto;
+  }
+
+  .operation {
+    grid-template-columns: 1fr;
+  }
+
+  .operation-list {
+    max-height: min(320px, 42dvh);
+  }
+
+  .operation-method {
+    width: fit-content;
   }
 
   .operation-change-arrow {

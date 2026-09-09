@@ -122,6 +122,9 @@ test("reviews and applies exact intent alignment from a drifting cell", async ({
   const confirmation = page.locator("#confirm-dialog")
   await expect(confirmation).toContainText(zoneNames[1])
   await expect(confirmation).toContainText("zones/zone-bravo.example/settings/always_use_https")
+  await expect(confirmation.locator("#confirm-note")).toContainText(
+    "Every unacknowledged drift cell in this action has a deterministic write plan",
+  )
   await acceptCurrentWrite(page)
 
   await expect(page.locator("#toast-message")).toHaveText(
@@ -203,6 +206,17 @@ test("uses the typed alias template and reviewed alignment in the dashboard", as
   await expect(confirmation).toContainText(
     "zones/zone-j256.dev/rulesets/alias-redirect-ruleset/rules/alias-redirect-rule",
   )
+  const ruleTextSizes = await confirmation.locator([
+    ".redirect-badge",
+    ".redirect-node > span",
+    ".redirect-node code",
+    ".rule-facts dt",
+    ".rule-facts code",
+  ].join(", ")).evaluateAll((nodes) => nodes.map(
+    (node) => Number.parseFloat(getComputedStyle(node).fontSize),
+  ))
+  expect(ruleTextSizes.length).toBeGreaterThan(0)
+  expect(Math.min(...ruleTextSizes)).toBeGreaterThanOrEqual(11)
   await acceptCurrentWrite(page)
 
   await expect(page.locator("#toast-message")).toHaveText(

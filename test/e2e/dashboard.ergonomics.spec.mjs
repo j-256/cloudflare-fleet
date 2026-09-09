@@ -113,6 +113,81 @@ test("returning operator verifies a known setting change without opening raw JSO
   })
 })
 
+test("reviewed write keeps safety facts visible and tooltips dismissible", async ({ dashboard }) => {
+  const { page, zoneNames } = dashboard
+  const confirmation = await reviewSettingChange(page, zoneNames[1], "on")
+  const facts = confirmation.getByRole("list", {
+    name: "Live validation and write summary",
+  })
+  const factItems = facts.getByRole("listitem")
+  await expect(factItems).toHaveCount(4)
+  await expect(
+    facts.locator('[data-confirm-fact="validated"]'),
+  ).toContainText(/^Validated /)
+  await expect(
+    facts.locator('[data-confirm-fact="scopes"]'),
+  ).toContainText("1 resource scope")
+  await expect(
+    facts.locator('[data-confirm-fact="writes"]'),
+  ).toContainText("1 API write")
+  await expect(
+    facts.locator('[data-confirm-fact="verification"]'),
+  ).toContainText("Re-read to verify")
+
+  const validated = facts.locator('[data-confirm-fact="validated"]')
+  const tooltip = validated.locator(".tooltip")
+  await validated.hover()
+  await expect(tooltip).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(tooltip).toBeHidden()
+  await validated.focus()
+  await expect(tooltip).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(tooltip).toBeHidden()
+  await expect(confirmation).toBeVisible()
+  await validated.click()
+  await expect(tooltip).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(confirmation).toBeVisible()
+
+  const operation = confirmation.locator(".operation").first()
+  await expect(operation.locator(".operation-method")).toContainText("PATCH")
+  await expect(operation.locator(".operation-target-label")).toHaveText("Target")
+  await expect(operation.locator(".operation-path")).toContainText(
+    "settings/always_use_https",
+  )
+  await expect(confirmation.getByRole("button", {
+    name: "Close write confirmation",
+  }).locator(".icon")).toHaveCount(1)
+  await expect(confirmation.getByRole("button", {
+    name: "Apply and verify",
+  })).toBeDisabled()
+
+  const fontSizes = await confirmation.locator([
+    ".confirm-fact",
+    ".operation-method code",
+    ".operation-target-label",
+    ".operation-path",
+    ".operation-context",
+    ".operation-change-label",
+    ".operation-change-content",
+    ".operation-change-arrow",
+  ].join(", ")).evaluateAll((nodes) => nodes.map(
+    (node) => Number.parseFloat(getComputedStyle(node).fontSize),
+  ))
+  expect(Math.min(...fontSizes)).toBeGreaterThanOrEqual(11)
+
+  await page.setViewportSize({ height: 844, width: 390 })
+  await expect(confirmation).toBeInViewport()
+  expect(await confirmation.evaluate(
+    (node) => node.scrollWidth <= node.clientWidth + 1,
+  )).toBe(true)
+  expect(await operation.evaluate(
+    (node) => node.scrollWidth <= node.clientWidth + 1,
+  )).toBe(true)
+  await confirmation.getByRole("button", { name: "Cancel" }).click()
+})
+
 test("operator finds and undoes a recorded setting change from Start Here", async ({ dashboard }, testInfo) => {
   const { page, settingValue, zoneNames } = dashboard
   const targetZone = zoneNames[1]

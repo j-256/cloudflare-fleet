@@ -285,6 +285,10 @@ import { executeVerifiedPlanSet } from "./write-executor.mjs"
 import { mountWorkerPanel } from "./worker-panel.mjs"
 import { icon } from "./app-icons.mjs"
 import {
+  actionButton,
+  attachTooltip,
+} from "./ui-primitives.mjs"
+import {
   isZoneAliasMatrixRow,
   zoneAliasPolicyTemplateForSourceHost,
 } from "./zone-alias-intent.mjs"
@@ -417,6 +421,12 @@ const INTENT_WORKFLOW_HISTORY_MODE = Object.freeze({
 const SKIP_LINK_SELECTOR = ".skip-links a, .keyboard-skip"
 const COMPACT_RULE_TEXT_LIMIT = 120
 const OPERATION_FRIENDLY_VALUE_LIMIT = 480
+const OPERATION_METHOD_ICON = Object.freeze({
+  [HTTP_METHOD.DELETE]: "remove",
+  [HTTP_METHOD.PATCH]: "edit",
+  [HTTP_METHOD.POST]: "add",
+  [HTTP_METHOD.PUT]: "edit",
+})
 const EDITABLE_OBJECT_KEY_FIELDS = new Set([
   "headers",
 ])
@@ -618,7 +628,10 @@ const elements = {
   clearSelection: document.querySelector("#clear-selection"),
   confirmApply: document.querySelector("#confirm-apply"),
   confirmCheck: document.querySelector("#confirm-check"),
+  confirmClose: document.querySelector("#confirm-close"),
   confirmDialog: document.querySelector("#confirm-dialog"),
+  confirmFacts: document.querySelector("#confirm-facts"),
+  confirmNote: document.querySelector("#confirm-note"),
   confirmOperations: document.querySelector("#confirm-operations"),
   confirmPreview: document.querySelector("#confirm-preview"),
   confirmSummary: document.querySelector("#confirm-summary"),
@@ -929,6 +942,7 @@ const elements = {
   zoneCount: document.querySelector("#zone-count"),
 }
 
+decorateConfirmationDialog()
 elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentPolicyScopeName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentAcknowledgementReason.maxLength = FLEET_INTENT_REASON_MAX_LENGTH
@@ -6610,22 +6624,6 @@ const INTENT_STATUS_ICON = Object.freeze({
   allowance: "absent",
 })
 
-// Custom hover/focus tooltip: a styled, near-instant, readable replacement for
-// the slow and tiny native title. The label stays on the host's aria-label for
-// assistive tech, so the tooltip element itself is aria-hidden. Positioned by
-// CSS (no inline styles, per the strict style-src CSP)
-function attachTooltip(element, text, options = {}) {
-  if (!text) return element
-  element.classList.add("tooltip-host")
-  const tip = createElement("span", {
-    className: `tooltip${options.below ? " tooltip--below" : ""}`,
-    text,
-  })
-  tip.setAttribute("aria-hidden", "true")
-  element.append(tip)
-  return element
-}
-
 function intentStatusBadge(text, status) {
   const badge = createElement("span", { className: `intent-status-badge ${status}` })
   const iconName = INTENT_STATUS_ICON[status]
@@ -6639,23 +6637,11 @@ function intentItemActions() {
 }
 
 function intentActionButton(label, action, options = {}) {
-  const iconOnly = Boolean(options.iconOnly && options.icon)
-  const button = createElement("button", {
-    className: `button ${options.danger ? "button-danger" : "button-quiet"}${iconOnly ? " button-icon" : ""}`,
+  const button = actionButton(label, action, {
+    ...options,
+    disabled: options.disabled || (options.write && !intentWritable()),
   })
-  if (options.icon) button.append(icon(options.icon))
-  if (!iconOnly) {
-    button.append(document.createTextNode(options.icon ? ` ${label}` : label))
-  }
-  button.type = "button"
-  button.disabled = Boolean(options.disabled || (options.write && !intentWritable()))
   if (options.write) button.dataset.intentWrite = ""
-  const accessibleName = options.context
-    ? contextualActionLabel(label, options.context)
-    : label
-  if (options.context || iconOnly) button.setAttribute("aria-label", accessibleName)
-  attachTooltip(button, options.title || (iconOnly ? accessibleName : ""))
-  button.addEventListener("click", action)
   return button
 }
 
@@ -6675,7 +6661,9 @@ function intentResultChip(iconName, count, label, options = {}) {
     chip.type = "button"
     chip.addEventListener("click", onClick)
   }
-  attachTooltip(chip, interactive ? `${description} (click to filter)` : description)
+  attachTooltip(chip, interactive ? `${description} (click to filter)` : description, {
+    focusable: !interactive,
+  })
   return chip
 }
 
@@ -8304,9 +8292,7 @@ async function saveIntentAdoption() {
   if (saved) completeIntentWorkflowScreen(elements.intentAdoptionDialog)
 }
 
-// Move each intent-manager section's helper sentence into a hover tooltip on an
-// info icon, trimming always-on prose while keeping the guidance reachable (the
-// text is mirrored to aria-label for assistive tech)
+// Move each intent-manager helper sentence into a reachable info tooltip
 function decorateIntentManagerSections() {
   for (const heading of document.querySelectorAll("#intent-dialog .intent-section-heading")) {
     const hint = heading.querySelector("p")
@@ -8316,7 +8302,7 @@ function decorateIntentManagerSections() {
     help.setAttribute("role", "img")
     help.setAttribute("aria-label", `About ${title.textContent}: ${hint.textContent}`)
     help.append(icon("info"))
-    attachTooltip(help, hint.textContent, { below: true })
+    attachTooltip(help, hint.textContent, { below: true, focusable: true })
     title.append(help)
     hint.hidden = true
   }
@@ -10399,6 +10385,100 @@ function operationPreview(plans) {
   }))
 }
 
+function decorateConfirmationDialog() {
+  elements.confirmClose.replaceChildren(icon("close"))
+  attachTooltip(elements.confirmClose, "Close write confirmation", {
+    align: "end",
+    below: true,
+  })
+}
+
+function confirmationFact(options) {
+  const fact = createElement("span", {
+    className: `confirm-fact ${options.tone}`,
+  })
+  fact.dataset.confirmFact = options.tone
+  fact.setAttribute("role", "listitem")
+  fact.setAttribute("aria-label", options.description)
+  fact.append(icon(options.icon), document.createTextNode(options.label))
+  return attachTooltip(fact, options.description, {
+    align: options.align,
+    below: true,
+    focusable: true,
+  })
+}
+
+function renderConfirmationSummary(planSet, actionable, operations, options) {
+  const scopeCount = actionable.length
+  const writeCount = operations.length
+  const validationTime = new Date(planSet.validatedAt).toLocaleTimeString()
+  const scopeLabel = `${scopeCount} resource scope${scopeCount === 1 ? "" : "s"}`
+  const writeLabel = `${writeCount} API write${writeCount === 1 ? "" : "s"}`
+  elements.confirmFacts.replaceChildren(
+    confirmationFact({
+      align: "start",
+      description: `Live state was validated at ${validationTime}`,
+      icon: "active",
+      label: `Validated ${validationTime}`,
+      tone: "validated",
+    }),
+    confirmationFact({
+      description: `${writeLabel} will be applied`,
+      icon: "edit",
+      label: writeLabel,
+      tone: "writes",
+    }),
+    confirmationFact({
+      description: `${scopeLabel} will be affected`,
+      icon: "layers",
+      label: scopeLabel,
+      tone: "scopes",
+    }),
+    confirmationFact({
+      align: "end",
+      description: "Affected live state will be re-read after the writes",
+      icon: "ok",
+      label: "Re-read to verify",
+      tone: "verification",
+    }),
+  )
+  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${scopeLabel} will be affected and ${writeLabel} will be applied, then the affected live state will be re-read for verification.`
+  elements.confirmNote.replaceChildren()
+  const note = String(options.confirmationNote || "").trim()
+  elements.confirmNote.hidden = !note
+  if (note) {
+    elements.confirmNote.append(icon("info"), createElement("span", { text: note }))
+  }
+}
+
+function operationMethodBadge(method) {
+  const badge = createElement("span", { className: "operation-method" })
+  badge.append(
+    icon(OPERATION_METHOD_ICON[method] || "edit"),
+    createElement("code", { text: method }),
+  )
+  return badge
+}
+
+function operationTarget(operation) {
+  const target = createElement("div", { className: "operation-target" })
+  target.append(
+    createElement("span", {
+      className: "operation-target-label",
+      text: "Target",
+    }),
+    createElement("code", {
+      className: "operation-path",
+      text: operation.path,
+    }),
+    createElement("small", {
+      className: "operation-context",
+      text: `${operation.zone}: ${operation.label}`,
+    }),
+  )
+  return target
+}
+
 function operationRuleDefinitions(operation) {
   if (Array.isArray(operation.body?.rules)) {
     return operation.body.rules.map((rule) => ({
@@ -10446,16 +10526,14 @@ function confirmPlans(title, planSet, options = {}) {
 
   elements.confirmTitle.textContent = title
   const operations = operationPreview(actionable)
-  const validationTime = new Date(planSet.validatedAt).toLocaleTimeString()
-  elements.confirmSummary.textContent = `Live state was validated at ${validationTime}. ${actionable.length} resource scope${actionable.length === 1 ? "" : "s"} and ${operations.length} API write${operations.length === 1 ? "" : "s"} will be applied, then the affected live state will be re-read for verification.${options.confirmationNote ? ` ${options.confirmationNote}` : ""}`
+  renderConfirmationSummary(planSet, actionable, operations, options)
   elements.confirmOperations.replaceChildren()
   for (const operation of operations) {
     const item = createElement("div", { className: "operation" })
     item.setAttribute("role", "listitem")
     item.append(
-      createElement("code", { text: operation.method }),
-      createElement("span", { text: operation.path }),
-      createElement("small", { text: `${operation.zone}: ${operation.label}` }),
+      operationMethodBadge(operation.method),
+      operationTarget(operation),
     )
     const change = operationChangeElement(operation)
     if (change) item.append(change)
