@@ -364,8 +364,8 @@ const COMPACT_FILTER_MEDIA_QUERY = "(max-width: 1179px)"
 const COMPACT_TOOLBAR_MEDIA_QUERY = "(max-width: 620px)"
 const MATRIX_FOCUS_CLASS = "matrix-focus"
 const MATRIX_COLUMN_HIDDEN_CLASS = "matrix-column-hidden"
-const MATRIX_CONTROL_LABEL_CLASS = "matrix-control-label"
-const MATRIX_DIRECT_TOOLTIP_SELECTOR = ":scope > .tooltip"
+const CONTROL_LABEL_CLASS = "control-label"
+const DIRECT_TOOLTIP_SELECTOR = ":scope > .tooltip"
 const MATRIX_REVEAL_CLASS = Object.freeze({
   CELL: "matrix-reveal-cell",
   COLUMN: "matrix-reveal-column",
@@ -945,6 +945,7 @@ const elements = {
 }
 
 decorateMatrixOverview()
+decorateRemainingDialogs()
 decorateConfirmationDialog()
 elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentPolicyScopeName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
@@ -995,7 +996,7 @@ function updateTransportDependentControls() {
     : state.busy
       ? "Another fleet operation is in progress"
       : "Run a complete live fleet audit"
-  setMatrixControlTooltip(elements.refresh, refreshTooltip)
+  setControlTooltip(elements.refresh, refreshTooltip)
   updateActionButtons()
   updateRulesetActionAvailability()
   renderIntentSaveStatus()
@@ -1273,10 +1274,12 @@ function intentGroupNameSourceLabel(group) {
   return "Built in"
 }
 
-function intentZoneScopeRow(label, zones, emptyText) {
+function intentZoneScopeRow(label, zones, emptyText, iconName) {
   const row = createElement("div", { className: "intent-zone-scope-row" })
+  const heading = createElement("strong")
+  heading.append(icon(iconName), document.createTextNode(label))
   row.append(
-    createElement("strong", { text: label }),
+    heading,
     createElement("span", {
       text: zones.length > 0
         ? zones.map(intentZoneName).join(", ")
@@ -1288,8 +1291,8 @@ function intentZoneScopeRow(label, zones, emptyText) {
 
 function renderIntentZoneScope(container, scope, options = {}) {
   const rows = [
-    intentZoneScopeRow("Applies to", scope.applies, "No zones selected"),
-    intentZoneScopeRow("Does not apply to", scope.excludes, "None"),
+    intentZoneScopeRow("Applies to", scope.applies, "No zones selected", "active"),
+    intentZoneScopeRow("Does not apply to", scope.excludes, "None", "absent"),
   ]
   if (options.groupName) {
     const label = createElement("div", { className: "intent-zone-group-label" })
@@ -1412,9 +1415,9 @@ function createElement(tag, options = {}) {
   return node
 }
 
-function setMatrixControlLabel(control, label) {
+function setControlLabel(control, label) {
   const labelElement = control.querySelector(
-    `:scope > .${MATRIX_CONTROL_LABEL_CLASS}`,
+    `:scope > .${CONTROL_LABEL_CLASS}`,
   )
   if (labelElement) {
     labelElement.textContent = label
@@ -1423,40 +1426,84 @@ function setMatrixControlLabel(control, label) {
   control.textContent = label
 }
 
-function setMatrixControlTooltip(control, text) {
-  const tooltip = control.querySelector(MATRIX_DIRECT_TOOLTIP_SELECTOR)
-  if (tooltip) tooltip.textContent = text
-  control.removeAttribute("title")
+function controlLabel(control) {
+  const labelElement = control.querySelector(
+    `:scope > .${CONTROL_LABEL_CLASS}`,
+  )
+  if (labelElement) return labelElement.textContent.trim()
+  return [...control.childNodes]
+    .filter((node) => (
+      node.nodeType === Node.TEXT_NODE
+      || (
+        !node.classList?.contains("tooltip")
+        && !node.classList?.contains("icon")
+      )
+    ))
+    .map((node) => node.textContent)
+    .join("")
+    .trim()
 }
 
-function decorateMatrixControl(control, iconName, tooltip, options = {}) {
+function setControlTooltip(control, text, options = {}) {
+  if (!control) return control
+  const content = String(text || "").trim()
+  const tooltip = control.querySelector(DIRECT_TOOLTIP_SELECTOR)
+  if (tooltip) {
+    tooltip.textContent = content
+  } else if (content) {
+    attachTooltip(control, content, {
+      align: options.align,
+      below: options.below,
+      dismissOnActivation: options.dismissOnActivation,
+      focusable: options.focusable,
+    })
+  }
+  control.removeAttribute("title")
+  return control
+}
+
+function decorateLabeledControl(control, iconName, tooltip, options = {}) {
   if (!control) return
   const label = control.textContent.trim()
-  if (options.preserveChildren) {
+  if (options.iconOnly) {
+    control.replaceChildren(icon(iconName))
+    control.classList.add("button-icon")
+    control.setAttribute(
+      "aria-label",
+      options.accessibleName || control.getAttribute("aria-label") || label,
+    )
+  } else if (options.preserveChildren) {
     control.prepend(icon(iconName))
   } else {
     control.replaceChildren(
       icon(iconName),
       createElement("span", {
-        className: MATRIX_CONTROL_LABEL_CLASS,
+        className: CONTROL_LABEL_CLASS,
         text: label,
       }),
     )
   }
-  control.classList.add("matrix-control-action")
-  control.removeAttribute("title")
-  attachTooltip(control, tooltip, {
+  control.classList.add(options.className || "dialog-control-action")
+  control.dataset.iconDecorated = ""
+  setControlTooltip(control, tooltip, {
     align: options.align,
     below: options.below,
     dismissOnActivation: true,
   })
 }
 
-function decorateMatrixReferenceItem(control, iconName, tooltip, options = {}) {
+function decorateMatrixControl(control, iconName, tooltip, options = {}) {
+  decorateLabeledControl(control, iconName, tooltip, {
+    ...options,
+    className: "matrix-control-action",
+  })
+}
+
+function decorateReferenceItem(control, iconName, tooltip, options = {}) {
   control.prepend(icon(iconName))
   control.setAttribute("role", "note")
   control.setAttribute("aria-label", `${control.textContent.trim()}. ${tooltip}`)
-  attachTooltip(control, tooltip, {
+  return attachTooltip(control, tooltip, {
     align: options.align,
     below: options.below,
     focusable: true,
@@ -1541,7 +1588,7 @@ function decorateMatrixOverview() {
   }
 
   const guideSummary = elements.matrixGuide.querySelector("summary")
-  setMatrixControlLabel(guideSummary, "Legend & shortcuts")
+  setControlLabel(guideSummary, "Legend & shortcuts")
   decorateMatrixControl(
     guideSummary,
     "info",
@@ -1566,7 +1613,7 @@ function decorateMatrixOverview() {
   ]
   for (const [selector, iconName, tooltip, options = { below: true }] of capabilityItems) {
     const control = document.querySelector(`.capability-key ${selector}`)
-    decorateMatrixReferenceItem(control, iconName, tooltip, options)
+    decorateReferenceItem(control, iconName, tooltip, options)
   }
 
   const legendItems = [
@@ -1581,7 +1628,66 @@ function decorateMatrixOverview() {
   ]
   for (const [selector, iconName, tooltip] of legendItems) {
     const control = elements.matrixGuide.querySelector(`.legend ${selector}`)
-    decorateMatrixReferenceItem(control, iconName, tooltip, { below: true })
+    decorateReferenceItem(control, iconName, tooltip, { below: true })
+  }
+}
+
+function decorateRemainingDialogs() {
+  const controls = [
+    [elements.rulesetEditDescription, "edit", "Edit the ruleset description while preserving every live rule", { align: "end" }],
+    [elements.rulesetConfigureDeployment, "layers", "Open the rule that deploys and configures this managed ruleset", { align: "end" }],
+    [elements.rulesetRefresh, "refresh", "Reread this exact ruleset from Cloudflare", { align: "end" }],
+    [elements.rulesetAddRule, "add", "Create a disabled rule from this phase's supported schema", { align: "end" }],
+    [elements.rulesetDelete, "remove", "Delete this ruleset only when its live rule list is empty", { align: "end" }],
+    [elements.activityRefresh, "refresh", "Reload the durable operation journal", { align: "end" }],
+    [elements.editorReview, "inspect", "Reread the affected resource and build the exact write preview", { align: "end" }],
+    [elements.rulesetDescriptionReview, "inspect", "Reread the ruleset and review the description-only replacement", { align: "end" }],
+    [elements.renameReview, "inspect", "Reread every matching rule and review the fleet rename plan", { align: "end" }],
+    [elements.targetSelectAll, "active", "Select every loaded zone as a matrix and multi-zone workflow target", { align: "start" }],
+    [elements.targetSelectDrifted, "drift", "Select zones with automated-workflow or fleet-intent drift"],
+    [elements.targetClear, "close", "Clear every selected target zone", { align: "end" }],
+    [elements.targetDialog.querySelector('[value="done"]'), "ok", "Keep this target selection and return to the dashboard", { align: "end" }],
+    [elements.intentGroupSelectedOnly, "filter", "Show only zones selected for this saved scope", { align: "start" }],
+    [elements.intentGroupSelectAll, "active", "Select every zone visible under the current search"],
+    [elements.intentGroupClear, "close", "Clear every visible zone from this saved scope", { align: "end" }],
+    [elements.intentGroupSave, "ok", "Save this reusable policy scope without changing Cloudflare", { align: "end" }],
+    [elements.intentPolicyZoneSelectedOnly, "filter", "Show only zones selected for this policy scope", { align: "start" }],
+    [elements.intentPolicyZoneSelectAll, "active", "Select every zone visible under the current search"],
+    [elements.intentPolicyZoneClear, "close", "Clear every visible zone from this policy scope", { align: "end" }],
+    [elements.intentPolicyUseZoneSelection, "ok", "Use the selected zones for this policy draft", { align: "end" }],
+    [elements.intentPolicySave, "ok", "Save expected state without changing Cloudflare configuration", { align: "end" }],
+    [elements.coverageIntentRemove, "remove", "Return this exact API failure to unexpected coverage", { align: "start" }],
+    [elements.coverageIntentSave, "ok", "Save why this exact observed API failure is expected", { align: "end" }],
+    [elements.intentAcknowledgementForm.querySelector('[value="save"]'), "ack", "Acknowledge only this exact observed state", { align: "end" }],
+    [elements.intentDeleteApply, "remove", "Remove this fleet intent item after review", { align: "end" }],
+    [elements.holeForm.querySelector('[value="review"]'), "inspect", "Reread the destination and build the exact fill preview", { align: "end" }],
+  ]
+  for (const [control, iconName, tooltip, options = {}] of controls) {
+    decorateLabeledControl(control, iconName, tooltip, options)
+  }
+
+  const facts = [
+    [
+      document.querySelector("#target-scope-fact"),
+      "info",
+      "Direct Edit acts only on the opened cell; selected targets are used by Copy, Fill, Email Routing, and Shared WAF actions",
+    ],
+    [
+      document.querySelector("#intent-group-membership-fact"),
+      "active",
+      "Membership is saved by stable zone identifier while the current domain remains visible for review",
+    ],
+    [
+      document.querySelector("#coverage-intent-exact-fact"),
+      "ack",
+      "Only this exact observed failure is treated as expected; a changed failure or a recovered read returns to review",
+    ],
+  ]
+  for (const [fact, iconName, tooltip] of facts) {
+    decorateReferenceItem(fact, iconName, tooltip, {
+      align: "start",
+      below: true,
+    })
   }
 }
 
@@ -1743,7 +1849,11 @@ function createRedirectBadge(text, className = "", title = "") {
     className: `redirect-badge${className ? ` ${className}` : ""}`,
     text,
   })
-  if (title) badge.title = title
+  if (title) {
+    badge.setAttribute("role", "note")
+    badge.setAttribute("aria-label", title)
+    setControlTooltip(badge, title, { focusable: true })
+  }
   return badge
 }
 
@@ -1783,8 +1893,20 @@ function createRedirectFlow(redirect, options = {}) {
   })
   const matchValue = createElement("code", { text: redirect.match || "Every request" })
   const targetValue = createElement("code", { text: redirect.target })
-  matchValue.title = redirect.match || "Every request"
-  targetValue.title = redirect.target
+  if (options.compact) {
+    const values = [
+      [matchValue, redirect.match || "Every request"],
+      [targetValue, redirect.target],
+    ]
+    for (const [value, description] of values) {
+      value.setAttribute("role", "note")
+      value.setAttribute("aria-label", description)
+      setControlTooltip(value, description, {
+        below: true,
+        focusable: true,
+      })
+    }
+  }
   match.append(
     createElement("span", { text: "When request matches" }),
     matchValue,
@@ -1890,6 +2012,25 @@ function rulesetBadge(text, className = "") {
   })
 }
 
+function rulesetMetadataBadge(text, iconName, description) {
+  const badge = rulesetBadge(text, "ruleset-metadata-badge")
+  return decorateReferenceItem(badge, iconName, description, {
+    align: "end",
+    below: true,
+  })
+}
+
+function rulesetCardBadge(text, className, iconName, description) {
+  const badge = createElement("span", {
+    className: `rule-card-badge${className ? ` ${className}` : ""}`,
+    text,
+  })
+  return decorateReferenceItem(badge, iconName, description, {
+    align: "end",
+    below: true,
+  })
+}
+
 function workspaceWriteLocked() {
   return readOnly
     || state.busy
@@ -1914,9 +2055,9 @@ function updateRulesetActionAvailability() {
   for (const button of elements.rulesetDialog.querySelectorAll("[data-ruleset-write]")) {
     const available = button.dataset.rulesetAvailable !== "false"
     button.disabled = locked || !available
-    button.title = locked && !readOnly
+    setControlTooltip(button, locked && !readOnly
       ? lockReason
-      : button.dataset.actionTitle || button.title
+      : button.dataset.actionTitle)
   }
 }
 
@@ -1950,9 +2091,10 @@ function renderRulesetDeployment(workspace) {
   const deploymentLabel = rulesetRuleLabel(deployment.rule, deployment.index)
   elements.rulesetDeploymentSummary.textContent = `${deploymentLabel} in ${rulesetWorkspaceTitle(deployment.ruleset)} controls this managed ruleset's deployment and overrides.`
   elements.rulesetConfigureDeployment.hidden = false
-  elements.rulesetConfigureDeployment.textContent = readOnly
-    ? "Open deployment"
-    : "Configure deployment"
+  setControlLabel(
+    elements.rulesetConfigureDeployment,
+    readOnly ? "Open deployment" : "Configure deployment",
+  )
   if (!readOnly) {
     elements.rulesetConfigureDeployment.dataset.rulesetWrite = ""
     elements.rulesetConfigureDeployment.dataset.actionTitle = "Edit the deployment rule and its managed overrides"
@@ -1968,20 +2110,32 @@ function workspaceHasFlattenedRule(workspace, ruleId) {
 }
 
 function workspaceButton(label, className, handler, options = {}) {
-  const button = createElement("button", {
-    className,
-    text: label,
-  })
+  const button = createElement("button", { className })
   button.type = "button"
+  if (options.icon) button.append(icon(options.icon))
+  if (!options.iconOnly) {
+    button.append(createElement("span", {
+      className: CONTROL_LABEL_CLASS,
+      text: label,
+    }))
+  } else {
+    button.classList.add("button-icon", "ruleset-icon-action")
+  }
   if (options.write) {
     button.dataset.rulesetWrite = ""
     button.dataset.rulesetAvailable = String(options.available !== false)
   }
   if (options.title) {
-    button.title = options.title
     button.dataset.actionTitle = options.title
+    setControlTooltip(button, options.title, {
+      align: options.tooltipAlign,
+      below: options.tooltipBelow,
+      dismissOnActivation: true,
+    })
   }
-  if (options.ariaLabel) button.setAttribute("aria-label", options.ariaLabel)
+  if (options.ariaLabel || options.iconOnly) {
+    button.setAttribute("aria-label", options.ariaLabel || label)
+  }
   button.addEventListener("click", handler)
   return button
 }
@@ -2039,7 +2193,14 @@ function ruleCardPreview(workspace, rule) {
       ? `${value.slice(0, RULESET_RULE_PREVIEW_LIMIT - 3)}...`
       : value
     const code = createElement("code", { text: shortened })
-    code.title = value
+    if (shortened !== value) {
+      code.setAttribute("role", "note")
+      code.setAttribute("aria-label", value)
+      setControlTooltip(code, value, {
+        below: true,
+        focusable: true,
+      })
+    }
     preview.append(
       createElement("span", { text: label }),
       code,
@@ -2071,14 +2232,18 @@ function createRulesetRuleCard(workspace, rule) {
     className: "rule-card-badges",
   })
   badges.append(
-    createElement("span", {
-      className: `rule-card-badge ${enabled ? "enabled" : "disabled"}`,
-      text: enabled ? "Enabled" : "Disabled",
-    }),
-    createElement("span", {
-      className: "rule-card-badge",
-      text: ruleActionLabel(rule.action),
-    }),
+    rulesetCardBadge(
+      enabled ? "Enabled" : "Disabled",
+      enabled ? "enabled" : "disabled",
+      enabled ? "ok" : "absent",
+      enabled ? "This rule participates in evaluation" : "Cloudflare retains this rule but does not evaluate it",
+    ),
+    rulesetCardBadge(
+      ruleActionLabel(rule.action),
+      "",
+      "layers",
+      `Cloudflare action: ${ruleActionLabel(rule.action)}`,
+    ),
   )
   heading.append(title, badges)
   item.append(heading, ruleCardPreview(workspace, rule))
@@ -2106,7 +2271,10 @@ function createRulesetRuleCard(workspace, rule) {
         () => openWorkspaceRuleEditor(rule),
         {
           ariaLabel: `Edit ${label}`,
+          icon: "edit",
+          iconOnly: true,
           title: "Edit this rule after an exact live reread",
+          tooltipAlign: "end",
           write: true,
         },
       ),
@@ -2116,7 +2284,10 @@ function createRulesetRuleCard(workspace, rule) {
         () => toggleWorkspaceRule(rule.id),
         {
           ariaLabel: `${enabled ? "Disable" : "Enable"} ${label}`,
+          icon: enabled ? "absent" : "active",
+          iconOnly: true,
           title: `${enabled ? "Disable" : "Enable"} this rule after an exact live reread`,
+          tooltipAlign: "end",
           write: true,
         },
       ),
@@ -2131,6 +2302,7 @@ function createRulesetRuleCard(workspace, rule) {
         () => showWorkspaceRuleInMatrix(rule.id),
         {
           ariaLabel: `Show ${label} in the fleet matrix`,
+          icon: "matrix",
           title: "Close this workspace and reveal the flattened fleet comparison",
         },
       ),
@@ -2149,6 +2321,7 @@ function createRulesetRuleCard(workspace, rule) {
           () => showWorkspaceRuleInMatrix(rule.id),
           {
             ariaLabel: `Show ${label} in the fleet matrix`,
+            icon: "matrix",
             title: "Close this workspace and reveal the flattened fleet comparison",
           },
         ),
@@ -2161,28 +2334,31 @@ function createRulesetRuleCard(workspace, rule) {
         () => openWorkspaceRuleCreateEditor(duplicateRuleDefinition(rule, index), `Duplicate ${label}`),
         {
           ariaLabel: `Duplicate ${label}`,
+          icon: "copy",
           title: "Create a disabled copy after review",
           write: true,
         },
       ),
       workspaceButton(
         "Move up",
-        "button button-quiet",
+        "button button-quiet rule-move-up",
         () => reorderWorkspaceRule(rule.id, -1),
         {
           ariaLabel: `Move ${label} up`,
           available: index > 0,
+          icon: "chevron",
           title: index > 0 ? "Move this rule one position earlier" : "This rule is already first",
           write: true,
         },
       ),
       workspaceButton(
         "Move down",
-        "button button-quiet",
+        "button button-quiet rule-move-down",
         () => reorderWorkspaceRule(rule.id, 1),
         {
           ariaLabel: `Move ${label} down`,
           available: index < rules.length - 1,
+          icon: "chevron",
           title: index < rules.length - 1 ? "Move this rule one position later" : "This rule is already last",
           write: true,
         },
@@ -2193,6 +2369,7 @@ function createRulesetRuleCard(workspace, rule) {
         () => deleteWorkspaceRule(rule.id),
         {
           ariaLabel: `Delete ${label}`,
+          icon: "remove",
           title: "Delete this rule after reviewing its live definition",
           write: true,
         },
@@ -2259,12 +2436,30 @@ function renderRulesetWorkspace() {
   )
   elements.rulesetTarget.textContent = `${workspace.zoneName} | ${ruleset?.name || "unnamed"}`
   elements.rulesetBadges.replaceChildren(
-    rulesetBadge(summary.kind),
-    rulesetBadge(summary.phase),
-    ...(summary.version ? [rulesetBadge(`Version ${summary.version}`)] : []),
+    rulesetMetadataBadge(
+      summary.kind,
+      "layers",
+      "Identifies how Cloudflare owns and evaluates this ruleset",
+    ),
+    rulesetMetadataBadge(
+      summary.phase,
+      "matrix",
+      "The request-processing phase where Cloudflare evaluates these rules",
+    ),
+    ...(summary.version
+      ? [rulesetMetadataBadge(
+          `Version ${summary.version}`,
+          "history",
+          "The Cloudflare ruleset version shown in this workspace",
+        )]
+      : []),
     ...(ruleCount === null
       ? []
-      : [rulesetBadge(`${ruleCount} rule${ruleCount === 1 ? "" : "s"}`)]),
+      : [rulesetMetadataBadge(
+          `${ruleCount} rule${ruleCount === 1 ? "" : "s"}`,
+          "active",
+          "The number of rules in this exact loaded definition",
+        )]),
   )
   elements.rulesetDescription.textContent = summary.description || "No description"
   elements.rulesetEditDescription.hidden = !editable
@@ -2845,21 +3040,19 @@ function valueComparisonGroup(row, comparison, variant, index) {
     const actions = createElement("div", {
       className: "value-comparison-group-actions",
     })
-    const button = createElement("button", {
-      className: "button button-quiet",
-      text: "Use as exact intent",
+    const button = actionButton("Use as exact intent", () => {
+      useComparedValueAsIntent(row, variant)
+    }, {
+      disabled: !intentWritable() || !variant.intentCanonical,
+      icon: "ack",
+      title: variant.intentCanonical
+        ? "Open the focused intent editor with this observed value selected"
+        : "This matrix value maps to multiple intent values and cannot be selected as one expectation",
     })
-    button.type = "button"
     button.setAttribute(
       "aria-label",
       `Use as exact intent: ${valueComparisonVariantLabel(comparison, variant, index)} for ${row.label}`,
     )
-    button.disabled = !intentWritable()
-      || !variant.intentCanonical
-    button.title = variant.intentCanonical
-      ? "Open the focused intent editor with this observed value selected"
-      : "This matrix value maps to multiple intent values and cannot be selected as one expectation"
-    button.addEventListener("click", () => useComparedValueAsIntent(row, variant))
     actions.append(button)
     article.append(actions)
   }
@@ -3153,13 +3346,20 @@ function facetEquivalenceValueCard(container, options) {
 }
 
 function facetEquivalenceActionButton(label, className, activate, options = {}) {
-  const button = createElement("button", {
-    className,
+  const button = createElement("button", { className })
+  if (options.icon) button.append(icon(options.icon))
+  button.append(createElement("span", {
+    className: CONTROL_LABEL_CLASS,
     text: label,
-  })
+  }))
+  button.classList.add("dialog-control-action")
   button.type = "button"
   button.disabled = Boolean(options.disabled)
-  if (options.title) button.title = options.title
+  if (options.title) {
+    setControlTooltip(button, options.title, {
+      dismissOnActivation: true,
+    })
+  }
   button.addEventListener("click", activate)
   return button
 }
@@ -3199,6 +3399,7 @@ function renderFacetEquivalenceAccess(row, zone, cell) {
       },
       {
         disabled: writeLocked,
+        icon: "edit",
         title: "Open the editor for the fields used by exact matching",
       },
     ))
@@ -3224,6 +3425,7 @@ function renderFacetEquivalenceAccess(row, zone, cell) {
       },
       {
         disabled: state.busy && access.kind !== FACET_COMPARISON_ACCESS_KIND.INSPECT,
+        icon: "layers",
         title: access.kind === FACET_COMPARISON_ACCESS_KIND.INSPECT
           ? "Inspect the complete ruleset definition"
           : "Open the editor for ruleset description, rules, and order",
@@ -3653,8 +3855,8 @@ function setMatrixFocus(focused) {
   document.body.classList.toggle(MATRIX_FOCUS_CLASS, focused)
   for (const button of [elements.matrixFocus, elements.mobileMatrixFocus]) {
     button.setAttribute("aria-pressed", String(focused))
-    setMatrixControlLabel(button, focused ? "Exit focus" : "Focus matrix")
-    setMatrixControlTooltip(button, focused
+    setControlLabel(button, focused ? "Exit focus" : "Focus matrix")
+    setControlTooltip(button, focused
       ? "Return to the fleet overview"
       : "Use the full viewport for the matrix")
   }
@@ -3773,7 +3975,11 @@ function renderIntentPolicyCard() {
   elements.intentPolicyDetail.textContent = summary.policies === 0
     ? `No facets governed yet | ${customGroupCount} custom group${customGroupCount === 1 ? "" : "s"}`
     : `${summary.governedRows} governed facet${summary.governedRows === 1 ? "" : "s"} | ${summary.acknowledgedCells} acknowledged cell${summary.acknowledgedCells === 1 ? "" : "s"}`
-  elements.intentPolicyDetail.title = elements.intentPolicyDetail.textContent
+  setControlTooltip(
+    elements.intentPolicyDetail,
+    "Summarizes saved expected state and exact acknowledged differences",
+    { focusable: true },
+  )
   const health = fleetIntentHealth(summary)
   elements.intentPolicyDrift.textContent = summary.policies === 0
     ? "Intent not set"
@@ -4614,7 +4820,7 @@ function syncMatrixFilterControls(filters = currentMatrixFilters()) {
     : label
   elements.filterReset.hidden = changeCount === 0
   elements.filterReset.disabled = changeCount === 0
-  setMatrixControlLabel(elements.filterPanelToggle, visibleLabel)
+  setControlLabel(elements.filterPanelToggle, visibleLabel)
   elements.filterPanelToggle.setAttribute(
     "aria-label",
     contextualActionLabel(
@@ -4648,7 +4854,7 @@ function resetMatrixFilters() {
     "aria-pressed",
     String(DEFAULT_MATRIX_FILTERS.targetHolesOnly),
   )
-  setMatrixControlLabel(elements.targetHoles, "Target holes")
+  setControlLabel(elements.targetHoles, "Target holes")
   state.filterPanelExpanded = false
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
@@ -4669,7 +4875,7 @@ function applyViewFilters(view) {
   elements.changeSupportToggle.setAttribute("aria-pressed", String(view.changeableOnly))
   elements.differenceToggle.setAttribute("aria-pressed", String(view.differencesOnly))
   elements.targetHoles.setAttribute("aria-pressed", String(view.targetHolesOnly))
-  setMatrixControlLabel(
+  setControlLabel(
     elements.targetHoles,
     view.targetHolesOnly ? "Target holes only" : "Target holes",
   )
@@ -4711,11 +4917,15 @@ function renderWorkflowDriftBadge(button, zones, workflow, available) {
           : `${workflow} drift is unavailable`,
     ),
   )
-  button.title = available && count > 0
-    ? `Show and select the drifted ${workflow} zone${count === 1 ? "" : "s"} in the matrix`
-    : available
-      ? `${workflow} matches across the fleet`
-      : `${workflow} drift cannot be evaluated from this snapshot`
+  setControlTooltip(
+    button,
+    available && count > 0
+      ? `Show and select the drifted ${workflow} zone${count === 1 ? "" : "s"} in the matrix`
+      : available
+        ? `${workflow} matches across the fleet`
+        : `${workflow} drift cannot be evaluated from this snapshot`,
+    { align: "end" },
+  )
 }
 
 function renderPolicyCards() {
@@ -4755,7 +4965,11 @@ function renderPolicyCards() {
       state.emailDnsPolicy.available ? "" : state.emailDnsPolicy.reason,
     ].filter(Boolean).join("; ")
   }
-  elements.emailPolicyDetail.title = elements.emailPolicyDetail.textContent
+  setControlTooltip(
+    elements.emailPolicyDetail,
+    "Summarizes the observed fleet destination and required Email Routing DNS coverage",
+    { focusable: true },
+  )
   renderWorkflowDriftBadge(
     elements.emailPolicyDrift,
     emailDrift,
@@ -4784,11 +4998,11 @@ function renderPolicyCards() {
       `Inspect email policy exceptions. ${activeExceptionCount} active and ${exceptionReviewCount} requiring review.`,
     ),
   )
-  elements.emailPolicyExceptions.title = exceptionReviewCount > 0
+  setControlTooltip(elements.emailPolicyExceptions, exceptionReviewCount > 0
     ? `${exceptionReviewCount} configured exception${exceptionReviewCount === 1 ? "" : "s"} requires review`
     : activeExceptionCount > 0
       ? `${activeExceptionCount} configured exception${activeExceptionCount === 1 ? "" : "s"} currently preserves an intentional difference`
-      : "The configured email policy exceptions are dormant"
+      : "The configured email policy exceptions are dormant")
 
   if (wafPolicyReady) {
     const counts = [...state.wafPolicies.values()].map((policy) => policy.count)
@@ -4799,7 +5013,11 @@ function renderPolicyCards() {
     const reasons = [...state.wafPolicies.values()].filter((policy) => !policy.available).map((policy) => policy.reason)
     elements.wafPolicyDetail.textContent = reasons.join("; ")
   }
-  elements.wafPolicyDetail.title = elements.wafPolicyDetail.textContent
+  setControlTooltip(
+    elements.wafPolicyDetail,
+    "Summarizes whether named shared WAF rules have one usable fleet definition",
+    { focusable: true },
+  )
   renderWorkflowDriftBadge(
     elements.wafPolicyDrift,
     wafDrift,
@@ -4863,7 +5081,7 @@ function showPolicyExceptionInMatrix(exception) {
     elements.redirectType.value = ""
     elements.differenceToggle.setAttribute("aria-pressed", "false")
     elements.targetHoles.setAttribute("aria-pressed", "false")
-    setMatrixControlLabel(elements.targetHoles, "Target holes")
+    setControlLabel(elements.targetHoles, "Target holes")
     syncDnsTypeAvailability()
     syncRedirectTypeAvailability()
     filterRows()
@@ -4986,9 +5204,11 @@ function renderIntentUndoControls() {
     : "Undo last fleet intent change"
   for (const button of elements.intentUndoButtons) {
     button.disabled = !entry || !intentWritable()
-    button.title = button.disabled
-      ? intentUndoUnavailableReason()
-      : actionLabel
+    setControlTooltip(
+      button,
+      button.disabled ? intentUndoUnavailableReason() : actionLabel,
+      { align: "end" },
+    )
     button.setAttribute("aria-label", actionLabel)
   }
 }
@@ -5011,8 +5231,18 @@ function renderIntentSaveStatus() {
   for (const statusElement of elements.intentSaveStatuses) {
     statusElement.className = `intent-save-status ${presentation.modifier}`
     statusElement.dataset.saveStatus = status
-    statusElement.textContent = presentation.label
-    statusElement.title = presentation.title
+    let label = statusElement.querySelector(
+      `:scope > .${CONTROL_LABEL_CLASS}`,
+    )
+    if (!label) {
+      label = createElement("span", { className: CONTROL_LABEL_CLASS })
+      statusElement.replaceChildren(label)
+    }
+    label.textContent = presentation.label
+    setControlTooltip(statusElement, presentation.title, {
+      align: "end",
+      focusable: true,
+    })
     statusElement.setAttribute(
       "aria-live",
       status === FLEET_INTENT_SAVE_STATUS.FAILED ? "assertive" : "polite",
@@ -5024,15 +5254,15 @@ function renderIntentSaveStatus() {
 function setIntentSaveButtonSaving(button, saving, savingLabel = "") {
   if (!button) return
   if (saving) {
-    button.dataset.intentIdleLabel = button.textContent
-    button.textContent = savingLabel || intentSaveStatusPresentation(
+    button.dataset.intentIdleLabel = controlLabel(button)
+    setControlLabel(button, savingLabel || intentSaveStatusPresentation(
       FLEET_INTENT_SAVE_STATUS.SAVING,
-    ).label
+    ).label)
     button.setAttribute("aria-busy", "true")
     return
   }
   if (button.dataset.intentIdleLabel) {
-    button.textContent = button.dataset.intentIdleLabel
+    setControlLabel(button, button.dataset.intentIdleLabel)
     delete button.dataset.intentIdleLabel
   }
   button.removeAttribute("aria-busy")
@@ -5139,20 +5369,27 @@ function openCoverageIntentEditor(issue, expectation = null) {
     ? changed ? "Update expected gap" : "Edit expected gap"
     : "Mark gap as expected"
   elements.coverageIntentTarget.textContent = coverageTargetLabel(target)
+  const previewLabel = issue
+    ? changed ? "The failure changed" : "Observed failure"
+    : "No matching failure is active"
+  const previewHeading = createElement("strong")
+  previewHeading.append(
+    icon(issue ? "drift" : "ok"),
+    document.createTextNode(previewLabel),
+  )
   elements.coverageIntentPreview.replaceChildren(
-    createElement("strong", {
-      text: issue
-        ? changed ? "The failure changed" : "Observed failure"
-        : "No matching failure is active",
-    }),
+    previewHeading,
     document.createTextNode(issue?.detail
       || "The saved allowance remains available if this exact failure returns."),
   )
   elements.coverageIntentReason.value = currentExpectation?.reason || ""
   elements.coverageIntentRemove.hidden = !currentExpectation
-  elements.coverageIntentSave.textContent = currentExpectation
-    ? changed ? "Update expectation" : "Save expectation"
-    : "Mark expected"
+  setControlLabel(
+    elements.coverageIntentSave,
+    currentExpectation
+      ? changed ? "Update expectation" : "Save expectation"
+      : "Mark expected",
+  )
   clearFieldError(elements.coverageIntentReason, elements.coverageIntentError)
   presentIntentWorkflowScreen(
     INTENT_WORKFLOW_SCREEN.COVERAGE,
@@ -5996,9 +6233,10 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
   elements.intentPolicyTitle.textContent = selection.policy
     ? "Edit facet intent"
     : "Set facet intent"
-  elements.intentPolicySave.textContent = selection.policy
-    ? "Save scope intent"
-    : "Add scope intent"
+  setControlLabel(
+    elements.intentPolicySave,
+    selection.policy ? "Save scope intent" : "Add scope intent",
+  )
   selectIntentPolicyVariant(selected?.optionValue || draft.variants[0]?.optionValue || "")
   setIntentPolicyConstraintControls(presenceConstraint, valueConstraint)
   elements.intentPolicyModeObserved.checked = !policyIsAuthored
@@ -6220,10 +6458,15 @@ function createIntentZoneSelectionOptions(group) {
     checkbox.dataset.zoneName = member.zoneName
     checkbox.dataset.zoneUnavailable = ""
     const copy = createElement("span")
-    copy.append(
-      createElement("strong", { text: member.zoneName }),
-      createElement("small", { text: "Unavailable in the loaded inventory" }),
+    copy.append(createElement("strong", { text: member.zoneName }))
+    const unavailable = createElement("small", {
+      className: "target-option-status unavailable",
+    })
+    unavailable.append(
+      icon("drift"),
+      document.createTextNode("Unavailable in the loaded inventory"),
     )
+    copy.append(unavailable)
     label.dataset.search = `${member.zoneName} ${member.zoneId} unavailable`.toLowerCase()
     label.append(checkbox, copy)
     fragment.append(label)
@@ -6355,15 +6598,18 @@ function updateIntentPolicyZoneSelection(options = {}) {
     || selectionIsActive
     || savedScopeIsAmbiguous
     || Boolean(nameCollision)
-  elements.intentPolicyUseZoneSelection.textContent = selectedCount === 0
-    ? "Select at least one zone"
-    : selectionIsActive
-      ? "Selection in use"
-      : savedScopeIsAmbiguous
-        ? "Choose a matching saved scope above"
-        : nameCollision
-          ? "Choose a different name"
-          : `Use ${selectedCount} zone${selectedCount === 1 ? "" : "s"}`
+  setControlLabel(
+    elements.intentPolicyUseZoneSelection,
+    selectedCount === 0
+      ? "Select at least one zone"
+      : selectionIsActive
+        ? "Selection in use"
+        : savedScopeIsAmbiguous
+          ? "Choose a matching saved scope above"
+          : nameCollision
+            ? "Choose a different name"
+            : `Use ${selectedCount} zone${selectedCount === 1 ? "" : "s"}`,
+  )
   if (options.announce !== false) {
     elements.intentPolicyZoneAnnouncement.textContent = savedScopeIsAmbiguous
       ? `${selectedCount} zones selected; matches ${matchingSavedGroups.length} saved scopes, so choose one from the shortcut`
@@ -6891,7 +7137,7 @@ function showIntentPolicyInMatrix(policy) {
   elements.redirectType.value = ""
   elements.differenceToggle.setAttribute("aria-pressed", "false")
   elements.targetHoles.setAttribute("aria-pressed", "false")
-  setMatrixControlLabel(elements.targetHoles, "Target holes")
+  setControlLabel(elements.targetHoles, "Target holes")
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
   filterRows()
@@ -8968,11 +9214,11 @@ function matrixActionButton(label, className, options = {}) {
   if (options.iconOnly) button.classList.add("matrix-icon-action")
   if (options.icon && !options.iconOnly) {
     const iconElement = button.querySelector(":scope > .icon")
-    const tooltip = button.querySelector(MATRIX_DIRECT_TOOLTIP_SELECTOR)
+    const tooltip = button.querySelector(DIRECT_TOOLTIP_SELECTOR)
     button.replaceChildren(
       iconElement,
       createElement("span", {
-        className: MATRIX_CONTROL_LABEL_CLASS,
+        className: CONTROL_LABEL_CLASS,
         text: label,
       }),
     )
@@ -9882,11 +10128,11 @@ function updateSelectionStyles() {
   elements.selectDrifted.disabled = driftCount === 0
   elements.selectedColumnsOnly.disabled = !selectionCanNarrow
   elements.selectedColumnsOnly.setAttribute("aria-pressed", String(selectedColumnsOnly))
-  setMatrixControlLabel(
+  setControlLabel(
     elements.selectedColumnsOnly,
     selectedColumnsOnly ? "Show all zones" : "Selected zones only",
   )
-  setMatrixControlTooltip(elements.selectedColumnsOnly, selectedColumnsOnly
+  setControlTooltip(elements.selectedColumnsOnly, selectedColumnsOnly
     ? "Show every zone column"
     : "Hide unselected zone columns without changing fleet comparisons")
   elements.targetClear.disabled = count === 0
@@ -9895,7 +10141,7 @@ function updateSelectionStyles() {
   elements.targetSelectDrifted.disabled = driftCount === 0
   if (count === 0 && targetHolesWasActive) {
     elements.targetHoles.setAttribute("aria-pressed", "false")
-    setMatrixControlLabel(elements.targetHoles, "Target holes")
+    setControlLabel(elements.targetHoles, "Target holes")
   }
   if (elements.targetDialog.open) updateTargetSelectionSummary()
   updateActionButtons()
@@ -9984,24 +10230,35 @@ function updateActionButtons() {
   elements.alignWaf.textContent = hasSelection
     ? `Review WAF for ${state.selectedZoneIds.size}`
     : "Choose zones first"
-  elements.alignEmail.title = !hasSelection && !readOnly
-    ? "Choose at least one target zone first"
-    : "Live-validates Email Routing and DNS state before confirmation"
-  elements.alignWaf.title = !hasSelection && !readOnly
-    ? "Choose at least one target zone first"
-    : "Live-validates shared WAF rules before confirmation"
+  setControlTooltip(
+    elements.alignEmail,
+    !hasSelection && !readOnly
+      ? "Choose at least one target zone first"
+      : "Live-validates Email Routing and DNS state before confirmation",
+    { align: "end" },
+  )
+  setControlTooltip(
+    elements.alignWaf,
+    !hasSelection && !readOnly
+      ? "Choose at least one target zone first"
+      : "Live-validates shared WAF rules before confirmation",
+    { align: "end" },
+  )
   elements.chooseTargets.disabled = state.busy || !state.inventory
   const intentSummary = state.intentEvaluation?.summary || {}
   elements.reviewIntentDrift.disabled = !state.matrix
     || (intentSummary.driftRows || 0) === 0
-  elements.reviewIntentDrift.title = elements.reviewIntentDrift.disabled
+  setControlTooltip(elements.reviewIntentDrift, elements.reviewIntentDrift.disabled
     ? "No loaded zone is outside saved fleet intent"
-    : "Show only facets with zones that do not satisfy saved fleet intent"
+    : "Show only facets with zones that do not satisfy saved fleet intent")
   elements.reviewUngovernedDifferences.disabled = !state.matrix
     || (intentSummary.ungovernedRows || 0) === 0
-  elements.reviewUngovernedDifferences.title = elements.reviewUngovernedDifferences.disabled
+  setControlTooltip(
+    elements.reviewUngovernedDifferences,
+    elements.reviewUngovernedDifferences.disabled
     ? "No differing facets are waiting for an intent decision"
-    : "Show only differing facets that have no saved fleet intent"
+    : "Show only differing facets that have no saved fleet intent",
+  )
   elements.showSupportedChanges.disabled = !state.matrix
     || matrixCapabilityCounts(state.matrix).changeableRows === 0
   elements.showDnssecWorkflow.disabled = !state.matrix?.rows.some(
@@ -10013,7 +10270,7 @@ function updateActionButtons() {
   }
   for (const button of matrixAwareQuery(".edit-cell")) {
     button.disabled = writeLocked
-    setMatrixControlTooltip(
+    setControlTooltip(
       button,
       writeLocked
         ? writeLockReason
@@ -10023,13 +10280,13 @@ function updateActionButtons() {
   for (const button of matrixAwareQuery(".activity-undo")) {
     const entry = activityEntryByButton.get(button)
     button.disabled = writeLocked || !entry || !activityUndoable(entry)
-    button.title = writeLocked
+    setControlTooltip(button, writeLocked
       ? writeLockReason
-      : "Fresh-read the affected resources before reviewing the inverse writes"
+      : "Fresh-read the affected resources before reviewing the inverse writes")
   }
   for (const button of matrixAwareQuery(".fill-hole")) {
     button.disabled = writeLocked
-    setMatrixControlTooltip(
+    setControlTooltip(
       button,
       writeLocked ? writeLockReason : "Build a live plan from the fleet value",
     )
@@ -10049,13 +10306,13 @@ function updateActionButtons() {
     const targetCount = batch.targetZoneIds.length
     button.hidden = targetCount === 0
     button.disabled = writeLocked || !batch.available
-    setMatrixControlLabel(
+    setControlLabel(
       button,
       batch.available
         ? `Fill ${targetCount} target${targetCount === 1 ? "" : "s"}`
         : "Choose per cell",
     )
-    setMatrixControlTooltip(button, writeLocked
+    setControlTooltip(button, writeLocked
       ? writeLockReason
       : batch.available
         ? `Build one live DNS plan for ${targetCount} selected target zone${targetCount === 1 ? "" : "s"}`
@@ -10071,7 +10328,7 @@ function updateActionButtons() {
     const targetCount = state.selectedZoneIds.size
       - (state.selectedZoneIds.has(button.dataset.sourceZoneId) ? 1 : 0)
     button.disabled = writeLocked || targetCount === 0
-    setMatrixControlTooltip(button, writeLocked
+    setControlTooltip(button, writeLocked
       ? writeLockReason
       : targetCount === 0
         ? "Choose at least one destination zone other than the source"
@@ -10079,7 +10336,7 @@ function updateActionButtons() {
   }
   for (const button of matrixAwareQuery(".rename-rule")) {
     button.disabled = writeLocked
-    setMatrixControlTooltip(
+    setControlTooltip(
       button,
       writeLocked ? writeLockReason : button.dataset.actionTitle,
     )
@@ -10090,7 +10347,7 @@ function updateActionButtons() {
     const blocked = button.dataset.alignmentBlocked === "true"
     const intentPending = state.intentSaving || state.intentSyncing
     button.disabled = writeLocked || intentPending || blocked
-    setMatrixControlTooltip(button, writeLocked
+    setControlTooltip(button, writeLocked
       ? writeLockReason
       : intentPending
         ? "Wait for the fleet intent document to finish saving or syncing"
@@ -10129,11 +10386,17 @@ function renderTargetOptions() {
 
     const copy = createElement("span")
     copy.append(createElement("strong", { text: zone.meta.name }))
-    copy.append(createElement("small", {
-      text: drifted.has(zone.meta.id)
-        ? "Workflow or intent drift"
-        : "No workflow or intent drift",
-    }))
+    const hasDrift = drifted.has(zone.meta.id)
+    const status = createElement("small", {
+      className: `target-option-status ${hasDrift ? "drift" : "aligned"}`,
+    })
+    status.append(
+      icon(hasDrift ? "drift" : "ok"),
+      document.createTextNode(
+        hasDrift ? "Workflow or intent drift" : "No workflow or intent drift",
+      ),
+    )
+    copy.append(status)
     label.append(checkbox, copy)
     fragment.append(label)
   }
@@ -10175,7 +10438,7 @@ function showExplorerView(options = {}) {
     String(Boolean(options.changeableOnly)),
   )
   elements.targetHoles.setAttribute("aria-pressed", "false")
-  setMatrixControlLabel(elements.targetHoles, "Target holes")
+  setControlLabel(elements.targetHoles, "Target holes")
   state.filterPanelExpanded = false
   syncDnsTypeAvailability()
   syncRedirectTypeAvailability()
@@ -10600,13 +10863,13 @@ function renderActivityEntry(entry) {
 
   if (activityUndoable(entry) && !readOnly) {
     const actions = createElement("div", { className: "activity-entry-actions" })
-    const button = createElement("button", {
-      className: "button button-danger activity-undo",
-      text: "Review guarded undo",
+    const button = actionButton("Review guarded undo", () => {}, {
+      danger: true,
+      disabled: state.busy || !state.transportAvailable || !state.inventory,
+      icon: "undo",
+      title: "Fresh-read the affected resources before reviewing the inverse writes",
     })
-    button.type = "button"
-    button.disabled = state.busy || !state.transportAvailable || !state.inventory
-    button.title = "Fresh-read the affected resources before reviewing the inverse writes"
+    button.classList.add("activity-undo")
     activityEntryByButton.set(button, entry)
     actions.append(button)
     article.append(actions)
@@ -11088,7 +11351,7 @@ async function reviewIntentAlignment(action) {
       () => prepareIntentAlignment(api, state.intent, action, {
         baselineInventory: state.inventory,
         onProgress: ({ message }) => {
-          elements.refreshDetail.title = message
+          setRefreshDetail(message)
         },
       }),
     )
@@ -11138,7 +11401,7 @@ function dnssecConfirmationNote(plans) {
 function executePreflightRead(actions) {
   return executeActionReadPlan(api, actions, {
     onProgress: ({ message }) => {
-      elements.refreshDetail.title = message
+      setRefreshDetail(message)
     },
   })
 }
@@ -11837,6 +12100,15 @@ function createArrayValueField(value, path, label, options) {
     remove.dataset.arrayIndex = String(index)
     remove.dataset.arrayPath = encodeValuePath(path)
     remove.setAttribute("aria-label", `Remove ${label} item ${index + 1}`)
+    decorateLabeledControl(
+      remove,
+      "remove",
+      `Remove item ${index + 1} from ${label}`,
+      {
+        className: "value-editor-action",
+        iconOnly: true,
+      },
+    )
     row.append(remove)
     items.append(row)
   }
@@ -11847,6 +12119,9 @@ function createArrayValueField(value, path, label, options) {
   add.type = "button"
   add.dataset.arrayPath = encodeValuePath(path)
   add.setAttribute("aria-label", `Add ${label} item`)
+  decorateLabeledControl(add, "add", `Append an item to ${label}`, {
+    className: "value-editor-action",
+  })
   group.append(items, add)
   return group
 }
@@ -12582,6 +12857,18 @@ function openInlineSettingEditor(cell, action, zone, setting) {
     text: "Review",
   })
   review.type = "submit"
+  decorateLabeledControl(
+    cancel,
+    "close",
+    "Discard this inline draft and restore the matrix cell",
+    { className: "dialog-control-action" },
+  )
+  decorateLabeledControl(
+    review,
+    "inspect",
+    "Reread the setting and build its exact write preview",
+    { className: "dialog-control-action" },
+  )
   const actions = createElement("div", { className: "inline-editor-actions" })
   actions.append(cancel, review)
   form.append(field, error, actions)
@@ -12608,6 +12895,24 @@ function openInlineSettingEditor(cell, action, zone, setting) {
   if (control instanceof HTMLInputElement && control.type === "text") control.select()
 }
 
+function renderDesiredStateEditorTarget(target, zone) {
+  const context = createElement("span", {
+    className: "editor-target-context",
+    text: target || zone.meta.name,
+  })
+  const safety = createElement("span", {
+    className: "dialog-context-fact",
+    text: "Live recheck",
+  })
+  decorateReferenceItem(
+    safety,
+    "refresh",
+    "Fleet rereads only the affected live facts before showing the exact confirmation plan",
+    { align: "start", below: true },
+  )
+  elements.editorTarget.replaceChildren(context, safety)
+}
+
 function openDesiredStateEditor(options) {
   const {
     action,
@@ -12629,8 +12934,7 @@ function openDesiredStateEditor(options) {
   }
   elements.editorKind.textContent = kind
   elements.editorTitle.textContent = title
-  elements.editorTarget.textContent = target
-    || `${zone.meta.name} | cached state shown; only the live facts needed for this change will be reread before confirmation`
+  renderDesiredStateEditorTarget(target, zone)
   elements.editorValueLabel.textContent = valueLabel
   clearFieldError(elements.editorValue, elements.editorError)
   elements.editorChoice.replaceChildren(...entries.map((entry) => {
@@ -12776,7 +13080,7 @@ function openActionEditor(action, zone, rowLabel = "", sourceCell = null) {
 }
 
 function workspaceEditorTarget(zone, ruleset) {
-  return `${zone.meta.name} | ${rulesetWorkspaceTitle(ruleset)} | cached definition shown; the exact ruleset will be reread before confirmation`
+  return `${zone.meta.name} | ${rulesetWorkspaceTitle(ruleset)}`
 }
 
 async function refreshWorkspaceAfterApply(applied) {
@@ -13449,7 +13753,7 @@ elements.redirectType.addEventListener("change", filterRows)
 elements.targetHoles.addEventListener("click", () => {
   const next = elements.targetHoles.getAttribute("aria-pressed") !== "true"
   elements.targetHoles.setAttribute("aria-pressed", String(next))
-  setMatrixControlLabel(
+  setControlLabel(
     elements.targetHoles,
     next ? "Target holes only" : "Target holes",
   )
