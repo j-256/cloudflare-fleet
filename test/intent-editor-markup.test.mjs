@@ -36,7 +36,7 @@ test("matrix opens compared and observed values in a dedicated equivalence modal
   assert.match(appSource, /text: "Not compared"/)
   assert.match(appSource, /className: "facet-label-source"/)
   assert.match(appSource, /className: "facet-title-value"/)
-  assert.match(appSource, /className: "cell-action inspect-facet-value"/)
+  assert.match(appSource, /matrixActionButton\("Inspect", "inspect-facet-value"/)
   assert.match(appSource, /text: "Same facet"/)
   assert.match(appSource, /text: "Exact match"/)
   assert.doesNotMatch(appSource, /Facet identity and exact equivalence/)
@@ -47,18 +47,18 @@ test("ruleset-derived matrix controls stay on individual rule rows", () => {
   assert.doesNotMatch(html, /id="ruleset-comparison-dialog"/)
   assert.doesNotMatch(appSource, /Compare rule sets/)
   assert.match(appSource, /if \(cell\.parentAction\)/)
-  assert.match(appSource, /text: "Ruleset"/)
+  assert.match(appSource, /matrixActionButton\("Ruleset", "open-ruleset"/)
   assert.match(appSource, /Open the parent ruleset workspace/)
 })
 
-test("matrix exposes phase as a filter and a stacked badge", () => {
+test("matrix exposes phase as a filter and a compact badge", () => {
   assert.match(html, /<select id="phase"/)
   assert.match(html, /<select id="matrix-sort"/)
   assert.match(html, /<option value="phase-execution" selected>Sort: Phase execution order<\/option>/)
   assert.match(html, /<option value="category">Sort: Category A-Z<\/option>/)
   assert.match(appSource, /function renderPhases\(\)/)
   assert.match(appSource, /sortMatrixRows\(/)
-  assert.match(appSource, /className: "facet-phase-friendly"/)
+  assert.match(appSource, /className === "matrix-facet-phase"/)
   assert.match(appSource, /phase\.dataset\.phase = description\.phase/)
 })
 
@@ -67,7 +67,7 @@ test("matrix exposes facet-level intent results and filtering", () => {
   assert.match(html, /<option value="match">Matches intent<\/option>/)
   assert.match(appSource, /function facetIntentStatus\(row\)/)
   assert.match(appSource, /fleetIntentFacetResultPresentation\(row\.intentState\)/)
-  assert.match(appSource, /className: `facet-intent-status \$\{presentation\.status\}`/)
+  assert.match(appSource, /`facet-intent-status \$\{presentation\.status\}`/)
   assert.match(appSource, /intentStatus: row\.dataset\.intentStatus/)
 })
 
@@ -92,7 +92,7 @@ test("intent manager explains baseline and refinement composition", () => {
 test("matching controls retain their visible label in the accessible name", () => {
   assert.match(
     appSource,
-    /contextualActionLabel\(\s*"How matching works",\s*row\.label/,
+    /matrixActionButton\(\s*"How matching works",\s*"facet-equivalence-open",\s*\{\s*context: row\.label/,
   )
   assert.match(
     appSource,

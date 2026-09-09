@@ -75,6 +75,49 @@ test("keeps secondary filters usable on a phone viewport", async ({ dashboard })
   await expect.poll(() => new URL(page.url()).searchParams.get("scope")).toBe("all")
 })
 
+test("keeps dense matrix controls legible and self-explanatory", async ({ dashboard }) => {
+  const { page, zoneNames } = dashboard
+  const capability = page.locator(".capability-key .capability-chip.observe")
+  await expect(capability.locator(":scope > .icon")).toHaveCount(1)
+  await capability.focus()
+  await expect(capability.locator(":scope > .tooltip")).toHaveCSS("opacity", "1")
+  await capability.press("Escape")
+  await expect(capability.locator(":scope > .tooltip")).toHaveCSS("opacity", "0")
+
+  await expect(page.locator(".category-capability-fact")).toHaveCount(4)
+  const edit = page.getByRole("button", {
+    name: `Edit always_use_https on ${zoneNames[0]}`,
+  })
+  await expect(edit).toHaveClass(/matrix-icon-action/)
+  await expect(edit.locator(":scope > .icon")).toHaveCount(1)
+  await expect(edit.locator(":scope > .matrix-control-label")).toHaveCount(0)
+  await edit.hover()
+  await expect(edit.locator(":scope > .tooltip")).toHaveCSS("opacity", "1")
+
+  const comparisonStatus = page.locator("#matrix .cell-comparison-status").first()
+  await expect(comparisonStatus.locator(":scope > .icon")).toHaveCount(1)
+  await expect(page.locator(".configuration-explorer [title]")).toHaveCount(0)
+
+  await page.setViewportSize({ height: 844, width: 390 })
+  const undersized = await page.locator(".configuration-explorer *").evaluateAll(
+    (nodes) => nodes.filter((node) => {
+      const style = getComputedStyle(node)
+      return node.getClientRects().length > 0
+        && style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number.parseFloat(style.fontSize) < 11
+    }).map((node) => ({
+      className: String(node.className),
+      fontSize: getComputedStyle(node).fontSize,
+      tagName: node.tagName,
+    })),
+  )
+  expect(undersized).toEqual([])
+  expect(await page.evaluate(
+    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+  )).toBe(true)
+})
+
 test("selects target zones and restores the selection after reload", async ({ dashboard }) => {
   const { page, waitForReady, zoneNames } = dashboard
 

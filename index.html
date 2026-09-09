@@ -212,13 +212,13 @@
         <div class="section-introduction explorer-introduction">
           <p class="policy-kicker">Detailed workspace</p>
           <h2 id="configuration-heading" tabindex="-1">Explore all configuration</h2>
-          <p>Every readable facet can be compared and can receive expected state when intent editing is available. Matrix change support varies by category and is shown explicitly below; the special multi-setting workflows above are scoped separately.</p>
+          <p>Compare readable configuration across zones, define expected state, and use only the change paths Fleet supports.</p>
         </div>
 
         <ul class="capability-key" aria-label="Capability types">
-          <li><span class="capability-chip observe">Compare</span><span>Reads and compares Cloudflare state</span></li>
-          <li><span class="capability-chip plan">Expected state</span><span>Evaluates what should be true without changing Cloudflare</span></li>
-          <li><span class="capability-chip change">Supported change</span><span>Builds a fresh, reviewed Cloudflare write plan</span></li>
+          <li><span class="capability-chip observe">Compare</span><span class="sr-only">Reads and compares Cloudflare state</span></li>
+          <li><span class="capability-chip plan">Expected state</span><span class="sr-only">Evaluates what should be true without changing Cloudflare</span></li>
+          <li><span class="capability-chip change">Supported change</span><span class="sr-only">Builds a fresh, reviewed Cloudflare write plan</span></li>
         </ul>
 
         <nav class="toolbar" id="fleet-controls" aria-label="Configuration explorer controls">
@@ -270,7 +270,7 @@
           <button class="button toggle" id="difference-toggle" type="button" aria-pressed="true">Needs review</button>
           <button class="button toggle" id="change-support-toggle" type="button" aria-pressed="false">Supported changes</button>
           <button class="button button-quiet filter-panel-toggle" id="filter-panel-toggle" type="button" aria-expanded="false" aria-controls="toolbar-secondary" hidden>Filters &amp; sort</button>
-          <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
+          <button class="button button-quiet matrix-focus-toggle mobile-matrix-focus" id="mobile-matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell">Focus matrix</button>
           <span class="visible-count" id="visible-count" role="status" aria-live="polite" aria-atomic="true">0 facets</span>
           <button class="button button-quiet" id="show-worker-diagnostics" type="button" aria-haspopup="dialog">Diagnose Worker</button>
           <button class="button button-quiet activity-button" id="show-activity" type="button" aria-haspopup="dialog" aria-label="Activity 0: operation history, no entries">Activity <span id="activity-count">0</span></button>
@@ -299,7 +299,7 @@
           <summary>Matrix guide</summary>
           <div class="matrix-guide-content">
             <aside class="legend" aria-label="Matrix legend">
-              <span class="same" title="Matches the unique most-common present value in this row">Consensus match</span>
+              <span class="same">Consensus match</span>
               <span class="variant">Variant</span>
               <span class="hole">Missing</span>
               <span class="editable">Editable</span>
@@ -311,7 +311,7 @@
             <p><kbd>/</kbd> focuses search. Arrow keys move between matrix controls. Direct Edit targets its own cell; Copy, Fill, and automated workflows use the selected matrix targets.</p>
           </div>
         </details>
-        <button class="button button-quiet matrix-focus-toggle" id="matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell" title="Use the full viewport for the matrix">Focus matrix</button>
+        <button class="button button-quiet matrix-focus-toggle" id="matrix-focus" type="button" aria-pressed="false" aria-controls="matrix-shell">Focus matrix</button>
       </div>
 
       <p class="matrix-instructions sr-only" id="matrix-instructions">Filter before navigating this large table. Tab enters the matrix once; use arrow keys to move between zone selectors and row actions. Press Space to toggle a zone or Enter to activate an action. When the scroll frame is focused, arrow keys pan the matrix.</p>

@@ -35,7 +35,7 @@ test("matrix keeps filtered rows detached from the live document", () => {
   assert.match(appSource, /elements\.matrixBody\.replaceChildren\(\.\.\.visibleRows\)/)
   assert.match(appSource, /function matrixAwareQuery\(selector\)/)
   assert.doesNotMatch(appSource, /const currentRows = \[\.\.\.elements\.matrixBody\.querySelectorAll\("tr"\)\]/)
-  assert.match(shellRule, /min-height: 260px;/)
+  assert.match(shellRule, /min-height: 300px;/)
 })
 
 test("matrix control availability avoids layout reads", () => {
@@ -103,9 +103,10 @@ test("individual TXT record rows expose flat purpose labels and a contextual fil
     /<select id="txt-purpose" aria-describedby="visible-count" hidden disabled>/,
   )
   assert.match(appSource, /function renderTxtPurposes\(\)/)
-  assert.match(appSource, /Limit individual TXT record rows to one purpose/)
+  assert.match(appSource, /Filter individual TXT record rows by purpose/)
   assert.match(appSource, /tr\.dataset\.txtPurposes = row\.txtPurposes\.join\(" "\)/)
   assert.match(appSource, /className: "txt-purpose-label"/)
+  assert.match(appSource, /attachTooltip\(purposeLabel, purposeDescription\)/)
   assert.match(styles, /\.txt-purpose-label \{[^}]*border-left:/s)
   assert.doesNotMatch(styles, /\.txt-purpose-label \{[^}]*border-radius:/s)
 })
