@@ -50,6 +50,15 @@ const CHANGE = Object.freeze({
   settingId: "always_use_https",
   zoneId: "zone-one",
 })
+const CHANGES = Object.freeze([
+  CHANGE,
+  Object.freeze({
+    desired: "on",
+    kind: "zone-setting-update",
+    settingId: "early_hints",
+    zoneId: "zone-one",
+  }),
+])
 const TOOL_NAMES = Object.freeze([
   "get_runtime_status",
   "get_fleet_state",
@@ -78,6 +87,8 @@ const TOOL_NAMES = Object.freeze([
   "apply_alignments",
   "plan_fleet_change",
   "apply_fleet_change",
+  "plan_fleet_changes",
+  "apply_fleet_changes",
   "list_activity",
   "plan_activity_undo",
   "apply_activity_undo",
@@ -271,6 +282,34 @@ function plannedAlignmentBatch(overrides = {}) {
   }
 }
 
+function plannedChangeBatch(overrides = {}) {
+  const alignment = plannedAlignmentBatch()
+  return {
+    accountId: "account-one",
+    changes: CHANGES.map((change) => ({
+      change,
+      reason: "One bounded write prepared",
+      status: "planned",
+      title: "Update zone setting",
+    })),
+    planSet: {
+      digest: DIGEST,
+      plans: alignment.planSet.plans,
+      preview: alignment.planSet.preview.map((operation) => ({
+        ...operation,
+        currentValue: { value: "off" },
+      })),
+      request: { changes: CHANGES },
+      validatedAt: "2026-09-10T00:00:00.000Z",
+    },
+    reason: "Two bounded changes prepared",
+    schemaVersion: 1,
+    status: "planned",
+    title: "Apply bounded fleet change batch",
+    ...overrides,
+  }
+}
+
 function verifiedAlignmentBatch() {
   return {
     ...verifiedAlignment(),
@@ -283,6 +322,7 @@ function serviceFixture(overrides = {}) {
   const calls = {
     applyAdoption: [],
     applyChange: [],
+    applyChanges: [],
     applyIntent: [],
     applyUndo: [],
     apply: [],
@@ -295,6 +335,7 @@ function serviceFixture(overrides = {}) {
     planAdoption: [],
     planBatch: [],
     planChange: [],
+    planChanges: [],
     planIntent: [],
     planUndo: [],
   }
@@ -338,6 +379,14 @@ function serviceFixture(overrides = {}) {
         change,
         selector: undefined,
         title: "Update zone setting",
+      }
+    },
+    async applyChanges(changes, digest) {
+      calls.applyChanges.push({ changes, digest })
+      return {
+        ...verifiedAlignmentBatch(),
+        changes: plannedChangeBatch().changes,
+        title: "Apply bounded fleet change batch",
       }
     },
     async applyIntent(document, digest) {
@@ -517,6 +566,10 @@ function serviceFixture(overrides = {}) {
         change,
         title: "Update zone setting",
       })
+    },
+    async planChanges(changes) {
+      calls.planChanges.push(changes)
+      return overrides.planChangesResult || plannedChangeBatch()
     },
     async planIntent(document) {
       calls.planIntent.push(document)
@@ -701,6 +754,12 @@ test("MCP server advertises the bounded fleet tools and accurate annotations", a
   const change = result.tools.find((entry) => entry.name === "plan_fleet_change")
   assert.doesNotMatch(JSON.stringify(change.inputSchema), /"method"|"path"/)
   assert.match(JSON.stringify(change.outputSchema), /"operations"/)
+  const changes = result.tools.find((entry) => entry.name === "plan_fleet_changes")
+  assert.deepEqual(changes.inputSchema.required, ["changes"])
+  assert.doesNotMatch(JSON.stringify(changes.inputSchema), /worker-schedules-update/)
+  assert.doesNotMatch(JSON.stringify(changes.inputSchema), /"method"|"path"/)
+  const changesApply = result.tools.find((entry) => entry.name === "apply_fleet_changes")
+  assert.deepEqual(changesApply.inputSchema.required, ["changes", "planDigest"])
   const intentApply = result.tools.find((entry) => entry.name === "apply_fleet_intent")
   assert.equal(intentApply.annotations.openWorldHint, false)
   const adoptionCandidates = result.tools.find(
@@ -1086,7 +1145,11 @@ test("MCP batch apply elicits one combined review and fresh apply", async (conte
   assert.match(review, /settings\/early_hints/)
   assert.deepEqual(
     request.params.requestedSchema.required,
-    ["review_1", "review_2"],
+    ["review_1"],
+  )
+  assert.equal(
+    request.params.requestedSchema.properties.review_1.oneOf[1].title,
+    "Approve entire batch",
   )
 })
 
@@ -1104,11 +1167,11 @@ test("MCP batch apply stops without writing when confirmation is declined", asyn
   assert.equal(calls.applyBatch.length, 0)
 })
 
-test("MCP batch apply rejects a partially reviewed operation set", async (context) => {
+test("MCP batch apply rejects a missing whole-batch decision", async (context) => {
   const { calls, client } = await connectedFixture(context, {
     elicitationHandler: async () => ({
       action: "accept",
-      content: { review_1: "approve" },
+      content: {},
     }),
   })
 
@@ -1120,6 +1183,92 @@ test("MCP batch apply rejects a partially reviewed operation set", async (contex
   assert.equal(result.structuredContent.status, "confirmation-invalid")
   assert.equal(result.isError, true)
   assert.equal(calls.applyBatch.length, 0)
+})
+
+test("MCP direct change batch plans and applies through one complete review", async (context) => {
+  let request
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async (incoming) => {
+      request = incoming
+      return approvedElicitation(incoming)
+    },
+  })
+
+  const planned = await client.callTool({
+    arguments: { changes: CHANGES },
+    name: "plan_fleet_changes",
+  })
+  const result = await client.callTool({
+    arguments: { changes: CHANGES, planDigest: DIGEST },
+    name: "apply_fleet_changes",
+  })
+
+  assert.equal(planned.structuredContent.status, "planned")
+  assert.deepEqual(calls.planChanges, [CHANGES, CHANGES])
+  assert.deepEqual(calls.applyChanges, [{
+    changes: CHANGES,
+    digest: DIGEST,
+  }])
+  assert.equal(result.structuredContent.status, "verified")
+  assert.match(request.params.message, /Review bounded fleet change batch/)
+  assert.match(request.params.message, /Changes: 2/)
+  assert.match(request.params.message, /Operations: 2/)
+  assert.deepEqual(request.params.requestedSchema.required, ["review_1"])
+  const review = elicitationReviewText(request)
+  assert.match(review, /Enable Always Use HTTPS/)
+  assert.match(review, /settings\/always_use_https/)
+  assert.match(review, /Enable Early Hints/)
+  assert.match(review, /settings\/early_hints/)
+  assert.deepEqual(
+    request.params.requestedSchema.properties.review_1.oneOf,
+    [
+      { const: "decline", title: "Do not apply" },
+      { const: "approve", title: "Approve entire batch" },
+    ],
+  )
+})
+
+test("MCP direct change batch stops before writes when approval is declined", async (context) => {
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async () => ({ action: "decline" }),
+  })
+
+  const result = await client.callTool({
+    arguments: { changes: CHANGES, planDigest: DIGEST },
+    name: "apply_fleet_changes",
+  })
+
+  assert.equal(result.structuredContent.status, "confirmation-declined")
+  assert.equal(calls.planChanges.length, 1)
+  assert.equal(calls.applyChanges.length, 0)
+})
+
+test("MCP direct change batch refuses a changed plan before approval", async (context) => {
+  let elicitations = 0
+  const { calls, client } = await connectedFixture(context, {
+    elicitationHandler: async () => {
+      elicitations += 1
+      return { action: "cancel" }
+    },
+    serviceOverrides: {
+      planChangesResult: plannedChangeBatch({
+        planSet: {
+          ...plannedChangeBatch().planSet,
+          digest: DIFFERENT_DIGEST,
+        },
+      }),
+    },
+  })
+
+  const result = await client.callTool({
+    arguments: { changes: CHANGES, planDigest: DIGEST },
+    name: "apply_fleet_changes",
+  })
+
+  assert.equal(result.structuredContent.status, "plan-changed")
+  assert.equal(result.structuredContent.actualDigest, DIFFERENT_DIGEST)
+  assert.equal(elicitations, 0)
+  assert.equal(calls.applyChanges.length, 0)
 })
 
 test("MCP reviewed mutation tools bind intent, direct changes, and undo to signed confirmation", async (context) => {

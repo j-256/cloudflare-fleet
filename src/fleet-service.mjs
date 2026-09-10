@@ -17,6 +17,7 @@ import { withFleetExecutionLock } from "./execution-lock.mjs"
 import {
   FLEET_CHANGE_STATUS,
   prepareFleetChange,
+  prepareFleetChanges,
 } from "./fleet-change.mjs"
 import { createEmptyFleetPolicyConfiguration } from "./fleet-policy.mjs"
 import { readFleetPolicyConfiguration } from "./fleet-policy-store.mjs"
@@ -135,6 +136,24 @@ function changePreparationResult(accountId, preparation) {
   }
 }
 
+function changeBatchPreparationResult(accountId, preparation) {
+  return {
+    accountId,
+    changes: preparation.changes,
+    planSet: preparation.planSet,
+    reason: preparation.reason,
+    schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+    status: preparation.status,
+    title: preparation.title,
+  }
+}
+
+function publicChangePreparationResult(accountId, preparation) {
+  return Array.isArray(preparation.changes)
+    ? changeBatchPreparationResult(accountId, preparation)
+    : changePreparationResult(accountId, preparation)
+}
+
 function intentPreparationResult(accountId, preparation) {
   return {
     accountId,
@@ -232,6 +251,7 @@ export function createFleetService(options) {
     prepareAlignment: options.prepareAlignment || prepareIntentAlignment,
     prepareAlignments: options.prepareAlignments || prepareIntentAlignments,
     prepareChange: options.prepareChange || prepareFleetChange,
+    prepareChanges: options.prepareChanges || prepareFleetChanges,
     prepareIntentChange: options.prepareIntentChange || prepareFleetIntentChange,
     readActivity: options.readActivity || readOperationActivityDocument,
     readIntent: options.readIntent || readFleetIntentDocument,
@@ -397,6 +417,20 @@ export function createFleetService(options) {
     if (change.kind === WORKER_SCHEDULE_KIND) return workers.planSchedules(change, commandOptions)
     const preparation = await prepareChange(change, commandOptions)
     return changePreparationResult(accountId, preparation)
+  }
+
+  async function prepareChanges(changes, commandOptions = {}) {
+    return dependencies.prepareChanges(api, changes, {
+      onProgress: commandOptions.onProgress,
+      readPolicy: dependencies.readPolicy,
+      signal: commandOptions.signal,
+      validatedAt: commandOptions.validatedAt,
+    })
+  }
+
+  async function planChanges(changes, commandOptions = {}) {
+    const preparation = await prepareChanges(changes, commandOptions)
+    return changeBatchPreparationResult(accountId, preparation)
   }
 
   async function listAlignments(commandOptions = {}) {
@@ -573,7 +607,7 @@ export function createFleetService(options) {
   ) {
     if (preparation.status !== FLEET_CHANGE_STATUS.PLANNED) {
       return {
-        ...changePreparationResult(accountId, preparation),
+        ...publicChangePreparationResult(accountId, preparation),
         applied: false,
       }
     }
@@ -623,7 +657,9 @@ export function createFleetService(options) {
       accountId,
       activity: outcome.activity,
       applied: outcome.executionResults.length > 0,
-      change: preparation.change,
+      ...(Array.isArray(preparation.changes)
+        ? { changes: preparation.changes }
+        : { change: preparation.change }),
       error: outcome.error instanceof Error
         ? outcome.error.message
         : outcome.error || null,
@@ -648,6 +684,14 @@ export function createFleetService(options) {
     requiredString(expectedDigest, "Expected fleet change plan digest")
     return dependencies.withWriteLock(async () => {
       const preparation = await prepareChange(change, commandOptions)
+      return executeChange(preparation, expectedDigest, commandOptions)
+    })
+  }
+
+  async function applyChanges(changes, expectedDigest, commandOptions = {}) {
+    requiredString(expectedDigest, "Expected fleet change batch plan digest")
+    return dependencies.withWriteLock(async () => {
+      const preparation = await prepareChanges(changes, commandOptions)
       return executeChange(preparation, expectedDigest, commandOptions)
     })
   }
@@ -905,6 +949,7 @@ export function createFleetService(options) {
     applyAlignment,
     applyAlignments,
     applyChange,
+    applyChanges,
     applyIntent,
     getIntent,
     listActivity,
@@ -915,6 +960,7 @@ export function createFleetService(options) {
     planAlignment,
     planAlignments,
     planChange,
+    planChanges,
     planIntent,
     policyFile,
     stateFile,

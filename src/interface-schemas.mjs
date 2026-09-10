@@ -62,6 +62,7 @@ const ruleTargetSchema = {
   ...rulesetTargetSchema,
   ruleId: identifierSchema,
 }
+export const FLEET_CHANGE_BATCH_LIMIT = 100
 
 export const workerNameSchema = z.string().regex(WORKER_NAME_PATTERN)
 export const workerIntentSchema = z.strictObject({
@@ -140,8 +141,8 @@ export const workerIncidentOutputSchema = z.strictObject({
   report: workerReportOutputSchema,
 })
 
-export const fleetChangeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal(WORKER_SCHEDULE_KIND), worker: workerNameSchema, intent: workerIntentSchema, findingId: z.string().max(256).optional() }),
+const workerScheduleChangeSchema = z.strictObject({ kind: z.literal(WORKER_SCHEDULE_KIND), worker: workerNameSchema, intent: workerIntentSchema, findingId: z.string().max(256).optional() })
+const directFleetChangeSchemas = [
   z.strictObject({
     desired: desiredSchema,
     kind: z.literal("zone-setting-update"),
@@ -221,6 +222,22 @@ export const fleetChangeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("shared-waf-align"),
     zoneIds: zoneIdsSchema,
   }),
+]
+
+const directFleetChangeSchema = z.discriminatedUnion(
+  "kind",
+  directFleetChangeSchemas,
+)
+export const fleetChangeSchema = z.discriminatedUnion("kind", [
+  workerScheduleChangeSchema,
+  ...directFleetChangeSchemas,
+])
+export const fleetChangesSchema = z.array(directFleetChangeSchema)
+  .min(1)
+  .max(FLEET_CHANGE_BATCH_LIMIT)
+export const fleetChangeInputSchema = z.union([
+  fleetChangeSchema,
+  z.strictObject({ changes: fleetChangesSchema }),
 ])
 
 const FLEET_INTENT_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/

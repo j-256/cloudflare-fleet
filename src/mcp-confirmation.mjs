@@ -6,6 +6,10 @@ export const CONFIRMATION_DECISION = Object.freeze({
   APPROVE: "approve",
   DECLINE: "decline",
 })
+export const CONFIRMATION_APPROVAL_MODE = Object.freeze({
+  BATCH: "batch",
+  PER_ITEM: "per-item",
+})
 
 const CONFIRMATION_LINE_WIDTH = 76
 // One operation should be one approval; with large values summarized, an
@@ -419,7 +423,7 @@ function fieldPages(reviewItems) {
   })
 }
 
-function fieldSchema(field) {
+function fieldSchema(field, approveTitle) {
   return {
     description: field.description,
     oneOf: [
@@ -429,7 +433,7 @@ function fieldSchema(field) {
       },
       {
         const: CONFIRMATION_DECISION.APPROVE,
-        title: "Approve this change",
+        title: approveTitle,
       },
     ],
     title: field.title,
@@ -437,15 +441,38 @@ function fieldSchema(field) {
   }
 }
 
+function batchReviewField(reviewItems) {
+  const count = reviewItems.length
+  return {
+    description: [
+      `One decision approves all ${count} operation${count === 1 ? "" : "s"} below as the displayed digest-bound batch.`,
+      "",
+      ...reviewItems.flatMap((item, index) => [
+        item.title,
+        ...item.lines,
+        ...(index === reviewItems.length - 1 ? [] : [""]),
+      ]),
+    ].join("\n"),
+    title: `Review entire batch (${count} operation${count === 1 ? "" : "s"})`,
+  }
+}
+
 export function buildConfirmationForm(options) {
-  const fields = fieldPages(options.reviewItems)
+  const batchApproval = options.approvalMode
+    === CONFIRMATION_APPROVAL_MODE.BATCH
+  const fields = batchApproval
+    ? [batchReviewField(options.reviewItems)]
+    : fieldPages(options.reviewItems)
   if (fields.length === 0) {
     throw new TypeError("A confirmation form requires at least one review item")
   }
   const keys = confirmationFieldKeys(fields.length)
   const properties = Object.fromEntries(fields.map((field, index) => [
     keys[index],
-    fieldSchema(field),
+    fieldSchema(
+      field,
+      batchApproval ? "Approve entire batch" : "Approve this change",
+    ),
   ]))
   return {
     fieldCount: fields.length,

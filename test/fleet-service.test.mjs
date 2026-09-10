@@ -52,6 +52,15 @@ const CHANGE = Object.freeze({
   settingId: "always_use_https",
   zoneId: "zone-one",
 })
+const CHANGES = Object.freeze([
+  CHANGE,
+  Object.freeze({
+    desired: "on",
+    kind: "zone-setting-update",
+    settingId: "early_hints",
+    zoneId: "zone-one",
+  }),
+])
 const CHANGE_PLAN_SET = Object.freeze({
   digest: "sha256:approved",
   plans: [{
@@ -67,6 +76,10 @@ const CHANGE_PLAN_SET = Object.freeze({
   preview: [],
   request: CHANGE,
   validatedAt: "2026-08-12T00:00:00.000Z",
+})
+const CHANGE_BATCH_PLAN_SET = Object.freeze({
+  ...CHANGE_PLAN_SET,
+  request: { changes: CHANGES },
 })
 
 function preparation(overrides = {}) {
@@ -178,6 +191,7 @@ function serviceFixture(overrides = {}) {
     }),
     ...(overrides.persistIntent ? { persistIntent: overrides.persistIntent } : {}),
     ...(overrides.prepareChange ? { prepareChange: overrides.prepareChange } : {}),
+    ...(overrides.prepareChanges ? { prepareChanges: overrides.prepareChanges } : {}),
     ...(overrides.prepareIntentChange
       ? { prepareIntentChange: overrides.prepareIntentChange }
       : {}),
@@ -419,6 +433,67 @@ test("fleet service plans and applies bounded direct changes under the write loc
     { emailDnsRecordExceptions: [], schemaVersion: 1 },
   ])
   assert.deepEqual(events, ["lock", "execute"])
+})
+
+test("fleet service plans and applies one digest-bound direct change batch", async () => {
+  let preparations = 0
+  const { events, service } = serviceFixture({
+    prepareChanges: async (_api, changes, options) => {
+      preparations += 1
+      assert.deepEqual(changes, CHANGES)
+      assert.deepEqual(await options.readPolicy(), {
+        emailDnsRecordExceptions: [],
+        schemaVersion: 1,
+      })
+      return {
+        changes: CHANGES.map((change) => ({
+          change,
+          reason: "One bounded write prepared",
+          status: "planned",
+          title: "Update zone setting",
+        })),
+        planSet: CHANGE_BATCH_PLAN_SET,
+        reason: "Two bounded changes prepared",
+        status: "planned",
+        title: "Apply bounded fleet change batch",
+      }
+    },
+  })
+
+  const plan = await service.planChanges(CHANGES)
+  const result = await service.applyChanges(CHANGES, "sha256:approved")
+
+  assert.equal(plan.planSet.digest, "sha256:approved")
+  assert.deepEqual(plan.changes.map((entry) => entry.change), CHANGES)
+  assert.equal(result.status, OPERATION_ACTIVITY_STATUS.VERIFIED)
+  assert.equal(result.applied, true)
+  assert.deepEqual(result.changes.map((entry) => entry.change), CHANGES)
+  assert.equal(preparations, 2)
+  assert.deepEqual(events, ["lock", "execute"])
+})
+
+test("fleet service rejects a changed direct change batch before execution", async () => {
+  const { events, service } = serviceFixture({
+    prepareChanges: async () => ({
+      changes: CHANGES.map((change) => ({
+        change,
+        reason: "One bounded write prepared",
+        status: "planned",
+        title: "Update zone setting",
+      })),
+      planSet: CHANGE_BATCH_PLAN_SET,
+      reason: "Two bounded changes prepared",
+      status: "planned",
+      title: "Apply bounded fleet change batch",
+    }),
+  })
+
+  await assert.rejects(
+    service.applyChanges(CHANGES, "sha256:reviewed"),
+    (error) => error instanceof AlignmentPlanChangedError
+      && error.actualDigest === "sha256:approved",
+  )
+  assert.deepEqual(events, ["lock"])
 })
 
 test("fleet service atomically plans and persists complete intent documents", async () => {

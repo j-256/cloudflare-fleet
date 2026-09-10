@@ -6,6 +6,7 @@ import { z } from "zod"
 import { createEmptyFleetIntentDocument } from "../src/fleet-intent.mjs"
 import {
   fleetChangeSchema,
+  fleetChangesSchema,
   fleetIntentDocumentSchema,
   runtimeStatusInputSchema,
   runtimeStatusOutputSchema,
@@ -24,10 +25,14 @@ test("public fleet intent schema accepts current documents and rejects skeletal 
 
 test("public JSON schemas describe bounded requests and complete intent entries", () => {
   const changeSchema = JSON.stringify(z.toJSONSchema(fleetChangeSchema))
+  const changesSchema = JSON.stringify(z.toJSONSchema(fleetChangesSchema))
   const intentSchema = JSON.stringify(z.toJSONSchema(fleetIntentDocumentSchema))
 
   assert.match(changeSchema, /zone-setting-update/)
   assert.doesNotMatch(changeSchema, /"method"|"path"/)
+  assert.match(changesSchema, /ruleset-rule-update/)
+  assert.doesNotMatch(changesSchema, /worker-schedules-update/)
+  assert.doesNotMatch(changesSchema, /"method"|"path"/)
   assert.match(intentSchema, /nameSource/)
   assert.match(intentSchema, /presenceConstraint/)
   assert.match(intentSchema, /observedCanonical/)

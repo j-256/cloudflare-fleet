@@ -34,7 +34,9 @@ import {
   alignmentCoverageSchema,
   commandDiagnosticsSchema,
   digestSchema,
+  FLEET_CHANGE_BATCH_LIMIT,
   fleetChangeSchema,
+  fleetChangesSchema,
   fleetIntentDocumentSchema,
   identifierSchema,
   runtimeStatusInputSchema,
@@ -48,6 +50,7 @@ import {
 } from "./interface-schemas.mjs"
 import {
   buildConfirmationForm,
+  CONFIRMATION_APPROVAL_MODE,
   CONFIRMATION_DECISION,
   confirmationFieldKeys,
   intentReviewItems,
@@ -115,6 +118,12 @@ const changeInputSchema = z.strictObject({
 })
 const changeApplyInputSchema = changeInputSchema.extend({
   planDigest: digestSchema.describe("Exact digest returned by plan_fleet_change"),
+})
+const changesInputSchema = z.strictObject({
+  changes: fleetChangesSchema.describe("Distinct bounded direct changes to review and apply together"),
+})
+const changesApplyInputSchema = changesInputSchema.extend({
+  planDigest: digestSchema.describe("Exact digest returned by plan_fleet_changes"),
 })
 const undoApplyInputSchema = activityUndoInputSchema.extend({
   planDigest: digestSchema.describe("Exact digest returned by plan_activity_undo"),
@@ -216,6 +225,12 @@ const candidateOutputSchema = z.looseObject({
     kind: z.string(),
   }),
 })
+const changePreparationOutputSchema = z.looseObject({
+  change: fleetChangeSchema,
+  reason: z.string(),
+  status: z.string(),
+  title: z.string(),
+})
 const verificationGuardOutputSchema = z.looseObject({
   canonical: z.string(),
   summary: z.string(),
@@ -278,6 +293,9 @@ const planOutputSchema = z.union([
     alignments: z.array(z.looseObject({
       coverage: alignmentCoverageSchema.optional(), reason: z.string(), status: z.string(),
     })).max(20).optional(),
+    changes: z.array(changePreparationOutputSchema)
+      .max(FLEET_CHANGE_BATCH_LIMIT)
+      .optional(),
     planSet: planSetOutputSchema.nullable(),
     reason: z.string(),
   }),
@@ -289,6 +307,9 @@ const applyOutputSchema = z.union([
     alignments: z.array(z.looseObject({
       coverage: alignmentCoverageSchema.optional(), reason: z.string(), status: z.string(),
     })).max(20).optional(),
+    changes: z.array(changePreparationOutputSchema)
+      .max(FLEET_CHANGE_BATCH_LIMIT)
+      .optional(),
     applied: z.boolean().optional(),
     execution: z.looseObject({
       completed: z.number().int(),
@@ -681,10 +702,13 @@ function operationSummaryLines(count) {
   return count > 1 ? [`Operations: ${count}`] : []
 }
 
-function reviewedConfirmationForm(title, plan) {
+function reviewedConfirmationForm(title, plan, options = {}) {
   const operations = plan.planSet.preview
   const summaryLines = []
   if (plan.activityId) summaryLines.push(`Activity: ${plan.activityId}`)
+  if (Array.isArray(plan.changes)) {
+    summaryLines.push(`Changes: ${plan.changes.length}`)
+  }
   summaryLines.push(...operationSummaryLines(operations.length))
   let reviewItems
   if (plan.reviewItems) {
@@ -704,6 +728,7 @@ function reviewedConfirmationForm(title, plan) {
   }
   return buildConfirmationForm({
     accountId: plan.accountId,
+    approvalMode: options.approvalMode,
     heading: `Review ${title}`,
     planSet: plan.planSet,
     reviewItems,
@@ -770,6 +795,7 @@ function batchConfirmationForm(plan) {
   const operations = plan.planSet.preview
   return buildConfirmationForm({
     accountId: plan.accountId,
+    approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH,
     heading: "Review alignment batch",
     planSet: plan.planSet,
     reviewItems: operationReviewItems(operations),
@@ -883,7 +909,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Use list_adoption_candidates to see ungoverned facets and coverage gaps with named outlier zones, then plan_fleet_adoption and apply_fleet_adoption to govern them; adoption persists intent, not Cloudflare resources, and defaults new presence to required so gaps surface as drift. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact operation review fields that all require approval, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Use inspect_worker for a Worker name or trigger finding ID and a bounded past window; log counts cover invocation records on that page, not console messages or total HTTP failure rates. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Use list_adoption_candidates to see ungoverned facets and coverage gaps with named outlier zones, then plan_fleet_adoption and apply_fleet_adoption to govern them; adoption persists intent, not Cloudflare resources, and defaults new presence to required so gaps surface as drift. Use plan_fleet_changes and apply_fleet_changes when several bounded direct changes belong to one operator-approved outcome; one blocked or overlapping member blocks the batch, and Worker schedules stay on their dedicated single-change workflow. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact changed-leaf operation reviews, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Single-change tools require each review field to be approved; explicit batch tools show every operation and require one whole-batch decision. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -992,7 +1018,11 @@ export function createFleetMcpServer(options = {}) {
         )
         return toolResult(result, result.reason)
       }
-      const confirmation = reviewedConfirmationForm(configuration.title, plan)
+      const confirmation = reviewedConfirmationForm(
+        configuration.title,
+        plan,
+        { approvalMode: configuration.approvalMode },
+      )
       const signedState = await requestStateCodec.mint({
         accountId: service.accountId,
         action: configuration.action,
@@ -1626,6 +1656,54 @@ export function createFleetMcpServer(options = {}) {
       request: (input) => input.change,
       title: "bounded fleet change",
       toolName: "apply_fleet_change",
+    }),
+  )
+
+  server.registerTool(
+    "plan_fleet_changes",
+    {
+      annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description: "Prepare one digest-bound batch from distinct purpose-built direct changes, composed fresh Cloudflare reads, and overlap checks without writing. One blocked or overlapping member blocks the complete batch.",
+      inputSchema: changesInputSchema,
+      outputSchema: planOutputSchema,
+      title: "Plan bounded fleet change batch",
+    },
+    safeToolHandler(async ({ changes }, context) => {
+      const result = await service.planChanges(changes, {
+        onProgress: createProgressReporter(
+          stderr,
+          "[mcp:plan_fleet_changes]",
+        ),
+        signal: context.mcpReq.signal,
+      })
+      return toolResult(
+        result,
+        reviewedPlanSummary(result, "Fleet change batch"),
+      )
+    }, secrets),
+  )
+
+  server.registerTool(
+    "apply_fleet_changes",
+    {
+      annotations: APPLY_ANNOTATIONS,
+      description: "Apply one exact reviewed batch of bounded direct changes after a single whole-batch interactive decision, exclusive locking, fresh composed replanning, pending journaling, sequential writes, and scoped verification.",
+      inputSchema: changesApplyInputSchema,
+      outputSchema: applyOutputSchema,
+      title: "Apply reviewed bounded fleet change batch",
+    },
+    reviewedMutationHandler({
+      action: "fleet-changes-apply",
+      apply: (changes, digest, commandOptions) => (
+        service.applyChanges(changes, digest, commandOptions)
+      ),
+      approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH,
+      plan: (changes, commandOptions) => (
+        service.planChanges(changes, commandOptions)
+      ),
+      request: (input) => input.changes,
+      title: "bounded fleet change batch",
+      toolName: "apply_fleet_changes",
     }),
   )
 

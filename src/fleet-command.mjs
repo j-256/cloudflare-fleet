@@ -1,6 +1,6 @@
 import { z } from "zod"
 import {
-  fleetChangeSchema, fleetIntentDocumentSchema, digestSchema, identifierSchema, activityRecoverySchema,
+  fleetChangeSchema, fleetChangesSchema, fleetIntentDocumentSchema, digestSchema, identifierSchema, activityRecoverySchema,
   workerInspectionSchema, workerHistorySchema, workerIntentInputSchema, workerVerificationSchema,
 } from "./interface-schemas.mjs"
 import { normalizeAlignmentSelector, normalizeAlignmentSelectors } from "./alignment-service.mjs"
@@ -26,6 +26,8 @@ const schemas = {
   "alignments-apply": z.strictObject({ selectors: z.array(selector).min(1).max(20), planDigest: digestSchema }),
   "change-plan": z.strictObject({ change: fleetChangeSchema }),
   "change-apply": z.strictObject({ change: fleetChangeSchema, planDigest: digestSchema }),
+  "changes-plan": z.strictObject({ changes: fleetChangesSchema }),
+  "changes-apply": z.strictObject({ changes: fleetChangesSchema, planDigest: digestSchema }),
   "activity-list": empty,
   "undo-plan": z.strictObject({ activityId: identifierSchema }),
   "undo-apply": z.strictObject({ activityId: identifierSchema, planDigest: digestSchema }),
@@ -111,6 +113,8 @@ async function dispatchFleetServiceCommand(service, command, accountId, input, c
     case "alignments-apply": return service.applyAlignments(normalizeAlignmentSelectors(input.selectors), input.planDigest, context)
     case "change-plan": return service.planChange(input.change, context)
     case "change-apply": return service.applyChange(input.change, input.planDigest, context)
+    case "changes-plan": return service.planChanges(input.changes, context)
+    case "changes-apply": return service.applyChanges(input.changes, input.planDigest, context)
     case "activity-list": return service.listActivity()
     case "undo-plan": return service.planActivityUndo(input.activityId, context)
     case "undo-apply": return service.applyActivityUndo(input.activityId, input.planDigest, context)

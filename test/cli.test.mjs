@@ -564,6 +564,83 @@ test("unified CLI exports intent documents and accepts bounded JSON input", asyn
   assert.equal(JSON.parse(changeOutput.value()).status, "aligned")
 })
 
+test("unified CLI plans and applies a bounded change batch", async () => {
+  const changes = [
+    {
+      desired: "on",
+      kind: "zone-setting-update",
+      settingId: "always_use_https",
+      zoneId: "zone-one",
+    },
+    {
+      desired: "on",
+      kind: "zone-setting-update",
+      settingId: "early_hints",
+      zoneId: "zone-one",
+    },
+  ]
+  const calls = []
+  const service = {
+    async applyChanges(requested, digest) {
+      calls.push({ digest, requested, type: "apply" })
+      return {
+        accountId: "account-one",
+        applied: true,
+        changes: requested,
+        execution: { completed: 2, total: 2 },
+        planDigest: digest,
+        schemaVersion: 1,
+        status: "verified",
+        verification: [],
+      }
+    },
+    async planChanges(requested) {
+      calls.push({ requested, type: "plan" })
+      return {
+        accountId: "account-one",
+        changes: requested,
+        planSet: null,
+        reason: "Already aligned",
+        schemaVersion: 1,
+        status: "aligned",
+        title: "Apply bounded fleet change batch",
+      }
+    },
+  }
+
+  await runFleetCommand({
+    argv: ["change", "plan", "--input", "-", "--format=json"],
+    inputText: JSON.stringify({ changes }),
+    service,
+    stderr: outputStream().stream,
+    stdout: outputStream().stream,
+  })
+  await runFleetCommand({
+    argv: [
+      "change",
+      "apply",
+      "--input",
+      "-",
+      "--expect-plan",
+      `sha256:${"a".repeat(64)}`,
+      "--format=json",
+    ],
+    inputText: JSON.stringify({ changes }),
+    service,
+    stderr: outputStream().stream,
+    stdout: outputStream().stream,
+  })
+
+  assert.deepEqual(calls, [
+    { requested: changes, type: "plan" },
+    {
+      digest: `sha256:${"a".repeat(64)}`,
+      requested: changes,
+      type: "apply",
+    },
+  ])
+})
+
 test("unified CLI emits public input schemas without requiring credentials", async () => {
   const stdout = outputStream()
   await runFleetCommand({
@@ -574,8 +651,9 @@ test("unified CLI emits public input schemas without requiring credentials", asy
   })
 
   const schema = JSON.parse(stdout.value())
-  assert.equal(Array.isArray(schema.oneOf), true)
+  assert.equal(Array.isArray(schema.anyOf), true)
   assert.match(stdout.value(), /zone-setting-update/)
+  assert.match(stdout.value(), /"changes"/)
   assert.doesNotMatch(stdout.value(), /"method"/)
 })
 
@@ -593,6 +671,22 @@ test("unified CLI maps invalid structured input to usage exit 2", async () => {
 
   assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.USAGE])
   assert.match(stderr.value(), /Fleet change is invalid/)
+})
+
+test("unified CLI rejects an unbounded change batch envelope", async () => {
+  const exits = []
+  const stderr = outputStream()
+  await runFleetCli({
+    argv: ["change", "plan", "--input", "-"],
+    environment: {},
+    inputText: JSON.stringify({ changes: [], method: "PATCH" }),
+    onExitCode: (code) => exits.push(code),
+    stderr: stderr.stream,
+    stdout: outputStream().stream,
+  })
+
+  assert.deepEqual(exits, [FLEET_CLI_EXIT_CODE.USAGE])
+  assert.match(stderr.value(), /accepts only the changes field/)
 })
 
 test("unified CLI maps missing operator configuration to exit 2", async () => {

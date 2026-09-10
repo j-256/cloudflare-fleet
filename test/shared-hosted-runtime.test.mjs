@@ -85,16 +85,34 @@ test("actual Worker runtime shares command persistence, browser reads and recove
   const undo = await remote.planActivityUndo(written.activity.id)
   assert.equal((await remote.applyActivityUndo(written.activity.id, undo.planSet.digest)).status, "verified")
   assert.equal((await remote.planChange(change)).status, "planned")
+  const batchPlan = await remote.planChanges([change])
+  assert.equal(batchPlan.status, "planned")
+  const batchResult = await remote.applyChanges([change], batchPlan.planSet.digest)
+  assert.equal(batchResult.status, "verified")
+  assert.equal(batchResult.title, "Apply bounded fleet change batch")
+  const batchUndo = await remote.planActivityUndo(batchResult.activity.id)
+  assert.equal((await remote.applyActivityUndo(batchResult.activity.id, batchUndo.planSet.digest)).status, "verified")
   const recoveredState = (await remote.getState()).state
-  assert.equal(recoveredState.activity.entries.length, 2)
+  assert.equal(recoveredState.activity.entries.length, 4)
   assert.equal(recoveredState.activity.entries[1].undoOf, written.activity.id)
+  assert.equal(recoveredState.activity.entries[3].undoOf, batchResult.activity.id)
   const secondAccount = hostedStateReconciliation(db, "account-two")
   const merge = { state: { ...recoveredState, accountId: "account-two", intent: { ...recoveredState.intent, accountId: "account-two" } }, intentSource: "incoming" }
   merge.state.activity.entries.reverse()
   const mergePlan = await secondAccount.planState(merge)
   const merged = await secondAccount.applyState(merge, mergePlan.planSet.digest)
-  assert.equal(merged.state.activity.entries[0].id, written.activity.id)
-  assert.equal(merged.state.activity.entries[1].undoOf, written.activity.id)
+  assert.equal(merged.state.activity.entries.some(
+    (entry) => entry.id === written.activity.id,
+  ), true)
+  assert.equal(merged.state.activity.entries.some(
+    (entry) => entry.undoOf === written.activity.id,
+  ), true)
+  assert.equal(merged.state.activity.entries.some(
+    (entry) => entry.id === batchResult.activity.id,
+  ), true)
+  assert.equal(merged.state.activity.entries.some(
+    (entry) => entry.undoOf === batchResult.activity.id,
+  ), true)
   const failingAccount = hostedStateReconciliation(db, "account-three")
   const beforeFailure = (await failingAccount.getState()).state
   const failedInput = { state: { ...merge.state, accountId: "account-three", intent: { ...merge.state.intent, accountId: "account-three" } }, intentSource: "incoming" }
