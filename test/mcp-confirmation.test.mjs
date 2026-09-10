@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildConfirmationForm,
+  CONFIRMATION_APPROVAL_MODE,
   confirmationFieldKeys,
   operationReviewItems,
 } from "../src/mcp-confirmation.mjs"
@@ -28,7 +29,7 @@ const DESIRED_EXPRESSION = CURRENT_EXPRESSION.replace(
   "and not (http.host eq \"repos.j-256.dev\") and not (http.host eq \"repos-live.j-256.dev\"))",
 )
 
-function confirmationForm(operations) {
+function confirmationForm(operations, options = {}) {
   const planSet = {
     digest: DIGEST,
     preview: operations,
@@ -36,6 +37,7 @@ function confirmationForm(operations) {
   }
   return buildConfirmationForm({
     accountId: "f3172e87e5a2aa609ec184d4c72bd785",
+    approvalMode: options.approvalMode,
     heading: "Review bounded fleet change",
     planSet,
     reviewItems: operationReviewItems(operations),
@@ -223,6 +225,43 @@ test("MCP confirmation paginates an operation with many small leaves", () => {
   for (const field of Object.values(form.requestedSchema.properties)) {
     assert.ok(field.description.split("\n").length <= 40)
   }
+})
+
+test("MCP batch confirmation keeps every operation visible behind one decision", () => {
+  const form = confirmationForm([
+    {
+      body: { value: "on" },
+      currentValue: { value: "off" },
+      label: "Enable HTTPS",
+      method: "PATCH",
+      path: `zones/${ZONE_ID}/settings/always_use_https`,
+      zoneId: ZONE_ID,
+      zoneName: "j-256.dev",
+    },
+    {
+      body: { value: "on" },
+      currentValue: { value: "off" },
+      label: "Enable Early Hints",
+      method: "PATCH",
+      path: `zones/${ZONE_ID}/settings/early_hints`,
+      zoneId: ZONE_ID,
+      zoneName: "j-256.dev",
+    },
+  ], { approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH })
+
+  assert.equal(form.fieldCount, 1)
+  assert.deepEqual(form.requestedSchema.required, ["review_1"])
+  const field = form.requestedSchema.properties.review_1
+  assert.equal(field.title, "Review entire batch (2 operations)")
+  assert.match(field.description, /One decision approves all 2 operations/)
+  assert.match(field.description, /1\. Enable HTTPS/)
+  assert.match(field.description, /settings\/always_use_https/)
+  assert.match(field.description, /2\. Enable Early Hints/)
+  assert.match(field.description, /settings\/early_hints/)
+  assert.deepEqual(field.oneOf, [
+    { const: "decline", title: "Do not apply" },
+    { const: "approve", title: "Approve entire batch" },
+  ])
 })
 
 test("MCP confirmation field keys retain review order past single digits", () => {

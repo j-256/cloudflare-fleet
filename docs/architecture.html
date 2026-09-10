@@ -136,18 +136,18 @@
       <div class="section-heading">
         <p class="eyebrow">Agent interface</p>
         <h2 id="agent-interface-heading">Automation uses the same bounded state machine</h2>
-        <p>The CLI and local stdio MCP server call the shared fleet service instead of duplicating dashboard planning. Both expose complete revisioned intent, policy, row, and cell alignment selectors, discriminated direct-change requests, structured plan digests, revision-bound pending activity, guarded undo, ordered writes, and exact verification reads.</p>
+        <p>The CLI and local stdio MCP server call the shared fleet service instead of duplicating dashboard planning. Both expose complete revisioned intent, policy, row, and cell alignment selectors, single and batched discriminated direct-change requests, structured plan digests, revision-bound pending activity, guarded undo, ordered writes, and exact verification reads.</p>
       </div>
       <div class="mode-grid">
         <article class="mode-card">
           <p class="card-accent">CLI</p>
           <h3>Explicit noninteractive approval</h3>
-          <p>The installed <code>cloudflare-fleet</code> command launches the dashboard, audits, describes reusable alias and rate-limit values, exports or replaces intent, prepares alignment and direct-change plans, inspects activity, and performs guarded undo. A caller presents the complete plan and supplies that exact digest to apply; fresh replanning exits without mutation if it changed.</p>
+          <p>The installed <code>cloudflare-fleet</code> command launches the dashboard, audits, describes reusable alias and rate-limit values, exports or replaces intent, prepares alignment and direct-change plans, inspects activity, and performs guarded undo. Direct-change input may contain one request or one bounded batch envelope. A caller presents the complete plan and supplies that exact digest to apply; fresh replanning exits without mutation if it changed.</p>
         </article>
         <article class="mode-card">
           <p class="card-accent">MCP</p>
           <h3>Interactive protocol confirmation</h3>
-          <p>The stdio server exposes typed alias and hostname-scoped rate-limit descriptions plus paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every apply displays its exact request and plan, elicits one explicit approval through authenticated short-lived request state, and enters the same fresh locked apply path. Worker incident capture and verification save explicitly requested fresh evidence without a Cloudflare mutation. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
+          <p>The stdio server exposes typed alias and hostname-scoped rate-limit descriptions plus paired read, plan, and apply tools for audit, complete intent persistence, alignment, bounded direct changes, activity, and guarded undo. Every apply displays its exact request and plan through authenticated short-lived request state before entering the same fresh locked apply path. Single-change tools retain per-operation decisions; explicit alignment and direct-change batches show every operation behind one whole-batch decision. Worker incident capture and verification save explicitly requested fresh evidence without a Cloudflare mutation. Structured results have tool-specific schemas and a serialized JSON text fallback.</p>
         </article>
       </div>
       <div class="callout">
@@ -174,7 +174,7 @@
       <div class="section-heading">
         <p class="eyebrow">Mutation lifecycle</p>
         <h2 id="write-flow-heading">A write is a verified state transition, not a button click</h2>
-        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. Alias cleanup edits or creates one canonical redirect and removes only extra DNS records or rules with lossless inverse adapters; serving DNS and the selected canonical redirect are protected from collateral deletion. Rate-limit alignment orders its WAF skip and rate-rule operations so a partial transition cannot activate the rule outside its selected hosts. Bounded direct changes derive their reads and API operations from a discriminated request type rather than caller-supplied paths. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources. Guarded undo rereads the recorded post-write targets before review and again before sending the inverse.</p>
+        <p>The plan is rebuilt from fresh reads scoped to the affected resource surface. Intent alignment widens that surface across the complete account so newly divergent zones cannot be skipped. Alias cleanup edits or creates one canonical redirect and removes only extra DNS records or rules with lossless inverse adapters; serving DNS and the selected canonical redirect are protected from collateral deletion. Rate-limit alignment orders its WAF skip and rate-rule operations so a partial transition cannot activate the rule outside its selected hosts. Bounded direct changes derive their reads and API operations from a discriminated request type rather than caller-supplied paths. A direct-change batch composes those reads, refuses blocked members and overlapping target paths, and binds the remaining ordered operations to one digest. A pending activity record is durable before the first mutation. Verification patches the visible matrix and cache only after the backend rereads the exact affected resources. Guarded undo rereads the recorded post-write targets before review and again before sending the inverse.</p>
       </div>
       <div class="diagram-frame">
         <img src="diagrams/write-flow.svg" width="1400" height="640" alt="Reviewed write flow from desired state through live read, plan, confirmation, pending journal, execution, verification, cache patch, and guarded undo.">

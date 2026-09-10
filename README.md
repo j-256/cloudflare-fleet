@@ -19,7 +19,7 @@ Neither mode exposes the Cloudflare API token to browser JavaScript. Hosted conf
 - Models compatibility domains as strict canonical passthrough intent that rejects independent web behavior
 - Governs a Free zone's single rate rule and its complementary hostname WAF skip as one fail-safe posture
 - Audits core fleet posture in Markdown, JSON, or self-contained HTML, with an optional deep account and endpoint pass
-- Plans direct settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
+- Plans single or batched settings, DNS, DNSSEC, Email Routing, and ruleset changes through endpoint-specific adapters
 - Displays targets, before and after values, methods, endpoints, and request bodies before a write
 - Saves pending activity before mutation, verifies authoritative resources afterward, and offers guarded undo only when the inverse is lossless
 - Keeps the hosted Cloudflare proxy inside explicit read and write allowlists
@@ -260,13 +260,18 @@ cloudflare-fleet change plan --input change.json --format json
 cloudflare-fleet change apply --input change.json \
   --expect-plan 'sha256:...' --format json
 
+# fleet-changes.json is {"changes": [CHANGE, ...]}
+cloudflare-fleet change plan --input fleet-changes.json --format json
+cloudflare-fleet change apply --input fleet-changes.json \
+  --expect-plan 'sha256:...' --format json
+
 cloudflare-fleet activity list --format json
 cloudflare-fleet activity undo plan --id ACTIVITY_ID --format json
 cloudflare-fleet activity undo apply --id ACTIVITY_ID \
   --expect-plan 'sha256:...' --format json
 ```
 
-Select an alignment policy with `--policy ID`, a complete matrix row with `--category CATEGORY --key KEY [--phase PHASE]`, or repeat `--zone-id ID` with a row selector to target cells. `intent show` emits an editable complete document in text mode; intent apply validates its account and revision, computes collection-level differences, and persists it atomically only if the reviewed digest still matches. `schema change` describes the discriminated direct-change vocabulary for settings, DNS, Email Routing, rulesets, safe copies, fleet rename, and shared-policy alignment. It accepts operator outcomes and identifiers, never arbitrary HTTP methods or API paths.
+Select an alignment policy with `--policy ID`, a complete matrix row with `--category CATEGORY --key KEY [--phase PHASE]`, or repeat `--zone-id ID` with a row selector to target cells. `intent show` emits an editable complete document in text mode; intent apply validates its account and revision, computes collection-level differences, and persists it atomically only if the reviewed digest still matches. `schema change` describes the discriminated direct-change vocabulary for settings, DNS, Email Routing, rulesets, safe copies, fleet rename, and shared-policy alignment. It accepts operator outcomes and identifiers, never arbitrary HTTP methods or API paths. `change plan` and `change apply` accept either one such request or a `{ "changes": [...] }` envelope. A batch composes fresh reads, blocks as a unit if any member is blocked or targets overlap, and records one digest-bound activity. Worker schedule changes retain their dedicated single-change workflow because saved intent and serving deployment evidence are part of their guard.
 
 Every Cloudflare apply repeats fresh scoped planning inside the exclusive write lock, writes a pending activity record before mutation, executes in order, and verifies authoritative resources afterward. Guarded undo is available only for a lossless inverse and is blocked when fresh reads differ from the recorded post-write state. The CLI is deliberately noninteractive, so its caller is responsible for presenting and approving the complete plan before passing the digest.
 
@@ -321,16 +326,16 @@ Use the standard stdio command-plus-arguments shape and arrange for the client p
 
 For an explicit standalone profile, append `--state-file /absolute/path/state.json` and `--policy-file /absolute/path/fleet-policy.json` to the MCP arguments. In Codex, add those strings to `args`; in Claude Code, place them after `cloudflare-fleet mcp` in the registration command. Omit these file arguments for shared hosted mode.
 
-The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, coverage-gap adoption, bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools turn those operations into compact MCP review fields, show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview so one operation stays on a single review field, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after every field is approved. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
+The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, coverage-gap adoption, single or batched bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after approval. Single-change tools retain per-review-field approval. Explicit `apply_alignments` and `apply_fleet_changes` batches display every compact operation review behind one all-or-nothing `Approve entire batch` decision. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
 - Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, `list_adoption_candidates`, and `list_activity`
-- Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_adoption`, `plan_fleet_change`, and `plan_activity_undo`
-- Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_adoption`, `apply_fleet_change`, and `apply_activity_undo`
+- Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_adoption`, `plan_fleet_change`, `plan_fleet_changes`, and `plan_activity_undo`
+- Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_adoption`, `apply_fleet_change`, `apply_fleet_changes`, and `apply_activity_undo`
 
 Read and plan tools work without interactive approval. Apply tools additionally require an MCP client that supports input elicitation; if the client does not present the elicitation, use the CLI or dashboard to review and apply the same bounded plan.
 
-Alignment plan and apply derive their read requirements from the selected facets before requesting inventory. Each preparation reads fresh account membership and only the required surfaces and ruleset phases; batches compose shared reads. A short-lived candidate inventory supplies an optional membership guard, never evidence that a facet is absent or aligned. Cross-zone reads remain deliberate: overlapping policies and portable copy sources need the complete account membership, even for a cell or fixed-group selector. Protocol messages use stdout and diagnostics use stderr. The package version is reported consistently by the CLI, package metadata, and MCP server identity.
+Alignment plan and apply derive their read requirements from the selected facets before requesting inventory. Each preparation reads fresh account membership and only the required surfaces and ruleset phases; alignment and direct-change batches compose shared reads. A short-lived candidate inventory supplies an optional membership guard, never evidence that a facet is absent or aligned. Cross-zone reads remain deliberate: overlapping policies and portable copy sources need the complete account membership, even for a cell or fixed-group selector. Protocol messages use stdout and diagnostics use stderr. The package version is reported consistently by the CLI, package metadata, and MCP server identity.
 
 Failed or omitted required reads return `blocked` with `coverage.complete: false`, bounded `coverage.failures`, the total `failureCount`, and a `truncated` flag. Failures identify the affected zone, surface and ruleset when applicable, HTTP status, and whether the read failed, timed out, was cancelled, or was not performed. No plan is emitted for incomplete coverage, and one blocked scope withholds the complete batch plan. A successful exact read and an absent resource are distinct from an unsuccessful read. Candidate listing also marks incomplete coverage as unavailable instead of treating it as confirmed drift.
 

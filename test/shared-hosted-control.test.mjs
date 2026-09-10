@@ -57,6 +57,31 @@ test("hosted backend is explicit, account-bound and has no local file fallback",
 test("hosted command dispatch rejects arbitrary methods, extra input and account mismatch", async (context) => {
   assert.throws(() => validateFleetCommand({ version: 1, accountId: ACCOUNT, command: "request", input: { path: "/accounts" } }), /Unsupported/)
   assert.throws(() => validateFleetCommand({ version: 1, accountId: ACCOUNT, command: "intent-get", input: { path: "/accounts" } }), /Invalid input/)
+  assert.equal(validateFleetCommand({
+    version: 1,
+    accountId: ACCOUNT,
+    command: "changes-plan",
+    input: {
+      changes: [{
+        desired: "on",
+        kind: "zone-setting-update",
+        settingId: "always_use_https",
+        zoneId: "zone-one",
+      }],
+    },
+  }).command, "changes-plan")
+  assert.throws(() => validateFleetCommand({
+    version: 1,
+    accountId: ACCOUNT,
+    command: "changes-plan",
+    input: {
+      changes: [{
+        intent: { crons: [], mode: "disabled" },
+        kind: "worker-schedules-update",
+        worker: "example-worker",
+      }],
+    },
+  }), /Invalid input/)
   const env = serverEnvironment(context)
   const response = await fetchHostedFleet(new Request("http://localhost/api/commands", {
     method: "POST", body: JSON.stringify({ version: 1, accountId: "other", command: "status", input: {} }),

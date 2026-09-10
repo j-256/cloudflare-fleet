@@ -17,7 +17,10 @@ import {
 } from "./cli-contract.mjs"
 import { CliUsageError, parseCliOptions } from "./cli-options.mjs"
 import { isMainModule } from "./entrypoint.mjs"
-import { normalizeFleetChange } from "./fleet-change.mjs"
+import {
+  normalizeFleetChange,
+  normalizeFleetChanges,
+} from "./fleet-change.mjs"
 import { applyAdoptionFilters } from "./intent-adoption.mjs"
 import {
   FLEET_SERVICE_SCHEMA_VERSION,
@@ -36,7 +39,10 @@ import { AlignmentPlanChangedError } from "./write-executor.mjs"
 import { describeZoneAliasPolicy } from "./zone-alias-intent.mjs"
 import { describeHostnameScopedFreeRateLimitPolicy } from "./rate-limit-intent.mjs"
 import { runWorkerCommand, WORKER_COMMANDS } from "./worker-command.mjs"
-import { commandDiagnosticsSchema } from "./interface-schemas.mjs"
+import {
+  commandDiagnosticsSchema,
+  FLEET_CHANGE_BATCH_LIMIT,
+} from "./interface-schemas.mjs"
 import { redactDiagnostics } from "./command-diagnostics.mjs"
 
 const CLI_FORMAT = Object.freeze({
@@ -334,7 +340,7 @@ export function fleetChangeUsage() {
     "  cloudflare-fleet change apply --input FILE|- --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "",
     "OPTIONS",
-    "  -i, --input FILE|-       Read one bounded change request from FILE or stdin",
+    "  -i, --input FILE|-       Read one change or a {\"changes\": [...]} batch from FILE or stdin",
     "  -e, --expect-plan DIGEST Require the exact reviewed plan digest before writes",
     "  -f, --format text|json   Select operator text or structured JSON output",
     "  -p, --policy-file PATH   Select an operator policy profile",
@@ -343,6 +349,7 @@ export function fleetChangeUsage() {
     "",
     "SCHEMA",
     "  Run cloudflare-fleet schema change for the accepted discriminated request types",
+    `  A batch accepts up to ${FLEET_CHANGE_BATCH_LIMIT} distinct non-Worker changes and applies one reviewed digest`,
     "  Requests describe outcomes and identifiers; HTTP methods and API paths are not accepted",
   ].join("\n")
 }
@@ -424,7 +431,7 @@ export function fleetSchemaUsage() {
     "  cloudflare-fleet schema intent",
     "",
     "COMMANDS",
-    "  change  Print the bounded direct-change JSON Schema",
+    "  change  Print the single-change and direct-change batch JSON Schema",
     "  intent  Print the complete fleet-intent JSON Schema",
   ].join("\n")
 }
@@ -1285,7 +1292,7 @@ export async function runFleetCommand(options = {}) {
       import("./interface-schemas.mjs"),
     ])
     const schema = parsed.command === "schema-change"
-      ? schemas.fleetChangeSchema
+      ? schemas.fleetChangeInputSchema
       : schemas.fleetIntentDocumentSchema
     stdout.write(`${JSON.stringify(z.toJSONSchema(schema), null, 2)}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
@@ -1313,7 +1320,7 @@ export async function runFleetCommand(options = {}) {
     return result
   }
   let intentDocument
-  let change
+  let changeRequest
   let adoptionRequest
   if (["intent-plan", "intent-apply"].includes(parsed.command)) {
     const input = await readJsonInput(parsed.input, options)
@@ -1322,7 +1329,16 @@ export async function runFleetCommand(options = {}) {
     adoptionRequest = await readJsonInput(parsed.input, options)
   } else if (["change-plan", "change-apply"].includes(parsed.command)) {
     try {
-      change = normalizeFleetChange(await readJsonInput(parsed.input, options))
+      const input = await readJsonInput(parsed.input, options)
+      if (input && typeof input === "object" && !Array.isArray(input)
+        && Object.hasOwn(input, "changes")) {
+        if (Object.keys(input).length !== 1) {
+          throw new TypeError("Fleet change batch input accepts only the changes field")
+        }
+        changeRequest = { changes: normalizeFleetChanges(input.changes) }
+      } else {
+        changeRequest = { change: normalizeFleetChange(input) }
+      }
     } catch (error) {
       if (error instanceof TypeError) {
         throw new CliUsageError(error.message)
@@ -1407,13 +1423,24 @@ export async function runFleetCommand(options = {}) {
       throw error
     }
   } else if (["change-plan", "change-apply"].includes(parsed.command)) {
-    result = parsed.command === "change-plan"
-      ? await service.planChange(change, commandOptions)
-      : await service.applyChange(
-          change,
-          parsed.expectedDigest,
-          commandOptions,
-        )
+    const batch = Object.hasOwn(changeRequest, "changes")
+    if (parsed.command === "change-plan") {
+      result = batch
+        ? await service.planChanges(changeRequest.changes, commandOptions)
+        : await service.planChange(changeRequest.change, commandOptions)
+    } else {
+      result = batch
+        ? await service.applyChanges(
+            changeRequest.changes,
+            parsed.expectedDigest,
+            commandOptions,
+          )
+        : await service.applyChange(
+            changeRequest.change,
+            parsed.expectedDigest,
+            commandOptions,
+          )
+    }
   } else if (parsed.command === "activity-undo-plan") {
     result = await service.planActivityUndo(parsed.activityId, commandOptions)
   } else if (parsed.command === "activity-undo-apply") {

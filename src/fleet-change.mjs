@@ -1,5 +1,8 @@
 import { emailPolicyExceptionsForZone } from "./fleet-policy.mjs"
-import { fleetChangeSchema } from "./interface-schemas.mjs"
+import {
+  fleetChangeSchema,
+  fleetChangesSchema,
+} from "./interface-schemas.mjs"
 import {
   buildDnsRecordCopyPlan,
   buildDnsRecordDeletePlan,
@@ -29,10 +32,8 @@ import {
   rulesetPhaseResourceId,
   rulesetResourceId,
 } from "./read-composer.mjs"
-import {
-  createReviewedPlanSet,
-  reviewedPlanOperationCount,
-} from "./reviewed-plan.mjs"
+import { createReviewedPlanSet } from "./reviewed-plan.mjs"
+import { stableString } from "./normalize.mjs"
 
 export const FLEET_CHANGE_STATUS = Object.freeze({
   ALIGNED: "aligned",
@@ -47,6 +48,7 @@ const EMAIL_SURFACE_IDS = Object.freeze([
   "email-catch-all",
 ])
 const WAF_SURFACE_IDS = Object.freeze(["rulesets"])
+const FLEET_CHANGE_BATCH_TITLE = "Apply bounded fleet change batch"
 
 function unique(values) {
   return [...new Set(values)]
@@ -84,6 +86,19 @@ export function normalizeFleetChange(value) {
     assertUnique(targets, "Ruleset rule targets")
   }
   return change
+}
+
+export function normalizeFleetChanges(value) {
+  const parsed = fleetChangesSchema.safeParse(value)
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "changes"}: ${issue.message}`)
+      .join("; ")
+    throw new TypeError(`Fleet change batch is invalid: ${detail}`)
+  }
+  const changes = parsed.data.map(normalizeFleetChange)
+  assertUnique(changes.map(stableString), "Fleet change requests")
+  return changes
 }
 
 function changeReadActions(change) {
@@ -369,52 +384,195 @@ function changeTitle(change) {
   }[change.kind]
 }
 
-export async function prepareFleetChange(api, value, options = {}) {
-  const change = normalizeFleetChange(value)
-  const actions = changeReadActions(change)
-  const requirements = [
-    inventoryRead({
-      surfaceIds: [],
-      zoneIds: changeZoneIds(change),
-    }),
-    ...actions.flatMap(readRequirementsForAction),
-  ]
-  const reads = await (options.executeReadPlan || executeReadPlan)(
-    api,
-    requirements,
-    {
-      onProgress: options.onProgress,
-      signal: options.signal,
-    },
+function operationCount(plans) {
+  return plans.reduce(
+    (total, plan) => total + plan.operations.length,
+    0,
   )
+}
+
+async function prepareChangePlans(change, reads, options) {
   let plans
   try {
     plans = await buildChangePlans(change, reads, options)
   } catch (error) {
     return {
       change,
-      planSet: null,
+      plans: [],
       reason: error instanceof Error ? error.message : String(error),
       status: FLEET_CHANGE_STATUS.BLOCKED,
       title: changeTitle(change),
     }
   }
-  const planSet = createReviewedPlanSet({
-    accountId: api.accountId,
-    plans,
-    request: change,
-    validatedAt: options.validatedAt,
-  })
-  const operationCount = reviewedPlanOperationCount(planSet)
+  const count = operationCount(plans)
   return {
     change,
-    planSet,
-    reason: operationCount === 0
+    plans,
+    reason: count === 0
       ? "Fresh live state already matches the requested outcome"
-      : `${operationCount} bounded Cloudflare write${operationCount === 1 ? "" : "s"} prepared from fresh reads`,
-    status: operationCount === 0
+      : `${count} bounded Cloudflare write${count === 1 ? "" : "s"} prepared from fresh reads`,
+    status: count === 0
       ? FLEET_CHANGE_STATUS.ALIGNED
       : FLEET_CHANGE_STATUS.PLANNED,
     title: changeTitle(change),
+  }
+}
+
+function readRequirements(changes) {
+  return [
+    inventoryRead({
+      surfaceIds: [],
+      zoneIds: unique(changes.flatMap(changeZoneIds)),
+    }),
+    ...changes.flatMap(changeReadActions).flatMap(readRequirementsForAction),
+  ]
+}
+
+function publicBatchEntry(entry) {
+  const { plans: _plans, ...publicEntry } = entry
+  return publicEntry
+}
+
+function operationPathOverlap(left, right) {
+  const leftPath = left.split("?", 1)[0].replace(/\/$/u, "")
+  const rightPath = right.split("?", 1)[0].replace(/\/$/u, "")
+  return leftPath === rightPath
+    || leftPath.startsWith(`${rightPath}/`)
+    || rightPath.startsWith(`${leftPath}/`)
+}
+
+function overlappingBatchOperation(plansByChange) {
+  const previous = []
+  for (const [changeIndex, plans] of plansByChange.entries()) {
+    const current = []
+    for (const plan of plans) {
+      for (const operation of plan.operations) {
+        const overlap = previous.find((entry) => (
+          operationPathOverlap(entry.operation.path, operation.path)
+        ))
+        if (overlap) return { changeIndex, operation, previous: overlap }
+        current.push({ changeIndex, operation })
+      }
+    }
+    previous.push(...current)
+  }
+  return null
+}
+
+function batchReason(entries, status) {
+  if (status === FLEET_CHANGE_STATUS.ALIGNED) {
+    return "Every requested change already matches fresh live state"
+  }
+  if (status === FLEET_CHANGE_STATUS.BLOCKED) {
+    return `Fleet change batch is blocked. ${entries
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.status === FLEET_CHANGE_STATUS.BLOCKED)
+      .map(({ entry, index }) => `${index + 1}. ${entry.title}: ${entry.reason}`)
+      .join("; ")}`
+  }
+  const planned = entries.filter(
+    (entry) => entry.status === FLEET_CHANGE_STATUS.PLANNED,
+  )
+  const count = operationCount(planned.flatMap((entry) => entry.plans))
+  return `${planned.length} requested change${planned.length === 1 ? "" : "s"} prepared as ${count} bounded Cloudflare write${count === 1 ? "" : "s"}`
+}
+
+export async function prepareFleetChange(api, value, options = {}) {
+  const change = normalizeFleetChange(value)
+  const reads = await (options.executeReadPlan || executeReadPlan)(
+    api,
+    readRequirements([change]),
+    {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    },
+  )
+  const preparation = await prepareChangePlans(change, reads, options)
+  if (preparation.status === FLEET_CHANGE_STATUS.BLOCKED) {
+    return publicBatchEntry({ ...preparation, planSet: null })
+  }
+  const planSet = createReviewedPlanSet({
+    accountId: api.accountId,
+    plans: preparation.plans,
+    request: change,
+    validatedAt: options.validatedAt,
+  })
+  return {
+    change: preparation.change,
+    planSet,
+    reason: preparation.reason,
+    status: preparation.status,
+    title: preparation.title,
+  }
+}
+
+export async function prepareFleetChanges(api, value, options = {}) {
+  const changes = normalizeFleetChanges(value)
+  const reads = await (options.executeReadPlan || executeReadPlan)(
+    api,
+    readRequirements(changes),
+    {
+      onProgress: options.onProgress,
+      signal: options.signal,
+    },
+  )
+  let policyPromise
+  const batchOptions = {
+    ...options,
+    readPolicy() {
+      policyPromise ||= Promise.resolve().then(options.readPolicy)
+      return policyPromise
+    },
+  }
+  const entries = []
+  for (const change of changes) {
+    entries.push(await prepareChangePlans(change, reads, batchOptions))
+  }
+  if (entries.some((entry) => entry.status === FLEET_CHANGE_STATUS.BLOCKED)) {
+    return {
+      changes: entries.map(publicBatchEntry),
+      planSet: null,
+      reason: batchReason(entries, FLEET_CHANGE_STATUS.BLOCKED),
+      status: FLEET_CHANGE_STATUS.BLOCKED,
+      title: FLEET_CHANGE_BATCH_TITLE,
+    }
+  }
+  if (entries.every((entry) => entry.status === FLEET_CHANGE_STATUS.ALIGNED)) {
+    return {
+      changes: entries.map(publicBatchEntry),
+      planSet: null,
+      reason: batchReason(entries, FLEET_CHANGE_STATUS.ALIGNED),
+      status: FLEET_CHANGE_STATUS.ALIGNED,
+      title: FLEET_CHANGE_BATCH_TITLE,
+    }
+  }
+  const overlap = overlappingBatchOperation(
+    entries.map((entry) => entry.plans),
+  )
+  if (overlap) {
+    const path = overlap.operation.path
+    return {
+      changes: entries.map(publicBatchEntry),
+      planSet: null,
+      reason: `Fleet change batch is blocked because changes ${overlap.previous.changeIndex + 1} and ${overlap.changeIndex + 1} produce overlapping writes at ${path}`,
+      status: FLEET_CHANGE_STATUS.BLOCKED,
+      title: FLEET_CHANGE_BATCH_TITLE,
+    }
+  }
+  const plans = entries
+    .flatMap((entry) => entry.plans)
+    .filter((plan) => plan.operations.length > 0)
+  const planSet = createReviewedPlanSet({
+    accountId: api.accountId,
+    plans,
+    request: { changes },
+    validatedAt: options.validatedAt,
+  })
+  return {
+    changes: entries.map(publicBatchEntry),
+    planSet,
+    reason: batchReason(entries, FLEET_CHANGE_STATUS.PLANNED),
+    status: FLEET_CHANGE_STATUS.PLANNED,
+    title: FLEET_CHANGE_BATCH_TITLE,
   }
 }
