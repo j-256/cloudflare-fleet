@@ -80,7 +80,7 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "@playwright/test": "1.62.1",
-    "wrangler": "4.127.1"
+    "wrangler": "4.131.0"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
