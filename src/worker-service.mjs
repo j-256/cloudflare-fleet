@@ -88,7 +88,7 @@ export function createWorkerService({ api, store, activityStore, withWriteLock, 
     const savedIntent = Object.hasOwn(document.intents, input.worker) ? document.intents[input.worker] : null
     if (savedIntent && stableString(savedIntent) !== stableString(intent)) return envelope({ status: "blocked", planSet: null, reason: "Saved schedule intent differs; review and persist the new intent first" })
     if (config.schedules.status !== "observed" || config.deployment.status !== "observed") return envelope({ status: "blocked", planSet: null, reason: "Schedules and active deployment must both be observed before planning" })
-    if (intent.crons.length && (config.assessment.coverage.handlers === "unknown" || config.versions.some((v) => v.percentage > 0 && !v.value?.handlers.includes("scheduled")))) {
+    if (intent.crons.length && (config.assessment.coverage.handlers === "unknown" || config.versions.some((v) => v.percentage > 0 && !v.value?.handlers?.includes("scheduled")))) {
       return envelope({ status: "blocked", planSet: null, reason: "Every serving version must export scheduled before adding or retaining Cron triggers" })
     }
     const operation = { label: "Replace only this Worker's exact Cron schedule set", method: "PUT", path: workerPath(accountId, input.worker, "schedules"), body: intent.crons.map((cron) => ({ cron })), currentValue: config.schedules.value.map((cron) => ({ cron })), deployment: config.deployment.value }

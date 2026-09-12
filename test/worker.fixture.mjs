@@ -4,6 +4,14 @@ import { createWorkerService } from "../src/worker-service.mjs"
 export const WORKER_FIXTURE_TIME = Date.parse("2026-09-01T12:00:00Z")
 export const WORKER_FIXTURE_SECRET = "PRIVATE-PAYLOAD-MUST-NOT-ESCAPE"
 
+export function assetsOnlyVersionResources() {
+  return {
+    script: { etag: "", handlers: null, last_deployed_from: "" },
+    script_runtime: { assets: { serve_directly: true, raw_run_worker_first: false } },
+    bindings: [],
+  }
+}
+
 export function workerFixture(options = {}) {
   let now = options.now || WORKER_FIXTURE_TIME
   const state = {
@@ -44,7 +52,13 @@ export function workerFixture(options = {}) {
         return { status: 200, result: { schedules: state.crons.map((cron) => ({ cron })) } }
       }
       if (path === `${base}deployments`) return { status: 200, result: { deployments: [state.deployment] } }
-      if (path.startsWith(`${base}versions/`)) return { status: 200, result: { id: path.split("/").at(-1), resources: { script: { handlers: state.handlers }, bindings: [{ name: "DB", type: "d1", database_id: "example-database" }, { name: "SECRET", type: "secret_text", text: WORKER_FIXTURE_SECRET }, { name: "CONFIG", type: "plain_text", text: WORKER_FIXTURE_SECRET }] } } }
+      if (path.startsWith(`${base}versions/`)) {
+        if (state.versionError) throw state.versionError
+        const versionId = path.split("/").at(-1)
+        const resources = Object.hasOwn(state.versionResources || {}, versionId) ? state.versionResources[versionId]
+          : { script: { handlers: state.handlers }, bindings: [{ name: "DB", type: "d1", database_id: "example-database" }, { name: "SECRET", type: "secret_text", text: WORKER_FIXTURE_SECRET }, { name: "CONFIG", type: "plain_text", text: WORKER_FIXTURE_SECRET }] }
+        return { status: 200, result: { id: versionId, resources } }
+      }
       if (path === `${base}subdomain`) return { status: 200, result: { enabled: true, previews_enabled: false } }
       if (path === `${base}script-settings`) return { status: 200, result: { observability: { enabled: true, head_sampling_rate: 1, logs: { invocation_logs: true } } } }
       if (path === `accounts/${api.accountId}/workers/domains`) return { status: 200, result: [{ service: "example-worker", hostname: "api.example.com", zone_id: "example-zone" }] }

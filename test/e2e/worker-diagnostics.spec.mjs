@@ -1,4 +1,27 @@
 import { test, expect } from "./dashboard.fixture.mjs"
+import { assetsOnlyVersionResources } from "../worker.fixture.mjs"
+
+for (const assetsOnly of [true, false]) test.describe(assetsOnly ? "assets-only Worker" : "partial Worker metadata", () => {
+  test.use({ workerOptions: assetsOnly
+    ? { crons: [], events: [], versionResources: { "version-serving": assetsOnlyVersionResources() } }
+    : { handlers: null },
+  })
+  test("inspection renders independent handler evidence without losing configuration", async ({ dashboard }) => {
+    const { page } = dashboard
+    await page.getByRole("button", { name: "Diagnose Worker", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "Diagnose a Worker", exact: true })
+    await dialog.getByLabel("Worker name or finding ID").fill("example-worker")
+    await dialog.getByRole("button", { name: "Inspect Worker", exact: true }).click()
+    await expect(dialog.getByRole("status")).toHaveText("Inspection complete")
+    await expect(dialog).toContainText(`Trigger compatibility: ${assetsOnly ? "consistent" : "unknown"}`)
+    await dialog.getByText("Configuration, handlers, bindings and ingress", { exact: true }).click()
+    const details = dialog.locator(".worker-json-details").filter({ hasText: "Configuration, handlers, bindings and ingress" })
+    await expect(details).toContainText(assetsOnly ? '"source": "assets-only-metadata"' : '"reasonCode": "handlers-missing"')
+    if (!assetsOnly) await expect(details).toContainText('"resource": "example-database"')
+    await expect(dialog).not.toContainText("PRIVATE-PAYLOAD-MUST-NOT-ESCAPE")
+    expect(dashboard.requests.some((request) => ["PUT", "PATCH", "DELETE"].includes(request.method))).toBe(false)
+  })
+})
 
 test("Worker incident journey reviews a schedule-only remedy and keeps recoverable history", async ({ dashboard }) => {
   const { page } = dashboard
