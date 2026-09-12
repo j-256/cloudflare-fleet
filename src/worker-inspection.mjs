@@ -1,5 +1,5 @@
 import { stableString } from "./normalize.mjs"
-import { scheduleSet, workerPath, workerTriggerAssessment, WORKER_CRON_PATTERN, WORKER_CRON_MAX_LENGTH } from "./worker-triggers.mjs"
+import { scheduleSet, workerPath, workerTriggerAssessment, WORKER_CRON_PATTERN, WORKER_CRON_MAX_LENGTH, WORKER_FINDING_PATTERN } from "./worker-triggers.mjs"
 
 export const WORKER_INSPECTION_LIMITS = Object.freeze({
   defaultWindowMs: 60 * 60 * 1000,
@@ -14,14 +14,62 @@ const OUTCOMES = new Set(["ok", "exception", "canceled", "exceededCpu", "exceede
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
 const INVOCATION_TYPE = "cf-worker-event"
 const id = (value) => typeof value === "string" && ID_PATTERN.test(value) ? value : null
+const METADATA_REASONS = Object.freeze({
+  "deployment-missing": "No deployed version metadata",
+  "deployment-incomplete": "Deployment metadata is incomplete",
+  "schedules-invalid": "Worker schedule metadata is unavailable or malformed",
+  "endpoint-missing": "Missing endpoint metadata",
+  "version-missing": "Missing version resource metadata",
+  "handlers-missing": "Handler metadata is unavailable; assets-only metadata was not established",
+  "handlers-invalid": "Handler metadata is malformed",
+  "domains-missing": "Missing custom domains",
+  "route-ownership-unknown": "Route zone is outside the configured account or ownership is unknown",
+  "routes-missing": "Missing route metadata",
+  "invocations-missing": "Invocation events are unavailable",
+})
+
+class WorkerMetadataError extends TypeError {
+  constructor(code) {
+    super(METADATA_REASONS[code])
+    this.code = code
+  }
+}
+
+function assetsOnlyMetadata(resources) {
+  const script = resources?.script
+  const runtime = resources?.script_runtime
+  const assets = runtime?.assets
+  // Match the observed no-script response, not asset-first routing alone
+  return script?.handlers === null && script.etag === ""
+    && assets?.serve_directly === true && assets.raw_run_worker_first === false
+    && (assets.run_worker_first === undefined || assets.run_worker_first === false)
+    && (script.named_handlers === undefined || Array.isArray(script.named_handlers) && script.named_handlers.length === 0)
+    && (runtime.exports === undefined || runtime.exports && typeof runtime.exports === "object"
+      && !Array.isArray(runtime.exports) && Object.keys(runtime.exports).length === 0)
+    && Array.isArray(resources.bindings) && resources.bindings.length === 0
+}
+
+function projectHandlers(resources) {
+  const handlers = resources?.script?.handlers
+  if (Array.isArray(handlers) && handlers.every((handler) => id(handler))) {
+    return { handlers: [...handlers].sort(), handlerEvidence: { status: "observed", source: "script-handlers" } }
+  }
+  if (assetsOnlyMetadata(resources)) {
+    return { handlers: [], handlerEvidence: { status: "observed", source: "assets-only-metadata" } }
+  }
+  const reasonCode = handlers === null || handlers === undefined ? "handlers-missing" : "handlers-invalid"
+  return { handlers: null, handlerEvidence: { status: "unknown", reasonCode, reason: METADATA_REASONS[reasonCode] } }
+}
 
 export function normalizeWorkerInspection(input, now = Date.now()) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("Worker inspection input is required")
   const allowed = new Set(["worker", "findingId", "start", "end", "limit", "cursor", "zoneIds", "logs"])
   if (Object.keys(input).some((key) => !allowed.has(key))) throw new TypeError("Unknown Worker inspection field")
-  const findingWorker = input.findingId?.match(/^deep\.worker-(?:scheduled-handler-missing|trigger-coverage-unknown):([a-z0-9_][a-z0-9_-]{0,127})$/)?.[1]
-  if (input.findingId && !findingWorker) throw new TypeError("Unsupported Worker finding identifier")
-  const worker = input.worker || findingWorker
+  if (input.worker === undefined && input.findingId === undefined) throw new TypeError("Provide worker or findingId for Worker inspection")
+  if (input.worker !== undefined) workerPath("account", input.worker, "schedules")
+  const findingWorker = typeof input.findingId === "string" ? input.findingId.match(WORKER_FINDING_PATTERN)?.[1] : undefined
+  if (input.findingId !== undefined && !findingWorker) throw new TypeError("Unsupported Worker finding identifier")
+  const worker = input.worker ?? findingWorker
   workerPath("account", worker, "schedules")
   if (findingWorker && worker !== findingWorker) throw new TypeError("Worker and finding identity do not match")
   const end = input.end === undefined ? now : Date.parse(input.end)
@@ -46,11 +94,14 @@ export async function observedRead(read, now = Date.now) {
     return { status: "observed", readAt: new Date(now()).toISOString(), value }
   } catch (error) {
     if (error?.name === "AbortError") throw error
+    const denied = [401, 403].includes(error?.status)
+    const metadataCode = error instanceof WorkerMetadataError ? error.code : null
     return {
       status: "unknown",
       readAt: new Date(now()).toISOString(),
       value: null,
-      reason: [401, 403].includes(error?.status) ? "Access denied" : "Read failed or returned unsupported metadata",
+      reason: denied ? "Access denied" : metadataCode ? METADATA_REASONS[metadataCode] : "Read failed or returned unsupported metadata",
+      reasonCode: denied ? "access-denied" : metadataCode || "read-failed",
       httpStatus: Number.isInteger(error?.status) ? error.status : null,
     }
   }
@@ -58,7 +109,7 @@ export async function observedRead(read, now = Date.now) {
 
 export function activeDeployment(result) {
   const deployments = result?.deployments
-  if (!Array.isArray(deployments) || deployments.length === 0) throw new TypeError("No deployed version metadata")
+  if (!Array.isArray(deployments) || deployments.length === 0) throw new WorkerMetadataError("deployment-missing")
   const sorted = [...deployments].sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))
   const active = sorted[0]
   if (!id(active.id) || !Number.isFinite(Date.parse(active.created_on))
@@ -66,7 +117,7 @@ export function activeDeployment(result) {
     || active.versions.length > WORKER_INSPECTION_LIMITS.versions
     || active.versions.some((v) => !id(v.version_id) || !Number.isFinite(v.percentage) || v.percentage < 0 || v.percentage > 100)
     || Math.abs(active.versions.reduce((n, v) => n + v.percentage, 0) - 100) > 0.001) {
-    throw new TypeError("Deployment metadata is incomplete")
+    throw new WorkerMetadataError("deployment-incomplete")
   }
   return {
     id: active.id,
@@ -92,10 +143,13 @@ export async function readWorkerConfiguration(api, worker, options = {}) {
   const read = (surface) => api.request(workerPath(api.accountId, worker, surface), { signal: options.signal })
   const [deployment, schedules, ingress, settings] = await Promise.all([
     observedRead(async () => activeDeployment((await read("deployments")).result), now),
-    observedRead(async () => scheduleSet((await read("schedules")).result), now),
+    observedRead(async () => {
+      const result = (await read("schedules")).result
+      try { return scheduleSet(result) } catch { throw new WorkerMetadataError("schedules-invalid") }
+    }, now),
     observedRead(async () => {
       const value = (await read("subdomain")).result
-      if (typeof value?.enabled !== "boolean") throw new TypeError("Missing endpoint metadata")
+      if (typeof value?.enabled !== "boolean") throw new WorkerMetadataError("endpoint-missing")
       return { workersDev: value.enabled, previews: typeof value.previews_enabled === "boolean" ? value.previews_enabled : null }
     }, now),
     observedRead(async () => {
@@ -112,11 +166,10 @@ export async function readWorkerConfiguration(api, worker, options = {}) {
     ...await observedRead(async () => {
       const response = await api.request(`${workerPath(api.accountId, worker, "versions")}/${encodeURIComponent(version.id)}`, { signal: options.signal })
       const resources = response.result?.resources
-      const handlers = resources?.script?.handlers
-      if (!Array.isArray(handlers) || handlers.some((handler) => !id(handler))) throw new TypeError("Missing handler metadata")
+      if (!resources || typeof resources !== "object" || Array.isArray(resources)) throw new WorkerMetadataError("version-missing")
       const bindings = Array.isArray(resources.bindings) ? resources.bindings : []
       return {
-        handlers: [...handlers].sort(),
+        ...projectHandlers(resources),
         bindings: bindings.slice(0, WORKER_INSPECTION_LIMITS.resources).map(bindingProjection),
         links: resourceLinks(bindings.slice(0, WORKER_INSPECTION_LIMITS.resources)),
         bindingsCoverage: Array.isArray(resources.bindings) ? "observed" : "unknown",
@@ -125,7 +178,7 @@ export async function readWorkerConfiguration(api, worker, options = {}) {
     }, now),
   }))) : []
   const serving = versions.filter((version) => version.percentage > 0)
-  const handlers = serving.length && serving.every((version) => version.status === "observed")
+  const handlers = serving.length && serving.every((version) => version.status === "observed" && Array.isArray(version.value.handlers))
     ? serving.reduce((common, version) => common.filter((handler) => version.value.handlers.includes(handler)), serving[0].value.handlers)
     : null
   const readAt = new Date(now()).toISOString()
@@ -150,7 +203,7 @@ function errorSignature(event) {
 }
 
 export function projectInvocationEvidence(events, input, deployment) {
-  if (!Array.isArray(events)) throw new TypeError("Invocation events are unavailable")
+  if (!Array.isArray(events)) throw new WorkerMetadataError("invocations-missing")
   const invocations = new Map()
   const signatures = new Map()
   let ignored = 0
@@ -201,7 +254,7 @@ export async function inspectWorker(api, value, options = {}) {
   const config = await readWorkerConfiguration(api, input.worker, options)
   const domains = await observedRead(async () => {
     const response = await api.request(`accounts/${encodeURIComponent(api.accountId)}/workers/domains`, { signal: options.signal })
-    if (!Array.isArray(response.result)) throw new TypeError("Missing custom domains")
+    if (!Array.isArray(response.result)) throw new WorkerMetadataError("domains-missing")
     const matches = response.result.filter((entry) => entry.service === input.worker)
     return { items: matches.slice(0, WORKER_INSPECTION_LIMITS.resources).map((entry) => ({ hostname: String(entry.hostname).slice(0, 253), zoneId: id(entry.zone_id) })), limited: matches.length > WORKER_INSPECTION_LIMITS.resources, paginationIncomplete: response.resultInfo?.total_pages > 1 }
   }, now)
@@ -209,9 +262,9 @@ export async function inspectWorker(api, value, options = {}) {
     zoneId,
     ...await observedRead(async () => {
       const zone = await api.request(`zones/${encodeURIComponent(zoneId)}`, { signal: options.signal })
-      if (zone.result?.account?.id !== api.accountId) throw new TypeError("Route zone is outside the configured account or ownership is unknown")
+      if (zone.result?.account?.id !== api.accountId) throw new WorkerMetadataError("route-ownership-unknown")
       const response = await api.request(`zones/${encodeURIComponent(zoneId)}/workers/routes`, { signal: options.signal })
-      if (!Array.isArray(response.result)) throw new TypeError("Missing route metadata")
+      if (!Array.isArray(response.result)) throw new WorkerMetadataError("routes-missing")
       const matches = response.result.filter((entry) => entry.script === input.worker)
       return { items: matches.slice(0, WORKER_INSPECTION_LIMITS.resources).map((entry) => ({ id: id(entry.id), pattern: String(entry.pattern).slice(0, 500) })), limited: matches.length > WORKER_INSPECTION_LIMITS.resources }
     }, now),
@@ -246,12 +299,13 @@ export async function inspectWorker(api, value, options = {}) {
     domains,
     routes,
     logs,
-    summary: `${input.worker}: trigger compatibility ${config.assessment.status}; ${logs.value?.invocations ?? "unknown"} observed invocations on this evidence page`,
+    summary: `${input.worker}: trigger compatibility ${config.assessment.status}; ${input.logs ? `${logs.value?.invocations ?? "unknown"} observed invocations on this evidence page` : "invocation logs not requested"}`,
     limitations: [
       "Evidence counts cover this page only; invocation records are counted once and console records do not increase invocation totals",
       "Retention, sampling, disabled invocation logging, ingestion delay and query limits can omit events; absence of events does not establish health",
       "Serving-version labels compare with the configuration read; an old-version HTTP status does not establish a serving-version failure or prove bootstrap as its cause",
       "Handler compatibility requires every serving version to export the handler; per-version metadata identifies partial deployment mismatches",
+      "Assets-only handler coverage is inferred only from the recognized static-assets runtime and empty script metadata shape; other null or malformed handlers remain unknown",
       "Only fixed known error signatures are exposed; unrecognized error payloads are omitted, not guaranteed to be redactable",
       "Ingress covers custom domains, workers.dev and requested route zones; other Workers, Email, Queues and external callers are not exhaustively searched",
     ],

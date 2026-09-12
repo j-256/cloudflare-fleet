@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { WORKER_NAME_PATTERN, WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
+import { WORKER_NAME_PATTERN, WORKER_FINDING_PATTERN, WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
 
 import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
 import {
@@ -71,16 +71,19 @@ export const workerIntentSchema = z.strictObject({
   owner: z.string().min(1).max(1000).nullable().optional(),
   reconciliation: z.string().min(1).max(1000).nullable().optional(),
 })
-export const workerInspectionSchema = z.strictObject({
-  worker: workerNameSchema.optional(),
-  findingId: z.string().max(256).optional(),
+const workerFindingSchema = z.string().max(256).regex(WORKER_FINDING_PATTERN)
+const workerInspectionFields = {
   start: z.iso.datetime({ offset: true }).optional(),
   end: z.iso.datetime({ offset: true }).optional(),
   cursor: identifierSchema.optional(),
   limit: z.number().int().min(1).max(200).default(50),
   zoneIds: z.array(identifierSchema).max(20).optional(),
   logs: z.boolean().default(true),
-})
+}
+export const workerInspectionSchema = z.union([
+  z.strictObject({ ...workerInspectionFields, worker: workerNameSchema, findingId: workerFindingSchema.optional() }),
+  z.strictObject({ ...workerInspectionFields, worker: workerNameSchema.optional(), findingId: workerFindingSchema }),
+]).describe("Provide worker (an exact Worker name) or findingId (a supported Worker trigger finding ID); when both are supplied they must identify the same Worker")
 export const workerIntentInputSchema = z.strictObject({ worker: workerNameSchema, intent: workerIntentSchema, expectedRevision: z.string().max(64) })
 export const workerHistorySchema = z.strictObject({ worker: workerNameSchema, offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() })
 export const workerVerificationSchema = z.strictObject({ worker: workerNameSchema, activityId: identifierSchema, start: z.iso.datetime({ offset: true }).optional(), end: z.iso.datetime({ offset: true }).optional(), limit: z.number().int().min(1).max(200).optional(), zoneIds: z.array(identifierSchema).max(20).optional() })
@@ -89,8 +92,21 @@ const workerReadSchema = (value) => z.looseObject({
   status: z.enum(["observed", "unknown", "not-requested"]),
   readAt: z.string().optional(),
   reason: z.string().optional(),
+  reasonCode: z.string().max(64).optional(),
+  httpStatus: z.number().int().nullable().optional(),
   value: value.nullable(),
 })
+const workerVersionSchema = workerReadSchema(z.looseObject({
+  handlers: z.array(identifierSchema).nullable(),
+  handlerEvidence: z.union([
+    z.strictObject({ status: z.literal("observed"), source: z.enum(["script-handlers", "assets-only-metadata"]) }),
+    z.strictObject({ status: z.literal("unknown"), reasonCode: z.enum(["handlers-missing", "handlers-invalid"]), reason: z.string() }),
+  ]).optional(),
+  bindings: z.array(z.strictObject({ name: identifierSchema.nullable(), type: identifierSchema.nullable() })).max(100),
+  links: z.array(z.strictObject({ binding: identifierSchema.nullable(), type: identifierSchema, resource: identifierSchema })).max(100),
+  bindingsCoverage: z.enum(["observed", "unknown"]),
+  bindingsLimited: z.boolean(),
+})).extend({ id: identifierSchema, percentage: z.number().min(0).max(100) })
 const workerSampleSchema = z.strictObject({
   id: identifierSchema,
   timestamp: z.string(),
@@ -113,7 +129,7 @@ export const workerReportOutputSchema = z.looseObject({
   assessment: z.looseObject({ findingId: z.string(), status: z.enum(["unknown", "mismatch", "consistent"]), confidence: z.string(), missingChecks: z.array(z.string()), recommendedActions: z.array(z.string()), observations: z.json(), coverage: z.json(), inferredCause: z.string().nullable() }),
   deployment: workerReadSchema(z.json()),
   schedules: workerReadSchema(z.array(z.string())),
-  versions: z.array(z.json()).max(10),
+  versions: z.array(workerVersionSchema).max(10),
   ingress: workerReadSchema(z.json()),
   logging: workerReadSchema(z.json()),
   domains: workerReadSchema(z.json()),

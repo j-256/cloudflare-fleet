@@ -1,10 +1,122 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { readFile } from "node:fs/promises"
-import { normalizeWorkerInspection, projectInvocationEvidence } from "../src/worker-inspection.mjs"
+import { normalizeWorkerInspection, observedRead, projectInvocationEvidence } from "../src/worker-inspection.mjs"
 import { CRON_PROPAGATION_MS } from "../src/worker-triggers.mjs"
 import { isOperationActivityEntry } from "../src/operation-history.mjs"
-import { workerFixture, disabledWorkerChange, WORKER_FIXTURE_TIME, WORKER_FIXTURE_SECRET } from "./worker.fixture.mjs"
+import { workerFixture, assetsOnlyVersionResources, disabledWorkerChange, WORKER_FIXTURE_TIME, WORKER_FIXTURE_SECRET } from "./worker.fixture.mjs"
+
+test("assets-only versions retain observed no-handler coverage and explicit skipped logs", async () => {
+  const fixture = workerFixture({ crons: [], versionResources: { "version-serving": assetsOnlyVersionResources() } })
+  const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+  assert.equal(report.assessment.status, "consistent")
+  assert.equal(report.versions[0].status, "observed")
+  assert.deepEqual(report.versions[0].value.handlers, [])
+  assert.deepEqual(report.versions[0].value.handlerEvidence, { status: "observed", source: "assets-only-metadata" })
+  assert.equal(report.logs.status, "not-requested")
+  assert.match(report.summary, /invocation logs not requested/)
+  assert.equal(fixture.state.calls.some((call) => call.path.includes("telemetry")), false)
+  fixture.state.crons = ["0 * * * *"]
+  assert.equal((await fixture.service.inspect({ worker: "example-worker", logs: false })).assessment.status, "mismatch")
+  const retained = { ...disabledWorkerChange, intent: { ...disabledWorkerChange.intent, mode: "exact", crons: ["0 * * * *"] } }
+  assert.equal((await fixture.service.planSchedules(retained)).status, "blocked")
+  assert.equal((await fixture.service.planSchedules(disabledWorkerChange)).status, "planned")
+  assert.equal(fixture.state.calls.some((call) => call.method === "PUT"), false)
+})
+
+test("missing or malformed handlers preserve projected bindings without inventing coverage", async () => {
+  for (const handlers of [null, undefined, "fetch", ["fetch", 42], [WORKER_FIXTURE_SECRET + "!"]]) {
+    const fixture = workerFixture({ handlers })
+    const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+    const version = report.versions[0]
+    assert.equal(version.status, "observed")
+    assert.equal(version.value.handlers, null)
+    assert.equal(version.value.handlerEvidence.status, "unknown")
+    assert.equal(version.value.handlerEvidence.reasonCode, handlers == null ? "handlers-missing" : "handlers-invalid")
+    assert.match(version.value.handlerEvidence.reason, /Handler metadata/)
+    assert.equal(version.value.bindingsCoverage, "observed")
+    assert.equal(version.value.bindings.length, 3)
+    assert.deepEqual(version.value.links, [{ binding: "DB", type: "d1", resource: "example-database" }])
+    assert.equal(report.assessment.status, "unknown")
+    assert.deepEqual(report.assessment.missingChecks, ["handlers"])
+    const retained = { ...disabledWorkerChange, intent: { ...disabledWorkerChange.intent, mode: "exact", crons: ["0 * * * *"] } }
+    assert.equal((await fixture.service.planSchedules(retained)).status, "blocked")
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(WORKER_FIXTURE_SECRET))
+  }
+  const fixture = workerFixture({ handlers: [] })
+  const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+  assert.equal(report.assessment.status, "mismatch")
+  assert.equal(report.versions[0].value.handlerEvidence.source, "script-handlers")
+})
+
+test("assets routing never substitutes for incomplete or contradictory script evidence", async () => {
+  const mutations = [
+    (value) => { value.script.etag = "script-content-fingerprint" },
+    (value) => { delete value.script.etag },
+    (value) => { delete value.script.handlers },
+    (value) => { value.script.handlers = "fetch" },
+    (value) => { value.script.named_handlers = [{ name: "Entry", handlers: ["fetch"] }] },
+    (value) => { value.script.named_handlers = null },
+    (value) => { value.script_runtime.exports = { default: { type: "worker" } } },
+    (value) => { value.script_runtime.exports = null },
+    (value) => { delete value.script_runtime },
+    (value) => { value.script_runtime.assets.serve_directly = false },
+    (value) => { value.script_runtime.assets.raw_run_worker_first = true },
+    (value) => { delete value.script_runtime.assets.raw_run_worker_first },
+    (value) => { value.script_runtime.assets.run_worker_first = ["/api/*"] },
+    (value) => { value.bindings = [{ type: "assets", name: "ASSETS" }] },
+    (value) => { delete value.bindings },
+  ]
+  for (const mutate of mutations) {
+    const resources = assetsOnlyVersionResources()
+    mutate(resources)
+    const fixture = workerFixture({ versionResources: { "version-serving": resources }, crons: [] })
+    const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+    assert.equal(report.assessment.status, "unknown", JSON.stringify(resources))
+    assert.equal(report.versions[0].value.handlerEvidence.status, "unknown")
+  }
+  const resources = assetsOnlyVersionResources()
+  resources.script.handlers = ["fetch", "scheduled"]
+  resources.script.etag = "script-content-fingerprint"
+  const fixture = workerFixture({ versionResources: { "version-serving": resources } })
+  const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+  assert.equal(report.assessment.status, "consistent")
+  assert.equal(report.versions[0].value.handlerEvidence.source, "script-handlers")
+})
+
+test("serving-version intersection preserves partial deployment safety and ignores zero-traffic gaps", async () => {
+  const fixture = workerFixture({ handlers: ["fetch", "scheduled"], versionResources: { "version-assets": assetsOnlyVersionResources() } })
+  fixture.state.deployment.versions = [{ version_id: "version-serving", percentage: 50 }, { version_id: "version-assets", percentage: 50 }]
+  assert.equal((await fixture.service.inspect({ worker: "example-worker", logs: false })).assessment.status, "mismatch")
+  fixture.state.versionResources["version-assets"] = { script: { handlers: null } }
+  assert.equal((await fixture.service.inspect({ worker: "example-worker", logs: false })).assessment.status, "unknown")
+  fixture.state.deployment.versions[0].percentage = 100
+  fixture.state.deployment.versions[1].percentage = 0
+  assert.equal((await fixture.service.inspect({ worker: "example-worker", logs: false })).assessment.status, "consistent")
+})
+
+test("metadata and upstream failures carry safe reasons without disclosing arbitrary errors", async () => {
+  const fixture = workerFixture({ versionResources: { "version-serving": null } })
+  const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+  assert.equal(report.versions[0].status, "unknown")
+  assert.equal(report.versions[0].reasonCode, "version-missing")
+  assert.equal(report.versions[0].reason, "Missing version resource metadata")
+  assert.equal(report.versions[0].httpStatus, null)
+  fixture.state.deployment.versions = []
+  assert.equal((await fixture.service.inspect({ worker: "example-worker", logs: false })).deployment.reasonCode, "deployment-incomplete")
+  for (const status of [401, 403, 500, undefined]) {
+    const error = Object.assign(new TypeError(WORKER_FIXTURE_SECRET), { status, code: "version-missing" })
+    const deniedFixture = workerFixture({ versionError: error })
+    const partial = await deniedFixture.service.inspect({ worker: "example-worker", logs: false })
+    const read = partial.versions[0]
+    assert.equal(partial.schedules.status, "observed")
+    assert.equal(partial.assessment.status, "unknown")
+    assert.equal(read.reasonCode, [401, 403].includes(status) ? "access-denied" : "read-failed")
+    assert.equal(read.httpStatus, status ?? null)
+    assert.doesNotMatch(JSON.stringify(read), new RegExp(WORKER_FIXTURE_SECRET))
+  }
+  await assert.rejects(observedRead(async () => { throw new DOMException("Aborted", "AbortError") }), { name: "AbortError" })
+})
 
 test("focused inspection separates event outcomes and HTTP statuses without source or payload exposure", async () => {
   const fixture = workerFixture()
@@ -32,24 +144,32 @@ test("inspection remains useful after log denial and does not invent metadata co
   const report = await fixture.service.inspect({ findingId: "deep.worker-scheduled-handler-missing:example-worker" })
   assert.equal(report.assessment.status, "mismatch")
   assert.equal(report.logs.status, "unknown")
+  assert.equal(report.logs.reasonCode, "access-denied")
   assert.doesNotMatch(JSON.stringify(report), new RegExp(WORKER_FIXTURE_SECRET))
   fixture.state.schedulesDenied = true
   assert.equal((await fixture.service.inspect({ worker: "example-worker" })).assessment.status, "unknown")
   fixture.state.routeAccount = "another-account"
   const bounded = await fixture.service.inspect({ worker: "example-worker", zoneIds: ["example-zone"] })
   assert.equal(bounded.routes[0].status, "unknown")
+  assert.equal(bounded.routes[0].reasonCode, "route-ownership-unknown")
   assert.equal(fixture.state.calls.some((call) => call.path.endsWith("/workers/routes")), false)
 })
 
 test("inspection validates scope and paginates a frozen observation window", async () => {
+  assert.throws(() => normalizeWorkerInspection({}, WORKER_FIXTURE_TIME), /Provide worker or findingId/)
   for (const input of [
     {}, { worker: null }, { worker: 123 },
     { worker: "../other" }, { worker: "example-worker", limit: 201 },
     { worker: "example-worker", start: "bad" }, { worker: "example-worker", cursor: "id" },
     { worker: "other", findingId: "deep.worker-scheduled-handler-missing:example-worker" },
     { worker: "example-worker", start: "2026-08-01T00:00:00Z" },
+    { findingId: 123 }, { findingId: null }, { findingId: "" },
+    { worker: "", findingId: "deep.worker-trigger-coverage-unknown:example-worker" },
+    { worker: "example-worker", findingId: "" },
   ]) assert.throws(() => normalizeWorkerInspection(input, WORKER_FIXTURE_TIME))
   const fixture = workerFixture()
+  await assert.rejects(fixture.service.inspect({}), /Provide worker or findingId/)
+  assert.equal(fixture.state.calls.length, 0)
   const first = await fixture.service.inspect({ worker: "example-worker", limit: 2 })
   assert.equal(first.logs.value.limitReached, true)
   const second = await fixture.service.inspect({ ...first.selector, cursor: first.logs.value.nextCursor })

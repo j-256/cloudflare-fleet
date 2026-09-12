@@ -376,7 +376,7 @@ function fakeCloudflareTransport(inventory, options = {}) {
     ))
   }
 
-  const workers = workerFixture({ accountId: ACCOUNT_ID, now: options.now || Date.now() })
+  const workers = workerFixture({ ...options.workerOptions, accountId: ACCOUNT_ID, now: options.now || Date.now() })
   const fetch = async (url, request = {}) => {
     const target = new URL(url)
     const method = request.method || "GET"
@@ -848,8 +848,9 @@ async function useDashboard(page, use, testInfo, options = {}) {
 }
 
 export const test = base.extend({
-  dashboard: async ({ page }, use, testInfo) => {
-    await useDashboard(page, use, testInfo)
+  workerOptions: [{}, { option: true }],
+  dashboard: async ({ page, workerOptions }, use, testInfo) => {
+    await useDashboard(page, use, testInfo, { workerOptions })
   },
   denseDashboard: async ({ page }, use, testInfo) => {
     await useDashboard(page, use, testInfo, {

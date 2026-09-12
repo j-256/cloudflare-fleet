@@ -4,7 +4,8 @@ import test from "node:test"
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
 import { runFleetCommand, parseFleetArguments } from "../src/cli.mjs"
 import { createFleetMcpServer } from "../src/mcp.mjs"
-import { workerFixture, disabledWorkerChange, WORKER_FIXTURE_SECRET } from "./worker.fixture.mjs"
+import { runFleetServiceCommand, validateFleetCommand } from "../src/fleet-command.mjs"
+import { workerFixture, assetsOnlyVersionResources, disabledWorkerChange, WORKER_FIXTURE_SECRET } from "./worker.fixture.mjs"
 
 async function connection(context, fixture, handler) {
   const service = {
@@ -22,15 +23,69 @@ async function connection(context, fixture, handler) {
   if (handler) client.setRequestHandler("elicitation/create", handler)
   await client.connect(clientTransport)
   context.after(async () => { await client.close(); await server.close() })
-  return async (name, input, expectedError = false) => {
+  const call = async (name, input, expectedError = false) => {
     const result = await client.callTool({ name, arguments: input })
     assert.doesNotMatch(JSON.stringify(result), new RegExp(WORKER_FIXTURE_SECRET))
     assert.equal(result.isError === true, expectedError, JSON.stringify(result))
     return result.structuredContent
   }
+  call.client = client
+  return call
 }
 
 const approve = (request) => ({ action: "accept", content: Object.fromEntries(request.params.requestedSchema.required.map((key) => [key, "approve"])) })
+
+test("MCP rejects missing selectors at the tool boundary and publishes the requirement", async (context) => {
+  const fixture = workerFixture()
+  const call = await connection(context, fixture)
+  const { tools } = await call.client.listTools()
+  for (const name of ["inspect_worker", "record_worker_incident"]) {
+    const tool = tools.find((entry) => entry.name === name)
+    assert.equal(tool.inputSchema.type, "object")
+    assert.deepEqual(tool.inputSchema.anyOf.map((branch) => branch.required), [["worker"], ["findingId"]])
+    for (const input of [{}, { worker_name: "example-worker" }, { findingId: "unrelated" }]) {
+      const result = await call.client.callTool({ name, arguments: input })
+      assert.equal(result.isError, true)
+      assert.match(JSON.stringify(result), /validation|Invalid/i)
+      assert.equal(fixture.state.calls.length, 0)
+    }
+  }
+})
+
+test("MCP, CLI and hosted commands retain assets-only and partial metadata through incident history", async (context) => {
+  const fixture = workerFixture({ now: Date.now(), crons: [], versionResources: { "version-serving": assetsOnlyVersionResources() } })
+  const call = await connection(context, fixture)
+  const input = { worker: "example-worker", logs: false }
+  const mcp = await call("inspect_worker", input)
+  assert.equal(mcp.assessment.status, "consistent")
+  assert.equal(mcp.versions[0].value.handlerEvidence.source, "assets-only-metadata")
+  let stdout = ""
+  const cli = await runFleetCommand({
+    argv: ["worker", "inspect", "--input", "-", "--format", "json"],
+    stdin: Readable.from([JSON.stringify(input)]), stdout: { write(value) { stdout += value } }, stderr: { write() {} },
+    service: { workers: fixture.service }, environment: {},
+  })
+  assert.deepEqual(JSON.parse(stdout), cli)
+  const service = { accountId: fixture.api.accountId, workers: fixture.service }
+  const envelope = { version: 1, accountId: service.accountId, command: "worker-inspect", input }
+  assert.deepEqual(await runFleetServiceCommand(service, envelope), mcp)
+  assert.deepEqual(cli, mcp)
+  const recorded = await call("record_worker_incident", input)
+  fixture.state.versionResources = {}
+  fixture.state.handlers = null
+  const partial = await call("inspect_worker", input)
+  assert.equal(partial.assessment.status, "unknown")
+  assert.equal(partial.versions[0].value.bindingsCoverage, "observed")
+  assert.equal(partial.versions[0].value.handlerEvidence.reasonCode, "handlers-missing")
+  const next = await call("record_worker_incident", input)
+  assert.equal(next.record.supersedes, recorded.record.id)
+  const history = await call("list_worker_incidents", { worker: input.worker })
+  assert.deepEqual(history.records[0].report.versions, partial.versions)
+  assert.deepEqual(history.records[1].report.versions, mcp.versions)
+  for (const command of ["worker-inspect", "worker-record"]) {
+    assert.throws(() => validateFleetCommand({ ...envelope, command, input: {} }), /Invalid input/)
+  }
+})
 
 test("MCP Worker tools preserve scoped evidence, signed review, intent, journal and guarded undo", async (context) => {
   const fixture = workerFixture({ now: Date.now() })
