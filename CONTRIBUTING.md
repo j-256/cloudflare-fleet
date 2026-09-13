@@ -48,8 +48,14 @@ npx wrangler deploy --dry-run --config wrangler.example.jsonc
 npm run build:docs
 npm run deploy:docs:dry-run
 npm run check:install
+npm run build:self-hosted -- --output self-hosted-dist
+npm run check:self-hosted -- --directory self-hosted-dist
 npm run check:publication
 ```
+
+The self-hosting checker consumes the exact archive and adjacent checksum already built; it never repacks them. It installs locked dependencies into independent directories, exercises the extracted CLI and MCP, builds the actual Wrangler bundle, applies fresh local D1 migrations, and checks legacy-schema upgrades with preserved intent, activity, and cache rows. Repeated migrations must leave those records unchanged. This is local synthetic coverage, not a Cloudflare deployment test or a guarantee for every historical application version. The CLI installation checker also accepts `--artifact FILE` and verifies that reinstallation leaves per-user state and policy intact.
+
+The builder refuses to overwrite archive files. Use a new output directory for another development build. `--require-clean` requires committed source and is mandatory in CI and releases; a development build records a null source revision instead of claiming to represent a commit. SHA-256 identifies the archive bytes, while the manifest's release ID binds the shipped files, lockfile, package version, and source revision. These checks provide integrity, not cryptographic publisher authentication.
 
 The opt-in live read-only test is useful for changes to inventory coverage, but it is not required for contributions and must never produce public artifacts.
 
@@ -75,7 +81,9 @@ npm run check:docs:public -- --url https://docs.example.com
 
 ## Releases
 
-Update `package.json` and `package-lock.json` to the intended version, complete the full verification surface, and merge the release-ready source before creating its annotated tag. The tag must exactly equal `v` followed by the package version. Pushing that tag runs the complete release gate again, packs the allowlisted source package, and attaches it to a generated GitHub Release. The workflow refuses a mismatched tag, and the package remains private to prevent npm registry publication.
+Update `package.json` and `package-lock.json` to the intended version, complete the full verification surface, and merge the release-ready source before creating its annotated tag. The tag must exactly equal `v` followed by the package version. Pushing that tag runs the complete release gate again, builds the locked self-hosting archive and CLI-only package, verifies those exact artifacts, and attaches them to a generated GitHub Release with the self-hosting checksum. Nothing is repacked after verification. The workflow refuses a mismatched tag or uncommitted source, and the package remains private to prevent npm registry publication. Never replace an existing release to add a missing artifact; publish a new version.
+
+Ordinary CI uploads the same verified artifact set for review. Forks can run this credential-free verification without hosting Fleet or deploying it. Production deployment, database migration, and rollback remain explicit operator actions; optional documentation publication is independent.
 
 ```sh
 release_version="$(node -p 'require("./package.json").version')"

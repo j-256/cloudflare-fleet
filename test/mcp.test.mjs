@@ -61,6 +61,8 @@ const CHANGES = Object.freeze([
 ])
 const TOOL_NAMES = Object.freeze([
   "get_runtime_status",
+  "check_hosted_release",
+  "verify_hosted_release",
   "get_fleet_state",
   "plan_state_reconciliation",
   "apply_state_reconciliation",

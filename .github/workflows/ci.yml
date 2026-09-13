@@ -62,8 +62,16 @@ jobs:
       - name: Generate synthetic product screenshots
         run: npm run screenshots:ci
 
-      - name: Verify packed installation
-        run: npm run check:install
+      - name: Build locked self-hosting release
+        run: npm run build:self-hosted -- --output self-hosted-dist --require-clean
+
+      - name: Verify exact self-hosting installation and upgrade
+        run: npm run check:self-hosted -- --directory self-hosted-dist
+
+      - name: Pack and verify exact CLI artifact
+        run: |
+          artifact_name="$(npm pack --ignore-scripts --pack-destination self-hosted-dist)"
+          npm run check:install -- --artifact "self-hosted-dist/$artifact_name"
 
       - name: Check publication safety
         run: npm run check:publication
@@ -73,6 +81,14 @@ jobs:
 
       - name: Validate documentation Worker
         run: npm run deploy:docs:dry-run
+
+      - name: Upload verified release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: self-hosted-release
+          path: self-hosted-dist
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload verified documentation artifact
         uses: actions/upload-artifact@v7

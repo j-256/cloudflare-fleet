@@ -14,8 +14,8 @@ const ROOT_ASSETS = Object.freeze([
 ])
 const IMPORT_PATTERN = /(?:\bfrom\s+|^\s*import\s+)["'](\.[^"']+)["']/gm
 
-function projectRelative(filePath) {
-  const relative = path.relative(PROJECT_ROOT, filePath)
+function projectRelative(filePath, projectRoot = PROJECT_ROOT) {
+  const relative = path.relative(projectRoot, filePath)
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`Browser import escapes the project root: ${filePath}`)
   }
@@ -26,13 +26,13 @@ function relativeImports(source) {
   return [...source.matchAll(IMPORT_PATTERN)].map((match) => match[1])
 }
 
-export async function collectBrowserModules(entrypoint = ENTRYPOINT) {
+export async function collectBrowserModules(entrypoint = ENTRYPOINT, projectRoot = PROJECT_ROOT) {
   const pending = [entrypoint]
   const modules = new Set()
   while (pending.length > 0) {
     const filePath = path.resolve(pending.pop())
     if (modules.has(filePath)) continue
-    const relative = projectRelative(filePath)
+    const relative = projectRelative(filePath, projectRoot)
     if (!relative.startsWith(`src${path.sep}`) || path.extname(filePath) !== ".mjs") {
       throw new Error(`Browser module is outside src/*.mjs: ${relative}`)
     }
@@ -61,7 +61,7 @@ export async function buildWorkerAssets(destination = DEFAULT_DESTINATION) {
   }
   return {
     destination,
-    files: [...ROOT_ASSETS, ...modules.map(projectRelative)].sort(),
+    files: [...ROOT_ASSETS, ...modules.map((file) => projectRelative(file))].sort(),
   }
 }
 

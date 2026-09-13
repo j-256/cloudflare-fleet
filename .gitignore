@@ -9,6 +9,7 @@ documentation-dist/
 fleet-policy.json
 node_modules/
 playwright-report/
+self-hosted-dist/
 state*.json
 state*.json.lock*
 state*.json.*.tmp

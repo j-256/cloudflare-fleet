@@ -23,6 +23,10 @@ const REQUIRED_FILES = Object.freeze([
   "scripts/check-install.mjs",
   "scripts/check-public-documentation.mjs",
   "scripts/check-release-tag.mjs",
+  "scripts/build-self-hosted-release.mjs",
+  "scripts/check-hosted-release.mjs",
+  "scripts/check-self-hosted-release.mjs",
+  "release-identity.json",
   "scripts/deploy-documentation.mjs",
   "scripts/documentation-publication.mjs",
   "wrangler.docs.jsonc",
@@ -333,6 +337,19 @@ export async function checkPublication() {
     errors.push("CI hardcodes the upstream documentation deployment target")
   }
   const artifactFiles = packedFiles()
+  const releaseWorkflow = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/release.yml"), "utf8")
+  for (const [name, workflow] of [["CI", ciWorkflow], ["Release", releaseWorkflow]]) {
+    for (const required of [
+      "npm run build:self-hosted -- --output self-hosted-dist --require-clean",
+      "npm run check:self-hosted -- --directory self-hosted-dist",
+      "npm run check:install -- --artifact",
+    ]) {
+      if (!workflow.includes(required)) errors.push(`${name} lacks exact release-artifact verification: ${required}`)
+    }
+  }
+  if (!releaseWorkflow.includes('gh release create "$GITHUB_REF_NAME" self-hosted-dist/*')) {
+    errors.push("Release must publish the already-verified artifacts")
+  }
   for (const required of [
     "README.md",
     "launch.sh",
@@ -341,6 +358,8 @@ export async function checkPublication() {
     "scripts/build-documentation.mjs",
     "scripts/check-public-documentation.mjs",
     "scripts/configure-hosted.mjs",
+    "scripts/check-hosted-release.mjs",
+    "release-identity.json",
     "scripts/deploy-documentation.mjs",
     "scripts/documentation-publication.mjs",
     "scripts/import-hosted-state.mjs",
