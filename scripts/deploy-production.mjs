@@ -9,6 +9,7 @@ import { promisify, isDeepStrictEqual } from "node:util"
 import { CloudflareApi } from "../src/api.mjs"
 import { CliUsageError, parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
+import { readRegularReleaseFile } from "../src/release-files.mjs"
 import { inspectHostedRelease, readHostedReleaseConfiguration } from "../src/hosted-release-check.mjs"
 import { createRemoteFleetService } from "../src/remote-fleet-service.mjs"
 import { inspectSelfHostedRelease, releaseHash } from "../src/self-hosted-release.mjs"
@@ -69,15 +70,15 @@ export async function prepareProductionArtifact(directory, environment = process
   const names = (await fs.readdir(directory)).filter((name) => /^cloudflare-fleet-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?-self-hosted\.tgz$/.test(name))
   requireValue(names.length === 1, "Download exactly one self-hosting archive from this workflow's verification job")
   const archiveFile = path.resolve(directory, names[0])
-  const metadata = await fs.lstat(archiveFile)
-  requireValue(metadata.isFile() && !metadata.isSymbolicLink() && metadata.size <= MAX_ARCHIVE_BYTES, "The verified archive is invalid or too large")
-  const archive = await fs.readFile(archiveFile)
+  const { content: archive } = await readRegularReleaseFile(archiveFile, MAX_ARCHIVE_BYTES)
   requireValue(releaseHash(archive) === environment.CLOUDFLARE_FLEET_ARTIFACT_SHA256, "Archive bytes differ from the passing verification job")
   validateReleaseArchive(archive)
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "fleet-production-"))
   await fs.chmod(scratch, 0o700)
   try {
-    await command("tar", ["-xzf", archiveFile, "-C", scratch], scratch, environment)
+    const verified = path.join(scratch, "verified.tgz")
+    await fs.writeFile(verified, archive, { mode: 0o600, flag: "wx" })
+    await command("tar", ["-xzf", verified, "-C", scratch], scratch, environment)
     const root = path.join(scratch, "package")
     const manifest = JSON.parse(await fs.readFile(path.join(root, "release-manifest.json"), "utf8"))
     const release = await inspectSelfHostedRelease(root, manifest.version)

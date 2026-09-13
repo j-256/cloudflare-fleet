@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { promises as fs } from "node:fs"
 import path from "node:path"
+import { readRegularReleaseFile } from "./release-files.mjs"
 
 export const RELEASE_MANIFEST = "release-manifest.json"
 export const RELEASE_IDENTITY = "release-identity.json"
@@ -40,9 +41,7 @@ async function regularFile(root, relative) {
     current = path.join(current, part)
     if ((await fs.lstat(current)).isSymbolicLink()) throw new Error(`Release contains a symbolic link: ${relative}`)
   }
-  const metadata = await fs.stat(current)
-  if (!metadata.isFile() || metadata.size > MAX_RELEASE_FILE_BYTES) throw new Error(`Release file is invalid or too large: ${relative}`)
-  return fs.readFile(current)
+  return (await readRegularReleaseFile(current, MAX_RELEASE_FILE_BYTES)).content
 }
 
 async function additionalFiles(root, files, relative = "") {
