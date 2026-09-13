@@ -13,6 +13,7 @@ import { Client } from "@modelcontextprotocol/client"
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio"
 import { CliUsageError, parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
+import { readRegularReleaseFile } from "../src/release-files.mjs"
 import { inspectSelfHostedRelease, releaseHash, releasePathIsSafe } from "../src/self-hosted-release.mjs"
 
 const execute = promisify(execFile)
@@ -158,11 +159,12 @@ export async function checkSelfHostedRelease(directory, onProgress = () => {}) {
       const candidates = (await fs.readdir(directory)).filter((name) => /^cloudflare-fleet-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?-self-hosted\.tgz$/.test(name))
       assert.equal(candidates.length, 1, "Select a directory containing exactly one self-hosting archive")
       const file = path.resolve(directory, candidates[0])
-      assert.equal((await fs.stat(file)).size <= MAX_ARCHIVE_BYTES, true, "Archive is too large")
-      const archive = await fs.readFile(file)
-      assert.equal(await fs.readFile(`${file}.sha256`, "utf8"), `${releaseHash(archive)}  ${candidates[0]}\n`, "Archive checksum differs")
+      const { content: archive } = await readRegularReleaseFile(file, MAX_ARCHIVE_BYTES)
+      assert.equal((await readRegularReleaseFile(`${file}.sha256`)).content.toString("utf8"), `${releaseHash(archive)}  ${candidates[0]}\n`, "Archive checksum differs")
       validateReleaseArchive(archive)
-      return file
+      const verified = path.join(scratch, "verified.tgz")
+      await fs.writeFile(verified, archive, { mode: 0o600, flag: "wx" })
+      return verified
     })
     const fresh = await stage("fresh.install-and-build", () => install(archiveFile, path.join(scratch, "fresh"), environment))
     const freshStore = path.join(scratch, "fresh-data")

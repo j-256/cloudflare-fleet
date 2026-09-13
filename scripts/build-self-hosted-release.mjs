@@ -7,6 +7,7 @@ import { gzipSync } from "node:zlib"
 
 import { CliUsageError, parseCliOptions } from "../src/cli-options.mjs"
 import { isMainModule } from "../src/entrypoint.mjs"
+import { readRegularReleaseFile } from "../src/release-files.mjs"
 import { RELEASE_IDENTITY, RELEASE_MANIFEST, RELEASE_SCHEMA_VERSION, releaseContentId, releaseHash, releasePathIsSafe } from "../src/self-hosted-release.mjs"
 
 const execute = promisify(execFile)
@@ -42,11 +43,9 @@ export async function buildSelfHostedRelease({ outputDirectory, requireClean = f
   for (const name of names) {
     if (!releasePathIsSafe(name)) throw new Error(`File is outside the release boundary: ${name}`)
     const source = path.join(root, name)
-    const metadata = await fs.lstat(source)
-    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error(`Release source is not a regular file: ${name}`)
-    const content = await fs.readFile(source)
+    const { content, mode } = await readRegularReleaseFile(source)
     contents.set(name, content)
-    modes.set(name, Boolean(metadata.mode & 0o111))
+    modes.set(name, Boolean(mode & 0o111))
     files[name] = releaseHash(content)
   }
   const version = JSON.parse(contents.get("package.json")).version
@@ -59,7 +58,7 @@ export async function buildSelfHostedRelease({ outputDirectory, requireClean = f
   contents.set(RELEASE_MANIFEST, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`))
   if (requireClean && (await execute("git", ["status", "--porcelain", "--untracked-files=all"], options)).stdout.trim()) throw new Error("Source changed while the release was being assembled")
   for (const [name, hash] of Object.entries(files)) {
-    if (name !== RELEASE_IDENTITY && releaseHash(await fs.readFile(path.join(root, name))) !== hash) throw new Error("Source changed while the release was being assembled")
+    if (name !== RELEASE_IDENTITY && releaseHash((await readRegularReleaseFile(path.join(root, name))).content) !== hash) throw new Error("Source changed while the release was being assembled")
   }
   const archive = gzipSync(Buffer.concat([
     ...[...contents].sort(([left], [right]) => left.localeCompare(right, "en")).map(([name, content]) => tarFile(`package/${name}`, content, modes.get(name))),
