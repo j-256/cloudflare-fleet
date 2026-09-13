@@ -144,6 +144,8 @@ npm run fleet -- hosted verify --version "$release_version"
 
 The generator writes mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. The archive carries the dependency lock, migrations, assets, and content identity; it contains no credentials or operator state. Keep generated configuration and secret files private and outside version control. The checks never deploy, migrate, or roll back anything. See the [deployment guide](docs/deployment.html#upgrade-heading) for upgrades, backups, rollback limits, and CLI/MCP verification. Checksums detect changed bytes, not publisher identity; obtain both files from the trusted release channel.
 
+An existing installation can optionally use [gated GitHub Actions deployment](docs/deployment.html#ci-deployment-heading). It is disabled for an unconfigured clone, requires protected `main` and a dedicated production environment, deploys only the same-run verified archive, and verifies the live release and Access boundary. Pending migrations stop deployment for separate operator review; self-hosting does not require this automation.
+
 The generated Worker also carries bounded CPU and subrequest ceilings. These are Workers Standard safeguards rather than a claim of Free compatibility; the deployment guide records the measured headroom, exact Free fallback, and operational consequence.
 
 `wrangler.example.jsonc` documents the portable binding shape. `fleet-policy.example.json` documents optional typed operator exceptions. Live account IDs, D1 IDs, Access values, policy exceptions, fleet state, and secrets do not belong in Git.

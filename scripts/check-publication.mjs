@@ -28,6 +28,7 @@ const REQUIRED_FILES = Object.freeze([
   "scripts/check-self-hosted-release.mjs",
   "release-identity.json",
   "scripts/deploy-documentation.mjs",
+  "scripts/deploy-production.mjs",
   "scripts/documentation-publication.mjs",
   "wrangler.docs.jsonc",
   "wrangler.example.jsonc",
@@ -336,6 +337,18 @@ export async function checkPublication() {
   if (referencesUrlOrigin(ciWorkflow, new URL(packageMetadata.homepage).origin)) {
     errors.push("CI hardcodes the upstream documentation deployment target")
   }
+  const productionJob = ciWorkflow.slice(ciWorkflow.indexOf("\n  production:"))
+  for (const required of [
+    "needs: verify", "needs.verify.result == 'success'", "github.ref_protected", "github.ref == 'refs/heads/main'",
+    "vars.CLOUDFLARE_FLEET_DEPLOY_PRODUCTION == 'true'", "name: production", "group: fleet-production", "cancel-in-progress: false",
+    "name: self-hosted-release", "needs.verify.outputs.hosting_sha256", "node scripts/deploy-production.mjs --prepare",
+    "node scripts/deploy-production.mjs --release-dir", "CLOUDFLARE_FLEET_RELEASE_ID: ${{ steps.prepare.outputs.release_id }}",
+  ]) {
+    if (!productionJob.includes(required)) errors.push(`CI lacks the gated production deployment contract: ${required}`)
+  }
+  if (/workflow_run|pull_request_target|secrets: inherit|db:migrate|secrets bulk|rollback|continue-on-error|always\(\)/u.test(productionJob)) {
+    errors.push("Production deployment must not bypass verification or automate migrations, secret uploads, or rollback")
+  }
   const artifactFiles = packedFiles()
   const releaseWorkflow = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/release.yml"), "utf8")
   for (const [name, workflow] of [["CI", ciWorkflow], ["Release", releaseWorkflow]]) {
@@ -343,6 +356,8 @@ export async function checkPublication() {
       "npm run build:self-hosted -- --output self-hosted-dist --require-clean",
       "npm run check:self-hosted -- --directory self-hosted-dist",
       "npm run check:install -- --artifact",
+      "npm audit --audit-level=high",
+      "npm run test:e2e:ergonomics",
     ]) {
       if (!workflow.includes(required)) errors.push(`${name} lacks exact release-artifact verification: ${required}`)
     }
