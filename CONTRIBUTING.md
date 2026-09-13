@@ -40,6 +40,7 @@ Run focused tests while iterating, then use the complete checks appropriate to t
 
 ```sh
 npm test
+npm audit --audit-level=high
 npm run test:e2e
 npm run test:e2e:ergonomics
 shellcheck launch.sh
@@ -79,11 +80,25 @@ The workflow deploys the exact artifact produced by verification and checks it a
 npm run check:docs:public -- --url https://docs.example.com
 ```
 
+### Optional production deployment
+
+Production deployment is independent of documentation publication and release tagging. The opt-in `production` job deploys an existing hosted installation only after the complete `verify` job succeeds, including application and toolchain dependency auditing, unit and browser tests, ergonomics checks, build validation, publication safety, and actual artifact installation/upgrade checks. It downloads the self-hosting archive from that same workflow run, checks its digest against the verification job's output, and binds the extracted content identity to the workflow source revision. Locked installation and asset building happen before production credentials are supplied.
+
+Use a protected GitHub Actions environment named `production`, restricted to `main`, with the configuration described in the [deployment guide](docs/deployment.html#ci-deployment-heading). Set the repository variable `CLOUDFLARE_FLEET_DEPLOY_PRODUCTION` to `true` only after reviewing that environment and its dedicated credentials. Pull requests and verification-only dispatches cannot deploy. Eligible pushes to protected `main` deploy automatically; an explicit redeployment runs the full verification gate again:
+
+```sh
+gh workflow run ci.yml --ref main -f operation=deploy-production
+```
+
+Deployment jobs serialize without cancelling an in-flight upload. The helper rechecks the protected main head and serving Worker immediately before upload, rejects pending migrations and configuration drift, preserves server variables and secrets, and leaves domain and schedule management out of the upload configuration. Authenticated release/storage verification and anonymous Access checks must pass afterward. Propagation retries perform reads only. A failed or uncertain upload is not automatically repeated or rolled back.
+
+`scripts/deploy-production.mjs` is internal GitHub job orchestration, not a local deployment command or a new Fleet API write capability. Existing CLI/MCP release checks provide the operator verification surface; agents use the same protected GitHub workflow for deployment instead of bypassing its tests or environment protections. Ordinary self-hosters can continue the explicit Wrangler workflow without enabling CI deployment. Never upload the Worker's runtime Cloudflare token, private state exports, or raw provider diagnostics to Actions.
+
 ## Releases
 
 Update `package.json` and `package-lock.json` to the intended version, complete the full verification surface, and merge the release-ready source before creating its annotated tag. The tag must exactly equal `v` followed by the package version. Pushing that tag runs the complete release gate again, builds the locked self-hosting archive and CLI-only package, verifies those exact artifacts, and attaches them to a generated GitHub Release with the self-hosting checksum. Nothing is repacked after verification. The workflow refuses a mismatched tag or uncommitted source, and the package remains private to prevent npm registry publication. Never replace an existing release to add a missing artifact; publish a new version.
 
-Ordinary CI uploads the same verified artifact set for review. Forks can run this credential-free verification without hosting Fleet or deploying it. Production deployment, database migration, and rollback remain explicit operator actions; optional documentation publication is independent.
+Ordinary CI uploads the same verified artifact set for review. Forks can run this credential-free verification without hosting Fleet or deploying it. Production deployment is separately opt-in through the protected job described above; database migration and rollback remain explicit operator actions. Tagged releases do not trigger production deployment, and deploying `main` does not create or replace a public release.
 
 ```sh
 release_version="$(node -p 'require("./package.json").version')"
