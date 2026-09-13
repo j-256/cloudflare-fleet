@@ -147,6 +147,7 @@ export function fleetUsage() {
     "  cloudflare-fleet mcp [--policy-file PATH] [--state-file PATH]",
     "  cloudflare-fleet hosted configure [OPTIONS]",
     "  cloudflare-fleet hosted import-state [OPTIONS] [STATE_FILE]",
+    "  cloudflare-fleet hosted check|verify --version VERSION [OPTIONS]",
     "  cloudflare-fleet schema change|intent",
     "  cloudflare-fleet --version",
     "",
@@ -411,13 +412,16 @@ export function fleetHostedUsage() {
     "SYNOPSIS",
     "  cloudflare-fleet hosted configure [OPTIONS]",
     "  cloudflare-fleet hosted import-state [OPTIONS] [STATE_FILE]",
+    "  cloudflare-fleet hosted check|verify --version VERSION [OPTIONS]",
     "",
     "COMMANDS",
-    "  configure     Validate configuration and provision hosted resources",
+    "  configure     Generate private deployment configuration; does not provision resources",
+    "  check         Inspect a version-selected self-hosting archive and optional live migration state",
+    "  verify        Verify that the selected archive is running with the expected storage and Access boundary",
     "  import-state  Import local fleet intent into the remote D1 database",
     "",
     "HELP",
-    "  Run either command with --help for its options, dependencies, and side effects",
+    "  Run any command with --help for its options, dependencies, and side effects",
   ].join("\n")
 }
 
@@ -607,13 +611,14 @@ export function parseFleetArguments(argv) {
   }
   if (resource === "hosted") {
     if (!action || isHelpArgument(action)) return { command: "hosted-help" }
+    if (["check", "verify"].includes(action)) return { argv: rest, command: `hosted-${action}` }
     if (action === "configure") {
       return { argv: rest, command: "hosted-configure" }
     }
     if (action === "import-state") {
       return { argv: rest, command: "hosted-import-state" }
     }
-    throw new CliUsageError("Hosted command must be configure or import-state")
+    throw new CliUsageError("Hosted command must be configure, import-state, check, or verify")
   }
   if (resource === "mcp") {
     const options = parseOptions(argv.slice(1), [
@@ -1201,6 +1206,10 @@ export async function runFleetCommand(options = {}) {
     const exitCode = resultExitCode(result)
     options.onExitCode?.(exitCode)
     return result
+  }
+  if (["hosted-check", "hosted-verify"].includes(parsed.command)) {
+    const { runHostedReleaseCheck } = await import("../scripts/check-hosted-release.mjs")
+    return runHostedReleaseCheck({ ...options, argv: parsed.argv, action: parsed.command.slice("hosted-".length), environment, stderr, stdout })
   }
   if (parsed.command === "hosted-configure") {
     const { runHostedConfigurationCommand } = await import("../scripts/configure-hosted.mjs")

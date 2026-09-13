@@ -9,6 +9,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio"
 
 import { isMainModule } from "../src/entrypoint.mjs"
 import { PACKAGE_NAME, PACKAGE_VERSION } from "../src/package-metadata.mjs"
+import { CliUsageError, parseCliOptions } from "../src/cli-options.mjs"
+import { createEmptyFleetStateDocument } from "../src/fleet-state.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const ATTENTION_EXIT_CODE = 4
@@ -88,7 +90,7 @@ async function verifyMcp(executable, cwd, environment) {
   }
 }
 
-export async function checkInstall() {
+export async function checkInstall(options = {}) {
   const temporaryRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "cloudflare-fleet-install."),
   )
@@ -107,13 +109,13 @@ export async function checkInstall() {
       "--pack-destination",
       artifactDirectory,
     ]
-    const packReport = parseJsonOutput(
+    const packReport = options.artifact ? null : parseJsonOutput(
       packCommand,
       run(packCommand, { cwd: PROJECT_ROOT }),
     )
-    const artifactName = packReport[0]?.filename
+    const artifactName = options.artifact ? path.basename(options.artifact) : packReport[0]?.filename
     if (!artifactName) throw new Error("npm pack did not report an artifact filename")
-    const artifactPath = path.join(artifactDirectory, artifactName)
+    const artifactPath = options.artifact ? path.resolve(options.artifact) : path.join(artifactDirectory, artifactName)
 
     run([
       "npm",
@@ -149,9 +151,7 @@ export async function checkInstall() {
       throw new Error("Installed executable resolves outside the packed package")
     }
 
-    const environment = { ...process.env }
-    delete environment.CLOUDFLARE_FLEET_POLICY_FILE
-    delete environment.CLOUDFLARE_FLEET_STATE_FILE
+    const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(CLOUDFLARE_|CF_|XDG_)/.test(name)))
     Object.assign(environment, {
       CLOUDFLARE_FLEET_BACKEND: "local",
       CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
@@ -201,6 +201,21 @@ export async function checkInstall() {
       throw new Error(`Installed doctor reported unexpected status ${diagnosis.status}`)
     }
 
+    const stateFile = path.join(xdgState, PACKAGE_NAME, "state.json")
+    const policyFile = path.join(xdgConfig, PACKAGE_NAME, "fleet-policy.json")
+    const retainedState = `${JSON.stringify(createEmptyFleetStateDocument(environment.CLOUDFLARE_ACCOUNT_ID))}\n`
+    const retainedPolicy = "{\"schemaVersion\":1,\"emailDnsRecordExceptions\":[]}\n"
+    for (const [file, content] of [[stateFile, retainedState], [policyFile, retainedPolicy]]) {
+      await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+      await fs.writeFile(file, content, { mode: 0o600 })
+    }
+    run(["npm", "install", "--global", "--prefix", installPrefix, "--ignore-scripts", "--no-audit", "--no-fund", artifactPath], { cwd: temporaryRoot, env: environment })
+    if (await fs.readFile(stateFile, "utf8") !== retainedState || await fs.readFile(policyFile, "utf8") !== retainedPolicy) {
+      throw new Error("CLI reinstallation changed operator state or policy")
+    }
+    run([executable, "state", "export", "--format", "json"], { cwd: temporaryRoot, env: environment })
+    await verifyMcp(executable, temporaryRoot, environment)
+
     return {
       artifact: artifactName,
       packageVersion: PACKAGE_VERSION,
@@ -211,12 +226,22 @@ export async function checkInstall() {
 }
 
 if (isMainModule(import.meta.url)) {
-  checkInstall().then((result) => {
-    process.stdout.write(
-      `Packed install is independent and ready (${result.artifact})\n`,
-    )
-  }).catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
-    process.exitCode = 1
-  })
+  try {
+    const options = parseCliOptions(process.argv.slice(2), [
+      { name: "artifact", short: "a", value: true },
+      { name: "help", short: "h", value: false },
+    ])
+    if (options.help) process.stdout.write("Usage: check-install.mjs [--artifact FILE]\nInstall and reinstall an exact CLI tarball in a temporary global prefix and verify CLI, MCP, and preserved operator files.\nWithout --artifact, pack the source first. Temporary files are removed afterward.\nDependencies: Node.js, npm and registry access; no Cloudflare credentials.\nExit: 0 success/help, 1 verification failure, 2 usage.\n")
+    else checkInstall(options).then((result) => {
+      process.stdout.write(
+        `Packed install is independent and ready (${result.artifact})\n`,
+      )
+    }).catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      process.exitCode = 1
+    })
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`)
+    process.exitCode = error instanceof CliUsageError ? 2 : 1
+  }
 }

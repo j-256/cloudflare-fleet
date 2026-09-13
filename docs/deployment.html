@@ -61,10 +61,19 @@
           <span class="step-number">1</span>
           <div>
             <h3>Install the pinned toolchain</h3>
-            <p>The lockfile pins Wrangler, the Access JWT library, and the browser test stack. Keep the source checkout for deployment, but install the tagged GitHub package for a durable operator command that does not link back to the checkout.</p>
-            <pre><code>npm install --global "github:j-256/cloudflare-fleet#v0.1.0"
-npm ci
-cloudflare-fleet --help</code></pre>
+            <p>Choose a <a href="https://github.com/j-256/cloudflare-fleet/releases">tagged release</a> with a <code>cloudflare-fleet-VERSION-self-hosted.tgz</code> asset and its SHA-256 file. This archive includes the dependency lock, deployment source, migrations, and a server release identity. The CLI-only package and GitHub's automatic source downloads are different artifacts; earlier tags without a self-hosting asset cannot use these release checks.</p>
+            <pre><code>release_version="REPLACE_WITH_RELEASE_VERSION"
+release_url="https://github.com/j-256/cloudflare-fleet/releases/download/v${release_version}"
+release_archive="cloudflare-fleet-${release_version}-self-hosted.tgz"
+mkdir "cloudflare-fleet-${release_version}"
+cd "cloudflare-fleet-${release_version}"
+curl --fail --location --remote-name "$release_url/$release_archive"
+curl --fail --location --remote-name "$release_url/$release_archive.sha256"
+shasum -a 256 -c "$release_archive.sha256" &amp;&amp; tar -xzf "$release_archive"
+cd package
+npm ci --include=dev
+npm run fleet -- --help</code></pre>
+            <p>Stop on any failed command; do not extract an archive whose checksum fails. Obtain both files from the trusted release channel: checksums detect corruption, not a malicious publisher. Run deployment commands from this extracted <code>package</code> directory. Use its own <code>npm run fleet --</code> command so a global CLI cannot generate paths into a different installed version. Install the matching CLI-only package separately on operator devices using the <a href="getting-started">getting-started guide</a>.</p>
           </div>
         </article>
 
@@ -96,13 +105,13 @@ export CLOUDFLARE_FLEET_D1_DATABASE_ID="the-returned-database-id"</code></pre>
 export CLOUDFLARE_ACCESS_AUD="your-access-application-audience"
 export CLOUDFLARE_ACCESS_TEAM_DOMAIN="https://your-team.cloudflareaccess.com"
 
-cloudflare-fleet hosted configure \
+npm run fleet -- hosted configure \
   --account-id "$CLOUDFLARE_ACCOUNT_ID" \
   --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
   --hostname fleet.example.com \
   --access-aud "$CLOUDFLARE_ACCESS_AUD" \
   --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN"</code></pre>
-            <p>The command writes mode-restricted <code>wrangler.jsonc</code>. That file contains account and deployment identifiers, so Git ignores it. <code>wrangler.example.jsonc</code> documents the portable shape without live values.</p>
+            <p>The command writes mode-restricted <code>wrangler.jsonc</code>. That file contains account and deployment identifiers; keep it private and outside version control. <code>wrangler.example.jsonc</code> documents the portable shape without live values. Operator state and policy belong in their per-user directories, not inside the release; the release checker permits only the standard generated configuration, secret files, dependencies, and build outputs alongside its immutable source.</p>
             <p>The generated Workers Standard configuration limits each invocation to 3,000 ms of CPU and 1,000 total subrequests. Workers Observability for the seven days ending 2026-09-07 recorded a maximum of approximately 986 ms CPU for the hosted Worker, leaving about three times the observed peak. The subrequest ceiling preserves broad, bounded account audits while reducing the Paid default from 10,000. If an invocation exceeds either ceiling, Cloudflare terminates it and records a resource-limit outcome; inspect the correlated audit and activity receipt before retrying or raising a limit.</p>
             <p>Custom <code>limits.cpu_ms</code> and <code>limits.subrequests</code> require the Workers Standard usage model. A Free deployment must omit that block and instead receives Cloudflare's fixed per-invocation ceilings of 10 ms CPU, 50 external subrequests, and 1,000 internal-service subrequests. The observed CPU maximum exceeds the Free allowance, and a deep fleet audit can fan out across many account APIs, so no Free-compatible hosted audit profile is claimed. Running only smaller standalone read operations is the supported Free-oriented fallback, at the cost of no shared hosted control plane or complete deep-audit guarantee. These limits and the fallback were verified against <a href="https://developers.cloudflare.com/workers/platform/limits/">Workers limits</a> and <a href="https://developers.cloudflare.com/workers/wrangler/configuration/#limits">Wrangler limits configuration</a> on 2026-09-07.</p>
           </div>
@@ -113,11 +122,14 @@ cloudflare-fleet hosted configure \
           <div>
             <h3>Apply storage and deploy the secret with the code</h3>
             <p>Wrangler accepts an ignored dotenv file through <code>--secrets-file</code>, allowing the first code version and encrypted secret to deploy together. Delete the local secret file after deployment if the shell environment is your preferred source of truth.</p>
-            <pre><code>npm run db:migrate:remote
+            <pre><code>npm run build:hosted
+npm run fleet -- hosted check --version "$release_version"
+npm run db:migrate:remote
+npm run fleet -- hosted check --version "$release_version" --live --install
 umask 077
 printf 'CLOUDFLARE_API_TOKEN="%s"\n' "$CLOUDFLARE_API_TOKEN" &gt; .dev.vars.production
 npm run deploy -- --secrets-file .dev.vars.production</code></pre>
-            <p>The custom domain is the Worker origin, so Cloudflare manages its DNS record and certificate. The Worker serves no <code>workers.dev</code> endpoint and disables preview URLs.</p>
+            <p>Proceed only when the checks pass. Offline preflight verifies the selected archive, pinned Wrangler, built assets, account, database, Access configuration, and release-local paths. Live preflight also reads serving deployment and D1 migration metadata. <code>--install</code> permits a Worker that has not been created yet; it does not permit missing database migrations or denied reads. No check applies migrations or deploys code. The custom domain is the Worker origin; the Worker serves no <code>workers.dev</code> endpoint and disables preview URLs.</p>
           </div>
         </article>
 
@@ -126,6 +138,9 @@ npm run deploy -- --secrets-file .dev.vars.production</code></pre>
           <div>
             <h3>Verify Access and inventory</h3>
             <p>Open the configured hostname in a normal browser. Access should authenticate first, then Fleet should report a read-only session and begin loading the account. Test an unauthenticated private window as well: the Worker itself must reject a request that arrives without a valid Access assertion.</p>
+            <p>Configure the <a href="#shared-control-heading">hosted client origin and scoped Access credentials</a>, then verify the exact selected release:</p>
+            <pre><code>npm run fleet -- hosted verify --version "$release_version"</code></pre>
+            <p>Verification requires one serving version with the expected D1 binding, applied migration names, authenticated storage readiness, matching account and read/write policy, and the archive's server release identity. It also checks that an anonymous API request is denied or redirected to the configured Access provider. It does not replace a human check of login and inventory, prove that every Access policy is correct, or prevent a concurrent deployment.</p>
           </div>
         </article>
 
@@ -134,7 +149,7 @@ npm run deploy -- --secrets-file .dev.vars.production</code></pre>
           <div>
             <h3>Opt into reviewed writes</h3>
             <p>After reviewing the account boundary, Access policy, proxy allowlist, and read-only inventory, regenerate the same ignored file with <code>--write</code> and deploy again.</p>
-            <pre><code>cloudflare-fleet hosted configure \
+            <pre><code>npm run fleet -- hosted configure \
   --account-id "$CLOUDFLARE_ACCOUNT_ID" \
   --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
   --hostname fleet.example.com \
@@ -142,10 +157,44 @@ npm run deploy -- --secrets-file .dev.vars.production</code></pre>
   --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN" \
   --write
 
-npm run deploy</code></pre>
+npm run fleet -- hosted check --version "$release_version" --live
+npm run deploy
+npm run fleet -- hosted verify --version "$release_version"</code></pre>
           </div>
         </article>
       </div>
+    </section>
+
+    <section class="section prose" aria-labelledby="upgrade-heading">
+      <h2 id="upgrade-heading">Upgrade deliberately, keeping recovery separate</h2>
+      <ol>
+        <li>Read the selected release's notes and migration SQL. Download and verify its self-hosting archive into a new directory using the installation steps above; keep the previous release and private configuration intact. Do not unpack over a running installation or reuse its <code>node_modules</code>.</li>
+        <li>Run <code>npm ci --include=dev</code> and regenerate configuration using the new archive's CLI. Preserve the existing Worker name, account, D1 ID, Access audience and team, hostname, policy exceptions, and deliberate read/write setting. Do not create a replacement database. A copied configuration is safe only if all deployment paths resolve into the new release; preflight rejects paths back into the old one.</li>
+        <li>Stop writers and concurrent deployments. Save private logical state exports, a full D1 export, and the preceding serving-version receipt outside both release directories. Confirm the backups are readable and retain the preceding release's configuration and secret recovery source.</li>
+        <li>Build and check the new release. Live preflight reports pending or unexpected migration names and exits nonzero when they differ. Review that result before applying migrations. Unexpected names can indicate an attempted downgrade; never edit the migration history to make a check pass.</li>
+        <li>Apply the reviewed migrations, rerun live preflight, and explicitly deploy. Verify the selected release afterward, check human login and inventory, and only then resume writers and update remote CLI/MCP clients to the matching version.</li>
+      </ol>
+      <pre><code># Inside the new release, with its regenerated configuration:
+umask 077
+backup_root="${XDG_STATE_HOME:-$HOME/.local/state}/cloudflare-fleet/backups"
+mkdir -p "$backup_root"
+backup_dir="$(mktemp -d "$backup_root/upgrade.XXXXXX")"
+cloudflare-fleet state export --format json &gt; "$backup_dir/hosted-state.json"
+npx wrangler d1 export FLEET_DB --remote --output "$backup_dir/database.sql"
+npm run build:hosted
+npm run --silent fleet -- hosted check --version "$release_version" --live --format json &gt; "$backup_dir/preflight.json"
+
+# After inspecting backups, the preflight result, and migration compatibility:
+npm run db:migrate:remote
+npm run fleet -- hosted check --version "$release_version" --live
+npm run deploy -- --message "Cloudflare Fleet ${release_version}"
+npm run --silent fleet -- hosted verify --version "$release_version" --format json &gt; "$backup_dir/verified.json"</code></pre>
+      <p>The example creates a unique mode-restricted backup directory under your per-user Fleet state directory; include it in your durable private backup system before deployment. Export any independently used standalone state separately with <code>CLOUDFLARE_FLEET_BACKEND=local</code>. Do not publish receipts: they include operator deployment identifiers. Preflight is a point-in-time observation, not a deployment lock or approval. The checks inspect migration names, not schema/data equivalence; CI separately exercises fresh local D1 and a legacy-schema upgrade with preserved records using the exact distributed artifact.</p>
+      <p>If verification fails, leave writers stopped and investigate using the receipt's correlation ID and per-check failures. Recheck after propagation when appropriate; do not automatically redeploy or restore a database. An operator may explicitly use the recorded previous version with <code>npx wrangler rollback VERSION_ID</code> only after reviewing its schema, binding, secret, policy, and schedule compatibility. <a href="https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/">Worker rollback</a> does not undo D1 migrations or restore its data. Database recovery is a separate reviewed operation using a private export or the <a href="https://developers.cloudflare.com/d1/reference/time-travel/">D1 recovery facilities</a>. Revalidate account, storage, Access, and the recovered version before resuming writes.</p>
+      <h3>CLI and MCP release checks</h3>
+      <p><code>hosted check</code> is offline by default; <code>--live</code> adds Cloudflare reads. <code>hosted verify</code> always performs live reads and authenticated server verification. The local operator token needs <a href="https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/versions/methods/get/">Workers Scripts Read</a> and <a href="https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/">D1 Read</a>; verification additionally needs the application's Access credentials. These helpers do not grant deployment or migration permissions and do not change production credentials. Ordinary hosted client operations still require only Access credentials.</p>
+      <p>For a CLI installed separately, use <code>--release-dir /absolute/path/to/package</code> and optionally <code>--config /absolute/path/to/wrangler.jsonc</code>. MCP exposes <code>check_hosted_release</code> with an explicit <code>version</code> and optional <code>live</code>/<code>install</code>, and <code>verify_hosted_release</code> with an explicit <code>version</code>. Set the operator-owned <code>CLOUDFLARE_FLEET_RELEASE_DIR</code> and optional <code>CLOUDFLARE_FLEET_WRANGLER_CONFIG</code> in the launching process environment; restart an existing MCP process when those selections change. Tools cannot select arbitrary filesystem paths, fetch source, or perform deployment writes.</p>
+      <p>Text is the CLI default; <code>--format json</code> includes source identity, coverage, correlation ID, and per-check timings. Exit statuses are <code>0</code> for ready/help, <code>2</code> for usage, <code>3</code> for a missing or mismatched toolchain, <code>4</code> for blocked preflight, and <code>7</code> for failed post-deployment verification; unexpected runtime failures use <code>1</code>. Missing metadata is a failure, not a clean bill of health. JSON generated by <code>hosted configure</code> is supported; custom environments and commented JSONC need manual review.</p>
     </section>
 
     <section class="section prose" aria-labelledby="policy-heading">

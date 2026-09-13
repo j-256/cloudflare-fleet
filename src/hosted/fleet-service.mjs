@@ -11,6 +11,7 @@ import { hostedWorkerStore } from "./worker-store.mjs"
 import { hostedExecutionLock } from "./execution-lock.mjs"
 import { hostedStateReconciliation } from "./state-reconciliation.mjs"
 import { hostedActivityRecovery } from "./activity-recovery.mjs"
+import releaseIdentity from "../../release-identity.json" with { type: "json" }
 import {
   readHostedFleetIntent, persistHostedFleetIntent, readHostedOperationActivity,
   appendHostedOperationActivity, finalizeHostedOperationActivity,
@@ -105,7 +106,7 @@ export function createHostedFleetService(env, options = {}) {
         db.prepare("SELECT owner FROM worker_execution_lock WHERE account_id = ?").bind(accountId),
         db.prepare("SELECT id FROM state_reconciliation WHERE account_id = ? LIMIT 1").bind(accountId),
       ])
-      return { storage: "d1", schema: "ready" }
+      return { storage: "d1", schema: "ready", release: releaseIdentity }
     },
     async audit(commandOptions = {}) {
       const [state, inventory] = await Promise.all([

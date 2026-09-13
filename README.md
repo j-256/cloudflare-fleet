@@ -105,28 +105,44 @@ Deep Worker checks independently flag Cron triggers without an exported `schedul
 
 ## Hosted deployment
 
-Hosted Fleet needs a source checkout, Cloudflare zone, D1 database, self-hosted Access application, custom-domain Worker, and account API token.
+Hosted Fleet needs a locked self-hosting release, Cloudflare zone, D1 database, self-hosted Access application, custom-domain Worker, and account API token. Choose a tagged [GitHub Release](https://github.com/j-256/cloudflare-fleet/releases) that includes `cloudflare-fleet-VERSION-self-hosted.tgz` and its `.sha256` file. The CLI-only tarball and GitHub's automatic source downloads are not this bundle. Earlier tags without that asset do not support the release checks below.
 
 ```sh
-git clone --branch v0.1.0 --depth 1 https://github.com/j-256/cloudflare-fleet.git
-cd cloudflare-fleet
-npm ci
+release_version="REPLACE_WITH_RELEASE_VERSION"
+release_url="https://github.com/j-256/cloudflare-fleet/releases/download/v${release_version}"
+release_archive="cloudflare-fleet-${release_version}-self-hosted.tgz"
+mkdir "cloudflare-fleet-${release_version}"
+cd "cloudflare-fleet-${release_version}"
+curl --fail --location --remote-name "$release_url/$release_archive"
+curl --fail --location --remote-name "$release_url/$release_archive.sha256"
+shasum -a 256 -c "$release_archive.sha256" && tar -xzf "$release_archive"
+cd package
+npm ci --include=dev
 npx wrangler d1 create cloudflare-fleet
+```
 
-cloudflare-fleet hosted configure \
+Stop if a download, checksum, or command fails. Record the database ID, create the Access application, and load your own account, database, Access, and credential environment values as described in the [deployment guide](docs/deployment.html). Run configuration and deployment from the extracted `package` directory using its own CLI, not a global command that might point to another release:
+
+```sh
+npm run fleet -- hosted configure \
   --account-id "$CLOUDFLARE_ACCOUNT_ID" \
   --database-id "$CLOUDFLARE_FLEET_D1_DATABASE_ID" \
   --hostname fleet.example.com \
   --access-aud "$CLOUDFLARE_ACCESS_AUD" \
   --access-team-domain "$CLOUDFLARE_ACCESS_TEAM_DOMAIN"
 
+npm run build:hosted
+npm run fleet -- hosted check --version "$release_version"
 npm run db:migrate:remote
+npm run fleet -- hosted check --version "$release_version" --live --install
 umask 077
 printf 'CLOUDFLARE_API_TOKEN="%s"\n' "$CLOUDFLARE_API_TOKEN" > .dev.vars.production
 npm run deploy -- --secrets-file .dev.vars.production
+# After configuring the client's hosted origin and Access credentials:
+npm run fleet -- hosted verify --version "$release_version"
 ```
 
-The generator writes ignored, mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. See the [deployment guide](docs/deployment.html) for Access setup, secret handling, verification, optional state import, and the deliberate `--write` opt-in.
+The generator writes mode-restricted `wrangler.jsonc` and defaults it to backend-enforced read-only mode. The archive carries the dependency lock, migrations, assets, and content identity; it contains no credentials or operator state. Keep generated configuration and secret files private and outside version control. The checks never deploy, migrate, or roll back anything. See the [deployment guide](docs/deployment.html#upgrade-heading) for upgrades, backups, rollback limits, and CLI/MCP verification. Checksums detect changed bytes, not publisher identity; obtain both files from the trusted release channel.
 
 The generated Worker also carries bounded CPU and subrequest ceilings. These are Workers Standard safeguards rather than a claim of Free compatibility; the deployment guide records the measured headroom, exact Free fallback, and operational consequence.
 
@@ -146,7 +162,7 @@ cloudflare-fleet dashboard
 
 Load `CLOUDFLARE_FLEET_ACCESS_CLIENT_ID` and `CLOUDFLARE_FLEET_ACCESS_CLIENT_SECRET` from a private secret manager into that process environment. Use a dedicated, expiring Access service token and an application-specific **Service Auth** policy that includes only that token. Preserve human login and MFA policies. Alternatively, supply an unexpired Access application JWT through `CLOUDFLARE_FLEET_ACCESS_TOKEN`, not both methods. See Cloudflare's [service-token authentication](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/). Credential values never belong in arguments, URLs, public files, or shared MCP configuration.
 
-The hosted Worker holds the account API token. Remote clients do not need it and never forward it. All ordinary CLI commands and MCP tools use the selected hosted backend, including audits, intent, alignment, bounded changes, activity, Worker records, and guarded undo. The MCP transport is still stdio: install the CLI on each agent host and inherit the hosted environment. There is no public remote HTTP MCP endpoint.
+The hosted Worker holds the account API token. Ordinary remote clients do not need it and never forward it. Audits, intent, alignment, bounded changes, activity, Worker records, and guarded undo use the selected hosted backend. Release-management checks are an explicit exception: live preflight and post-deployment verification run on the operator's machine and require local Workers Scripts Read and D1 Read credentials. The MCP transport is still stdio: install the CLI on each agent host and inherit the hosted environment. There is no public remote HTTP MCP endpoint.
 
 D1 is authoritative for shared intent, activity, and Worker records. Cloudflare remains authoritative for live resources; the deployed Worker configuration supplies operator policy exceptions. `dashboard` opens the hosted URL, where deployment policy determines write access. A hosted URL selects hosted mode without silent local fallback; local file flags are rejected. Use `CLOUDFLARE_FLEET_BACKEND=local` deliberately for standalone work or export. Without a hosted URL, standalone mode remains the default. Standalone files are not synchronized replicas and should not be used as a second production authority.
 
@@ -469,6 +485,8 @@ npx wrangler deploy --dry-run --config wrangler.example.jsonc
 npm run build:docs
 npm run deploy:docs:dry-run
 npm run check:install
+npm run build:self-hosted -- --output self-hosted-dist
+npm run check:self-hosted -- --directory self-hosted-dist
 npm run check:publication
 ```
 

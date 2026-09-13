@@ -12,6 +12,19 @@ import {
   isFleetIntentDocument,
 } from "./fleet-intent.mjs"
 
+export const hostedReleaseCheckInputSchema = z.strictObject({
+  version: z.string().max(100).regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/).describe("Explicit package version of the operator-selected self-hosting archive"),
+  live: z.boolean().optional(),
+  install: z.boolean().optional().describe("Permit a not-yet-created Worker for first-install preflight"),
+})
+export const hostedReleaseVerifyInputSchema = hostedReleaseCheckInputSchema.pick({ version: true })
+export const hostedReleaseCheckOutputSchema = z.looseObject({
+  schemaVersion: z.literal(1), requestId: z.string().uuid(), operation: z.enum(["check", "verify"]),
+  status: z.enum(["ready", "attention"]), elapsedMs: z.number().nonnegative(), live: z.enum(["requested", "not-requested"]),
+  release: z.json().nullable(), target: z.json().nullable(), limitations: z.array(z.string()),
+  checks: z.array(z.looseObject({ id: z.string(), status: z.enum(["pass", "fail"]), elapsedMs: z.number().nonnegative(), detail: z.string().optional(), code: z.string().optional() })),
+})
+
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 export const commandDiagnosticsSchema = z.strictObject({

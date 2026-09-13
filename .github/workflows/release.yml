@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   release:
-    name: Verify and publish source artifact
+    name: Verify and publish operator artifacts
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -54,8 +54,16 @@ jobs:
       - name: Generate synthetic product screenshots
         run: npm run screenshots:ci
 
-      - name: Verify packed installation
-        run: npm run check:install
+      - name: Build locked self-hosting release
+        run: npm run build:self-hosted -- --output self-hosted-dist --require-clean
+
+      - name: Verify exact self-hosting installation and upgrade
+        run: npm run check:self-hosted -- --directory self-hosted-dist
+
+      - name: Pack and verify exact CLI artifact
+        run: |
+          artifact_name="$(npm pack --ignore-scripts --pack-destination self-hosted-dist)"
+          npm run check:install -- --artifact "self-hosted-dist/$artifact_name"
 
       - name: Check publication safety
         run: npm run check:publication
@@ -66,16 +74,7 @@ jobs:
       - name: Validate documentation Worker
         run: npm run deploy:docs:dry-run
 
-      - name: Pack source artifact
-        id: artifact
-        env:
-          ARTIFACT_DIRECTORY: ${{ runner.temp }}/cloudflare-fleet-release
-        run: |
-          mkdir -p "$ARTIFACT_DIRECTORY"
-          artifact_name="$(npm pack --pack-destination "$ARTIFACT_DIRECTORY")"
-          echo "path=$ARTIFACT_DIRECTORY/$artifact_name" >> "$GITHUB_OUTPUT"
-
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "${{ steps.artifact.outputs.path }}" --generate-notes --title "$GITHUB_REF_NAME" --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" self-hosted-dist/* --generate-notes --title "$GITHUB_REF_NAME" --verify-tag
