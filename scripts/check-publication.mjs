@@ -337,7 +337,7 @@ export async function checkPublication() {
   if (referencesUrlOrigin(ciWorkflow, new URL(packageMetadata.homepage).origin)) {
     errors.push("CI hardcodes the upstream documentation deployment target")
   }
-  const productionJob = ciWorkflow.slice(ciWorkflow.indexOf("\n  production:"))
+  const productionJob = ciWorkflow.match(/\n  production:[\s\S]*?(?=\n  [\w-]+:|$)/u)?.[0] ?? ""
   for (const required of [
     "needs: verify", "needs.verify.result == 'success'", "github.ref_protected", "github.ref == 'refs/heads/main'",
     "vars.CLOUDFLARE_FLEET_DEPLOY_PRODUCTION == 'true'", "name: production", "group: fleet-production", "cancel-in-progress: false",
