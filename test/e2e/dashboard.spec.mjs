@@ -148,7 +148,7 @@ test("keeps dense matrix controls legible and self-explanatory", async ({ dashbo
     MINIMUM_VISIBLE_FONT_SIZE,
   )
   expect(undersized).toEqual([])
-  expect(await page.evaluate(
+  await expect.poll(() => page.evaluate(
     () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
   )).toBe(true)
 })
