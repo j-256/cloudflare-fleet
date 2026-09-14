@@ -22,6 +22,7 @@ export const DOCUMENTATION_SOURCE_PATHS = Object.freeze([
   "fixtures/observability-console-missing-outcome.json",
   "getting-started.html",
   "index.html",
+  "robots.txt",
   "screenshots/adoption-review.png",
   "screenshots/alignment-blocked.png",
   "screenshots/cover.png",
@@ -32,6 +33,7 @@ export const DOCUMENTATION_SOURCE_PATHS = Object.freeze([
   "screenshots/reviewed-write.png",
   "screenshots/worker-diagnostics.png",
   "security.html",
+  "sitemap.xml",
   "styles.css",
 ])
 
