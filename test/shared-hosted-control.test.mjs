@@ -244,7 +244,9 @@ test("MCP signed approval reaches hosted D1 and includes complete state and inte
   const recovered = await mcp.callTool({ name: "apply_activity_recovery", arguments: { ...recoveryInput, planDigest: recoveryPlan.structuredContent.planSet.digest } })
   assert.equal(recovered.isError, undefined)
   assert.equal(recovered.structuredContent.outcome, "unknown")
-  assert.match(reviews[1], /does not retry, reverse, or verify/)
+  const recoveryReview = Object.values(JSON.parse(reviews[1]).properties)
+    .map((field) => field.description).join("\n").replace(/\s+/gu, " ")
+  assert.match(recoveryReview, /does not retry, reverse, or verify/)
   assert.equal((await remote.listActivity()).entries[0].status, "write-failed")
 })
 
