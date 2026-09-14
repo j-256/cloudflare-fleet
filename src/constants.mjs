@@ -2,6 +2,13 @@ export const API_BASE_URL = "https://api.cloudflare.com/client/v4/"
 export const DEFAULT_CONCURRENCY = 32
 export const DEFAULT_PAGE_SIZE = 100
 export const ZONE_PAGE_SIZE = 50
+export const INVENTORY_READ_REASON = Object.freeze({
+  PAGE_LIMIT: "inventory-page-limit",
+  ITEM_LIMIT: "inventory-item-limit",
+  STALLED: "inventory-pagination-stalled",
+  PAGE_FAILED: "inventory-page-failed",
+  INVALID_PAGE: "inventory-invalid-page",
+})
 
 export const HTTP_METHOD = Object.freeze({
   DELETE: "DELETE",

@@ -6,6 +6,7 @@ import {
 import { normalizeAlignmentSelector, normalizeAlignmentSelectors } from "./alignment-service.mjs"
 import { runWorkerCommand, WORKER_COMMANDS, WORKER_READ_COMMANDS } from "./worker-command.mjs"
 import { FleetCommandError } from "./command-diagnostics.mjs"
+import { retrievalInputSchemas } from "./retrieval-schemas.mjs"
 
 export const FLEET_COMMAND_VERSION = 1
 export const FLEET_COMMAND_TIMEOUT_MS = 90000
@@ -15,6 +16,7 @@ const selector = z.union([
   z.strictObject({ category: identifierSchema, key: identifierSchema, phase: z.string().max(256).optional(), zoneIds: z.array(identifierSchema).min(1).max(100).optional() }),
 ])
 const schemas = {
+  ...Object.fromEntries(Object.entries(retrievalInputSchemas).map(([kind, schema]) => [`retrieval-${kind}`, schema])),
   status: empty,
   "intent-get": empty,
   "intent-plan": z.strictObject({ document: fleetIntentDocumentSchema }),
@@ -100,6 +102,7 @@ export async function runFleetServiceCommand(service, value, options = {}) {
 }
 
 async function dispatchFleetServiceCommand(service, command, accountId, input, context, options) {
+  if (command.startsWith("retrieval-")) return service.retrieve(command.slice("retrieval-".length), input, context)
   if (command.startsWith("worker-")) return runWorkerCommand(service.workers, command.slice(7), input, { ...context, readOnly: options.readOnly })
   switch (command) {
     case "status": return { ...(await service.status()), schemaVersion: 1, status: "ok", accountId, backend: "hosted", commandVersion: FLEET_COMMAND_VERSION, readOnly: options.readOnly === true }

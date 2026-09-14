@@ -1,4 +1,7 @@
+import { INVENTORY_READ_REASON } from "./constants.mjs"
+
 const MAX_COVERAGE_FAILURES = 50
+const INVENTORY_READ_REASONS = new Set(Object.values(INVENTORY_READ_REASON))
 
 export function alignmentCoverage(inventory, requirement) {
   const failures = []
@@ -6,8 +9,10 @@ export function alignmentCoverage(inventory, requirement) {
   function failed(response, context) {
     failureCount += 1
     if (failures.length >= MAX_COVERAGE_FAILURES) return
+    const reasonCode = response?.error?.errors?.find((entry) => INVENTORY_READ_REASONS.has(entry.code))?.code
     failures.push({
       ...context,
+      ...(reasonCode ? { reasonCode } : {}),
       errorKind: response?.error?.aborted
         ? response.error.abortKind === "timeout" ? "timeout" : "cancelled"
         : response?.error ? "read-failed" : "not-read",

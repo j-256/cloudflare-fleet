@@ -15,6 +15,7 @@ import releaseIdentity from "../../release-identity.json" with { type: "json" }
 import {
   readHostedFleetIntent, persistHostedFleetIntent, readHostedOperationActivity,
   appendHostedOperationActivity, finalizeHostedOperationActivity,
+  queryHostedOperationActivity, getHostedOperationActivity,
 } from "./d1-store.mjs"
 const UPSTREAM_TIMEOUT_MS = 45000
 
@@ -72,6 +73,8 @@ export function createHostedFleetService(env, options = {}) {
     readState,
     readPolicy: async () => policy,
     readIntent: () => readHostedFleetIntent(db, accountId),
+    queryActivity: (query) => queryHostedOperationActivity(db, accountId, query),
+    getActivity: (id) => getHostedOperationActivity(db, accountId, id),
     prepareIntentChange: (account, current, document, context) => {
       if (document.revision !== current.revision) throw new AlignmentPlanChangedError(null, null)
       return prepareFleetIntentChange(account, current, document, context)

@@ -151,6 +151,11 @@
         </article>
       </div>
       <div class="callout">
+        <strong>Retrieval shares comparison and intent semantics</strong>
+        <p>Local and hosted CLI/MCP reads use one retrieval service. Activity summaries are filtered and paginated in D1 before transfer; standalone files are projected after loading. Exact resource discovery reads one zone and family, with detail endpoints for known IDs. Facet inspection reads the selected category across account zones so policy precedence and uniqueness retain their full context, then projects only the requested facet and zone. Observed values, policy composition, acknowledgement validity, and capability labels reuse the dashboard modules.</p>
+        <p>Pages bind their query and account to a stored revision or observed-content digest. Responses declare freshness, requested scope, incomplete coverage, and value truncation. They are live reads rather than retained snapshots; a changed revision requires restarting pagination. Collection pagination follows provider metadata and fails closed when it stalls or exceeds its bounds. Discovery cannot supply a cached substitute for the fresh planning and verification required by writes.</p>
+      </div>
+      <div class="callout">
         <strong>Throttle-aware reads</strong>
         <p>Cloudflare GET requests honor Retry-After after HTTP 429 responses. Both dashboard proxies preserve the upstream delay. Concurrent reads through the same API client recheck the shared cooldown before dispatch, so another response can extend a wait; cancellation stops waiting reads before another request. CLI and MCP reads use the same bounded retry behavior. An exhausted throttle aborts inventory collection instead of becoming an ordinary coverage gap, while mutation requests are never automatically retried.</p>
       </div>

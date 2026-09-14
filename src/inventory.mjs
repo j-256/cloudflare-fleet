@@ -9,6 +9,7 @@ import {
   serializeApiError,
 } from "./api.mjs"
 import { stableString } from "./normalize.mjs"
+import { readInventoryPages } from "./inventory-pagination.mjs"
 
 async function runPool(tasks, worker, concurrency, onProgress) {
   let cursor = 0
@@ -46,7 +47,7 @@ function errorMatchesEmptyResult(error, emptyErrorCodes = []) {
 
 async function readSurface(api, path, signal, options = {}) {
   try {
-    const response = await api.request(path, { signal })
+    const response = await readInventoryPages(api, path, signal)
     return {
       ok: true,
       result: response.result,

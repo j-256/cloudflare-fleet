@@ -209,7 +209,8 @@ test("unified CLI redacts credentials from runtime diagnostics", async () => {
       CLOUDFLARE_API_TOKEN: secret,
     },
     service: {
-      async listActivity() {
+      async retrieve(kind) {
+        assert.equal(kind, "activity-list")
         throw new Error(`Request failed with ${secret}`)
       },
     },

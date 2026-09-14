@@ -1,3 +1,4 @@
+import { createFleetRetrievalService } from "./retrieval.mjs"
 import {
   appendOperationActivity,
   FleetIntentRevisionConflictError,
@@ -274,6 +275,12 @@ export function createFleetService(options) {
     ? options.baselineInventoryTtlMs
     : BASELINE_INVENTORY_TTL_MS
   const now = options.now || Date.now
+  const retrieve = createFleetRetrievalService({
+    accountId, api, now, loadInventory: dependencies.loadInventory,
+    readActivity: () => dependencies.readActivity(stateFile, accountId),
+    readIntent: () => dependencies.readIntent(stateFile, accountId),
+    queryActivity: options.queryActivity, getActivity: options.getActivity,
+  })
   const workers = createWorkerService({
     api,
     now,
@@ -943,6 +950,7 @@ export function createFleetService(options) {
 
   return Object.freeze({
     accountId,
+    retrieve,
     workers,
     applyActivityUndo,
     applyAdoption,

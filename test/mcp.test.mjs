@@ -94,6 +94,13 @@ const TOOL_NAMES = Object.freeze([
   "list_activity",
   "plan_activity_undo",
   "apply_activity_undo",
+  "get_activity",
+  "list_fleet_policies",
+  "get_fleet_policy",
+  "list_zones",
+  "list_resources",
+  "list_facets",
+  "inspect_facet",
 ])
 
 function reviewedPlan(request, overrides = {}) {
@@ -415,16 +422,18 @@ function serviceFixture(overrides = {}) {
         status: "ok",
       }
     },
-    async listActivity() {
+    async retrieve(kind, query) {
+      assert.equal(kind, "activity-list")
       calls.listActivity += 1
       if (overrides.activityError) throw overrides.activityError
       return {
         accountId: "account-one",
-        entries: [],
-        revision: "",
+        items: [], total: 0, returned: 0, limit: query.limit,
+        nextCursor: null, pageLimited: false, valueTruncated: false,
+        freshness: { source: "stored", readAt: "2026-09-14T00:00:00Z", revision: "", storedAt: null },
+        coverage: { complete: true, failureCount: 0, failures: [], truncated: false },
         schemaVersion: 1,
         status: "ok",
-        updatedAt: null,
       }
     },
     async listAdoptionCandidates() {

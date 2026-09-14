@@ -148,6 +148,16 @@ cloudflare-fleet adoption list --lens gaps --format json</code></pre>
     <section class="section prose" aria-labelledby="mcp-heading">
       <h2 id="mcp-heading">Connect a trusted MCP client</h2>
       <p>The installed <code>cloudflare-fleet mcp</code> command is a stdio server with no network listener and no arbitrary Cloudflare API passthrough. Its first diagnostic tool, <code>get_runtime_status</code>, can explain missing setup before an agent attempts fleet work. <code>describe_zone_alias_policy</code> and <code>describe_hostname_scoped_rate_limit_policy</code> return the same typed contracts and reusable values as the CLI. <code>list_adoption_candidates</code>, <code>plan_fleet_adoption</code>, and <code>apply_fleet_adoption</code> surface coverage gaps and persist reviewed governance to fleet intent without writing Cloudflare.</p>
+      <p>Resolve exact identifiers with <code>list_zones</code> and <code>list_resources</code>, or discover normalized comparison keys with <code>list_facets</code>. Then call <code>inspect_facet</code> to see observed values beside effective policies, overrides, conflicts, acknowledgements, and supported actions. The static <code>fleet://catalog/retrieval</code> resource lists the supported categories and resource kinds. These reads also have CLI equivalents:</p>
+      <pre><code>cloudflare-fleet zone list --name example.com --format json
+cloudflare-fleet resource list --kind dns-record --zone-id ZONE_ID --format json
+cloudflare-fleet facet list --category "Zone settings" --format json
+cloudflare-fleet facet inspect --category "Zone settings" --key always_use_https --zone-id ZONE_ID --format json
+cloudflare-fleet activity list --status verification-failed --limit 5 --format json
+cloudflare-fleet activity get --id ACTIVITY_ID --path plans --path 0 --format json
+cloudflare-fleet intent list --zone-id ZONE_ID --format json
+cloudflare-fleet intent get --id POLICY_ID --format json</code></pre>
+      <p>Lists return compact, bounded <code>items</code> pages. Continue with <code>nextCursor</code> and the original filters; restart if the underlying revision changes. <code>get_activity</code> and <code>get_fleet_policy</code> provide stored detail, while <code>view: "full"</code> adds bounded detail to list results. Large values carry an explicit truncation flag, digest, preview, and child keys for focused traversal. Complete stored exports remain available through <code>get_fleet_intent</code> and <code>get_fleet_state</code>. Check coverage and freshness before drawing conclusions: an incomplete read is unknown, and a recorded successful write does not prove present state. See <code>cloudflare-fleet help retrieval</code> for filters and bounds.</p>
 
       <h3>Codex</h3>
       <p>Add the server to <code>~/.codex/config.toml</code> and explicitly forward the credential variables from the environment that launches Codex.</p>
