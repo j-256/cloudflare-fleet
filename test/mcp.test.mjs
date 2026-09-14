@@ -720,7 +720,10 @@ function approvedElicitation(request) {
   return {
     action: "accept",
     content: Object.fromEntries(
-      request.params.requestedSchema.required.map((key) => [key, "approve"]),
+      request.params.requestedSchema.required.map((key) => [
+        key,
+        request.params.requestedSchema.properties[key].oneOf.at(-1).const,
+      ]),
     ),
   }
 }
@@ -1149,17 +1152,17 @@ test("MCP batch apply elicits one combined review and fresh apply", async (conte
   }])
   const review = elicitationReviewText(request)
   assert.match(request.params.message, /alignment batch/)
-  assert.match(request.params.message, /Scopes: 2/)
+  assert.match(review, /Scopes: 2/)
   assert.match(review, /Enable Always Use HTTPS/)
   assert.match(review, /Enable Early Hints/)
   assert.match(review, /settings\/always_use_https/)
   assert.match(review, /settings\/early_hints/)
   assert.deepEqual(
     request.params.requestedSchema.required,
-    ["review_1"],
+    ["review_1", "review_2"],
   )
   assert.equal(
-    request.params.requestedSchema.properties.review_1.oneOf[1].title,
+    request.params.requestedSchema.properties.review_2.oneOf[1].title,
     "Approve entire batch",
   )
 })
@@ -1222,16 +1225,16 @@ test("MCP direct change batch plans and applies through one complete review", as
   }])
   assert.equal(result.structuredContent.status, "verified")
   assert.match(request.params.message, /Review bounded fleet change batch/)
-  assert.match(request.params.message, /Changes: 2/)
-  assert.match(request.params.message, /Operations: 2/)
-  assert.deepEqual(request.params.requestedSchema.required, ["review_1"])
+  assert.deepEqual(request.params.requestedSchema.required, ["review_1", "review_2"])
   const review = elicitationReviewText(request)
+  assert.match(review, /Changes: 2/)
+  assert.match(review, /Operations: 2/)
   assert.match(review, /Enable Always Use HTTPS/)
   assert.match(review, /settings\/always_use_https/)
   assert.match(review, /Enable Early Hints/)
   assert.match(review, /settings\/early_hints/)
   assert.deepEqual(
-    request.params.requestedSchema.properties.review_1.oneOf,
+    request.params.requestedSchema.properties.review_2.oneOf,
     [
       { const: "decline", title: "Do not apply" },
       { const: "approve", title: "Approve entire batch" },
@@ -1281,6 +1284,100 @@ test("MCP direct change batch refuses a changed plan before approval", async (co
   assert.equal(elicitations, 0)
   assert.equal(calls.applyChanges.length, 0)
 })
+
+for (const toolName of ["apply_alignments", "apply_fleet_changes"]) {
+  test(`${toolName} requires every review page and a separate final approval`, async (context) => {
+    const changes = Array.from({ length: 8 }, (_value, index) => ({
+      desired: "on",
+      kind: "zone-setting-update",
+      settingId: `setting_${index}`,
+      zoneId: "zone-one",
+    }))
+    const preview = changes.map((change, index) => ({
+      body: { value: change.desired },
+      currentValue: { value: "off" },
+      label: `Enable setting ${index}`,
+      method: "PATCH",
+      path: `zones/${change.zoneId}/settings/${change.settingId}`,
+      zoneId: change.zoneId,
+      zoneName: "one.example",
+    }))
+    const base = toolName === "apply_alignments" ? plannedAlignmentBatch() : plannedChangeBatch()
+    const plan = {
+      ...base,
+      planSet: {
+        ...base.planSet,
+        plans: [{ operations: preview, zoneId: "zone-one", zoneName: "one.example" }],
+        preview,
+      },
+    }
+    const batchAlignment = toolName === "apply_alignments"
+    const input = batchAlignment
+      ? { selectors: BATCH_SELECTORS }
+      : { changes, planDigest: DIGEST }
+    for (const scenario of [
+      "approve",
+      "cancel",
+      "missing-middle",
+      "missing-final",
+      "approve-as-review",
+      "review-as-approval",
+      "decline-middle",
+      "decline-final",
+      "extra-field",
+      "old-single-decision",
+    ]) {
+      await context.test(scenario, async (subcontext) => {
+        let elicitations = 0
+        const { calls, client } = await connectedFixture(subcontext, {
+          serviceOverrides: batchAlignment ? { planBatchResult: plan } : { planChangesResult: plan },
+          elicitationHandler: async (request) => {
+            elicitations += 1
+            assert.equal(calls.applyBatch.length + calls.applyChanges.length, 0)
+            const keys = request.params.requestedSchema.required
+            assert.ok(keys.length > 2)
+            const middle = keys[1]
+            const final = keys.at(-1)
+            const fields = request.params.requestedSchema.properties
+            assert.equal(fields[final].oneOf.at(-1).const, "approve")
+            for (const key of keys.slice(0, -1)) {
+              assert.deepEqual(fields[key].oneOf.map((option) => option.const), ["decline", "reviewed"])
+            }
+            const text = elicitationReviewText(request)
+            for (let index = 0; index < changes.length; index += 1) {
+              assert.ok(text.includes(`Enable setting ${index}`))
+              assert.ok(text.includes(`settings/setting_${index}`))
+            }
+            const response = approvedElicitation(request)
+            if (scenario === "cancel") return { action: "cancel" }
+            if (scenario === "missing-middle") delete response.content[middle]
+            if (scenario === "missing-final") delete response.content[final]
+            if (scenario === "approve-as-review") response.content[middle] = "approve"
+            if (scenario === "review-as-approval") response.content[final] = "reviewed"
+            if (scenario === "decline-middle") response.content[middle] = "decline"
+            if (scenario === "decline-final") response.content[final] = "decline"
+            if (scenario === "extra-field") response.content.unrequested = "approve"
+            if (scenario === "old-single-decision") response.content = { review_1: "approve" }
+            return response
+          },
+        })
+        const result = await client.callTool({ name: toolName, arguments: input })
+        assert.equal(elicitations, 1)
+        const writes = batchAlignment ? calls.applyBatch : calls.applyChanges
+        if (scenario === "approve") {
+          assert.equal(result.structuredContent.status, "verified")
+          assert.deepEqual(writes, [batchAlignment
+            ? { selectors: NORMALIZED_BATCH_SELECTORS, digest: DIGEST }
+            : { changes, digest: DIGEST }])
+        } else {
+          const declined = scenario === "cancel" || scenario.startsWith("decline-")
+          assert.equal(result.structuredContent.status, declined ? "confirmation-declined" : "confirmation-invalid")
+          assert.equal(writes.length, 0)
+        }
+      })
+    }
+  })
+}
 
 test("MCP reviewed mutation tools bind intent, direct changes, and undo to signed confirmation", async (context) => {
   const requests = []

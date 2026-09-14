@@ -5,18 +5,21 @@ import { stableString } from "./normalize.mjs"
 export const CONFIRMATION_DECISION = Object.freeze({
   APPROVE: "approve",
   DECLINE: "decline",
+  REVIEWED: "reviewed",
 })
 export const CONFIRMATION_APPROVAL_MODE = Object.freeze({
   BATCH: "batch",
   PER_ITEM: "per-item",
 })
 
-const CONFIRMATION_LINE_WIDTH = 76
-// One operation should be one approval; with large values summarized, an
-// operation's line count is bounded by its field count rather than their
-// sizes, so this budget keeps a normal operation on a single review field
-// while still paginating a pathologically field-heavy operation
-const CONFIRMATION_LINES_PER_FIELD = 40
+export const CONFIRMATION_LINE_WIDTH = 76
+// Reference layout: 80 columns by 24 rows, reserving eight rows for
+// selection, field navigation, validation and padding in the Codex TUI
+// MCP does not report viewport size, so smaller windows may need resizing
+export const CONFIRMATION_PROMPT_LINE_LIMIT = 16
+const FIELD_HEADING_LINES = 2
+const MAX_CONTINUATION_INDENT = 8
+const NON_ASCII_CELL_BUDGET = 2
 const STRING_CHANGE_CONTEXT_LENGTH = 40
 const STRING_CHANGE_INLINE_LENGTH = 120
 // A leaf value longer than this renders as a summary (length, digest, head)
@@ -238,15 +241,30 @@ function formatChangeEntry(entry) {
   ]
 }
 
+function lineBreakOffset(line) {
+  let width = 0
+  let offset = 0
+  for (const point of line) {
+    // Conservatively reserve two cells for non-ASCII terminal glyphs
+    const cells = point.codePointAt(0) <= 0x7f ? 1 : NON_ASCII_CELL_BUDGET
+    if (width + cells > CONFIRMATION_LINE_WIDTH) break
+    width += cells
+    offset += point.length
+  }
+  return offset
+}
+
 function wrapLine(line) {
-  if (line.length <= CONFIRMATION_LINE_WIDTH) return [line]
-  const indentation = line.match(/^\s*/u)?.[0] || ""
+  if (lineBreakOffset(line) === line.length) return [line]
+  const indentation = (line.match(/^\s*/u)?.[0] || "")
+    .slice(0, MAX_CONTINUATION_INDENT)
   const continuation = `${indentation}  `
   const lines = []
   let remaining = line
-  while (remaining.length > CONFIRMATION_LINE_WIDTH) {
-    let splitAt = remaining.lastIndexOf(" ", CONFIRMATION_LINE_WIDTH)
-    if (splitAt <= continuation.length) splitAt = CONFIRMATION_LINE_WIDTH
+  while (lineBreakOffset(remaining) < remaining.length) {
+    const boundary = lineBreakOffset(remaining)
+    let splitAt = remaining.lastIndexOf(" ", boundary)
+    if (splitAt <= continuation.length) splitAt = boundary
     lines.push(remaining.slice(0, splitAt).trimEnd())
     remaining = `${continuation}${remaining.slice(splitAt).trimStart()}`
   }
@@ -255,7 +273,10 @@ function wrapLine(line) {
 }
 
 function wrapLines(lines) {
-  return lines.flatMap(wrapLine)
+  return lines.flatMap((line) => String(line).split(/\r?\n/u)
+    .flatMap((part) => wrapLine(part.replace(/[\u0000-\u001f\u007f-\u009f]/gu, (point) => (
+      `\\u${point.codePointAt(0).toString(16).padStart(4, "0")}`
+    )))))
 }
 
 function snapshotLines(label, value) {
@@ -402,28 +423,45 @@ export function confirmationFieldKeys(count) {
   ))
 }
 
-function fieldPages(reviewItems) {
-  return reviewItems.flatMap((item) => {
-    const pageCount = Math.max(
-      1,
-      Math.ceil(item.lines.length / CONFIRMATION_LINES_PER_FIELD),
-    )
-    const linesPerPage = Math.ceil(item.lines.length / pageCount)
-    return Array.from({ length: pageCount }, (_value, pageIndex) => ({
-      description: item.lines
-        .slice(
-          pageIndex * linesPerPage,
-          (pageIndex + 1) * linesPerPage,
-        )
-        .join("\n"),
-      title: pageCount === 1
-        ? item.title
-        : `${item.title} (${pageIndex + 1}/${pageCount})`,
-    }))
-  })
+function fieldPages(reviewItems, linesPerPage, batchApproval) {
+  const pages = []
+  for (const [index, item] of reviewItems.entries()) {
+    const titleLines = wrapLines([item.title])
+    const bodyLines = wrapLines(item.lines)
+    if (!batchApproval && titleLines.length === 1 && bodyLines.length <= linesPerPage) {
+      pages.push({
+        firstItem: index + 1,
+        lastItem: index + 1,
+        lines: bodyLines,
+        title: titleLines[0],
+      })
+      continue
+    }
+    const lines = [...titleLines, ...bodyLines]
+    const previous = pages.at(-1)
+    if (batchApproval && previous
+      && previous.lines.length + lines.length <= linesPerPage) {
+      previous.lines.push(...lines)
+      previous.lastItem = index + 1
+      continue
+    }
+    for (let offset = 0; offset < lines.length; offset += linesPerPage) {
+      pages.push({
+        firstItem: index + 1,
+        lastItem: index + 1,
+        lines: lines.slice(offset, offset + linesPerPage),
+      })
+    }
+  }
+  return pages.map((page, index) => ({
+    description: page.lines.join("\n"),
+    title: page.title || `Review ${index + 1}/${pages.length}: ${page.firstItem === page.lastItem
+      ? `item ${page.firstItem}`
+      : `items ${page.firstItem}-${page.lastItem}`}`,
+  }))
 }
 
-function fieldSchema(field, approveTitle) {
+function fieldSchema(field, approveTitle, decision = CONFIRMATION_DECISION.APPROVE) {
   return {
     description: field.description,
     oneOf: [
@@ -432,7 +470,7 @@ function fieldSchema(field, approveTitle) {
         title: "Do not apply",
       },
       {
-        const: CONFIRMATION_DECISION.APPROVE,
+        const: decision,
         title: approveTitle,
       },
     ],
@@ -441,48 +479,59 @@ function fieldSchema(field, approveTitle) {
   }
 }
 
-function batchReviewField(reviewItems) {
-  const count = reviewItems.length
-  return {
-    description: [
-      `One decision approves all ${count} operation${count === 1 ? "" : "s"} below as the displayed digest-bound batch.`,
-      "",
-      ...reviewItems.flatMap((item, index) => [
-        item.title,
-        ...item.lines,
-        ...(index === reviewItems.length - 1 ? [] : [""]),
-      ]),
-    ].join("\n"),
-    title: `Review entire batch (${count} operation${count === 1 ? "" : "s"})`,
-  }
-}
-
 export function buildConfirmationForm(options) {
   const batchApproval = options.approvalMode
     === CONFIRMATION_APPROVAL_MODE.BATCH
-  const fields = batchApproval
-    ? [batchReviewField(options.reviewItems)]
-    : fieldPages(options.reviewItems)
-  if (fields.length === 0) {
+  if (options.reviewItems.length === 0) {
     throw new TypeError("A confirmation form requires at least one review item")
+  }
+  const planLines = wrapLines([
+    `Plan ${options.planSet.digest}`,
+    `Validated: ${options.planSet.validatedAt}`,
+    ...options.summaryLines,
+  ])
+  const messageLines = wrapLines([
+    options.heading,
+    `Account: ${options.accountId}`,
+    ...(batchApproval ? [] : planLines),
+  ])
+  const linesPerPage = CONFIRMATION_PROMPT_LINE_LIMIT
+    - messageLines.length - FIELD_HEADING_LINES
+  if (linesPerPage < 1) {
+    throw new RangeError("Confirmation heading exceeds the review budget; use the CLI or dashboard to review the complete plan")
+  }
+  const fields = fieldPages(options.reviewItems, linesPerPage, batchApproval)
+  if (batchApproval) {
+    const count = options.reviewItems.length
+    const description = wrapLines([
+      `Apply all ${count} reviewed operation${count === 1 ? "" : "s"} as one batch.`,
+      "Every review page must be marked reviewed.",
+      ...planLines,
+    ])
+    if (description.length > linesPerPage) {
+      throw new RangeError("Batch confirmation summary exceeds the review budget; use the CLI or dashboard to review the complete plan")
+    }
+    fields.push({
+      description: description.join("\n"),
+      title: "Final batch decision",
+    })
   }
   const keys = confirmationFieldKeys(fields.length)
   const properties = Object.fromEntries(fields.map((field, index) => [
     keys[index],
     fieldSchema(
       field,
-      batchApproval ? "Approve entire batch" : "Approve this change",
+      batchApproval
+        ? index === fields.length - 1 ? "Approve entire batch" : "Reviewed / Continue"
+        : "Approve this change",
+      batchApproval && index < fields.length - 1
+        ? CONFIRMATION_DECISION.REVIEWED
+        : CONFIRMATION_DECISION.APPROVE,
     ),
   ]))
   return {
     fieldCount: fields.length,
-    message: [
-      options.heading,
-      `Account: ${options.accountId}`,
-      `Plan: ${options.planSet.digest}`,
-      `Validated: ${options.planSet.validatedAt}`,
-      ...options.summaryLines,
-    ].join("\n"),
+    message: messageLines.join("\n"),
     requestedSchema: {
       properties,
       required: keys,

@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   buildConfirmationForm,
   CONFIRMATION_APPROVAL_MODE,
+  CONFIRMATION_PROMPT_LINE_LIMIT,
   confirmationFieldKeys,
   operationReviewItems,
 } from "../src/mcp-confirmation.mjs"
@@ -41,7 +42,7 @@ function confirmationForm(operations, options = {}) {
     heading: "Review bounded fleet change",
     planSet,
     reviewItems: operationReviewItems(operations),
-    summaryLines: [`Operations: ${operations.length}`],
+    summaryLines: operations.length > 1 ? [`Operations: ${operations.length}`] : [],
   })
 }
 
@@ -51,6 +52,23 @@ function visibleContentLineCount(form, key) {
     + 2
     + field.description.split("\n").length
     + field.oneOf.length
+}
+
+function assertReadableForm(form) {
+  for (const key of form.requestedSchema.required) {
+    const field = form.requestedSchema.properties[key]
+    assert.ok(visibleContentLineCount(form, key) + 6 <= 24, key)
+    assert.ok(
+      [form.message, field.title, field.description].join("\n")
+        .split("\n").every((line) => line.length <= 76),
+      key,
+    )
+  }
+}
+
+function reviewText(form) {
+  return Object.values(form.requestedSchema.properties)
+    .map((field) => field.description).join("\n")
 }
 
 test("MCP confirmation reduces a long ruleset update to its changed leaf", () => {
@@ -116,7 +134,6 @@ test("MCP confirmation keeps a DNS deletion readable on one review field", () =>
   const field = form.requestedSchema.properties.review_1
   assert.equal(form.fieldCount, 1)
   assert.equal(field.title, "1. Delete CNAME repos-live.j-256.dev.fad.bz")
-  assert.equal(field.description.split("\n").length, 10)
   assert.match(field.description, /API: DELETE dns_records\/0030d512/)
   assert.match(field.description, /content: .*cfargotunnel\.com/)
   assert.match(field.description, /settings\.flatten_cname: false/)
@@ -156,7 +173,7 @@ test("MCP confirmation summarizes an oversized operation value onto one review f
   assert.ok(field.description.split("\n").every((line) => line.length <= 76))
 })
 
-test("MCP confirmation keeps a shared-WAF entrypoint create on one field with the rule expression summarized", () => {
+test("MCP confirmation pages a shared-WAF entrypoint while retaining its summarized expression", () => {
   const antiScanner = "( ( lower(http.request.uri.path) contains \"/.\" )"
     + " or lower(http.request.uri.path) contains \".php\"".repeat(80)
     + ")"
@@ -189,19 +206,19 @@ test("MCP confirmation keeps a shared-WAF entrypoint create on one field with th
     zoneName: "j256.dev",
   }])
 
-  const field = form.requestedSchema.properties.review_1
-  assert.equal(form.fieldCount, 1)
-  assert.match(field.description, /rules\[0\]\.action: "skip"/)
+  const description = reviewText(form)
+  assert.ok(form.fieldCount > 1)
+  assertReadableForm(form)
+  assert.match(description, /rules\[0\]\.action: "skip"/)
   assert.match(
-    field.description,
+    description,
     /rules\[1\]\.description: "\[fleet\] cf-waf-deploy: anti-scanner block"/,
   )
   assert.match(
-    field.description,
+    description,
     /rules\[1\]\.expression: <large string, \d+ chars, sha256:[a-f0-9]{12}/,
   )
-  assert.doesNotMatch(field.description, /\.php/)
-  assert.ok(field.description.split("\n").every((line) => line.length <= 76))
+  assert.doesNotMatch(description, /\.php/)
 })
 
 test("MCP confirmation paginates an operation with many small leaves", () => {
@@ -222,8 +239,10 @@ test("MCP confirmation paginates an operation with many small leaves", () => {
 
   assert.ok(form.fieldCount > 1)
   assert.equal(form.requestedSchema.required.length, form.fieldCount)
-  for (const field of Object.values(form.requestedSchema.properties)) {
-    assert.ok(field.description.split("\n").length <= 40)
+  assertReadableForm(form)
+  const description = reviewText(form)
+  for (const [key, value] of Object.entries(body)) {
+    assert.ok(description.includes(`${key}: "${value}"`))
   }
 })
 
@@ -249,19 +268,105 @@ test("MCP batch confirmation keeps every operation visible behind one decision",
     },
   ], { approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH })
 
-  assert.equal(form.fieldCount, 1)
-  assert.deepEqual(form.requestedSchema.required, ["review_1"])
+  assert.equal(form.fieldCount, 2)
+  assert.deepEqual(form.requestedSchema.required, ["review_1", "review_2"])
   const field = form.requestedSchema.properties.review_1
-  assert.equal(field.title, "Review entire batch (2 operations)")
-  assert.match(field.description, /One decision approves all 2 operations/)
   assert.match(field.description, /1\. Enable HTTPS/)
   assert.match(field.description, /settings\/always_use_https/)
   assert.match(field.description, /2\. Enable Early Hints/)
   assert.match(field.description, /settings\/early_hints/)
   assert.deepEqual(field.oneOf, [
     { const: "decline", title: "Do not apply" },
+    { const: "reviewed", title: "Reviewed / Continue" },
+  ])
+  const final = form.requestedSchema.properties.review_2
+  assert.match(final.description, /Apply all 2 reviewed operations/)
+  assert.ok(final.description.includes(DIGEST))
+  assert.deepEqual(final.oneOf, [
+    { const: "decline", title: "Do not apply" },
     { const: "approve", title: "Approve entire batch" },
   ])
+  assertReadableForm(form)
+})
+
+test("MCP batch review keeps an eight-operation plan reachable in bounded fields", () => {
+  const operations = Array.from({ length: 8 }, (_value, index) => ({
+    body: { enabled: false },
+    currentValue: { enabled: true },
+    label: `Disable rule ${index + 1}`,
+    method: "PATCH",
+    path: `zones/${ZONE_ID}/rulesets/${RULESET_ID}/rules/${String(index + 1).padStart(32, "0")}`,
+    zoneId: ZONE_ID,
+    zoneName: "example.com",
+  }))
+  const form = confirmationForm(operations, { approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH })
+  const fields = Object.values(form.requestedSchema.properties)
+  assert.ok(fields.length > 2)
+  assertReadableForm(form)
+  for (const field of fields.slice(0, -1)) {
+    assert.deepEqual(field.oneOf.map((option) => option.const), ["decline", "reviewed"])
+    assert.equal(field.default, undefined)
+  }
+  assert.deepEqual(fields.at(-1).oneOf.map((option) => option.const), ["decline", "approve"])
+  assert.equal(fields.at(-1).default, undefined)
+  const description = reviewText(form)
+  let previous = -1
+  for (let index = 1; index <= operations.length; index += 1) {
+    const offset = description.indexOf(`${index}. Disable rule ${index}`)
+    assert.ok(offset > previous)
+    assert.ok(description.includes(String(index).padStart(32, "0")))
+    previous = offset
+  }
+})
+
+test("MCP review pages long labels and bodies without dropping the last leaf", () => {
+  const form = confirmationForm([{
+    body: Object.fromEntries(Array.from({ length: 120 }, (_value, index) => [`field_${index}`, index])),
+    label: `Large ${"descriptive ".repeat(100)}rule`,
+    method: "POST",
+    path: `zones/${ZONE_ID}/rulesets`,
+    zoneId: ZONE_ID,
+    zoneName: "example.com",
+  }], { approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH })
+  assert.ok(form.fieldCount > 10)
+  assertReadableForm(form)
+  assert.match(reviewText(form), /field_119: 119/)
+  const keys = form.requestedSchema.required
+  assert.deepEqual(keys, [...keys].sort())
+  assert.equal(form.requestedSchema.properties[keys.at(-1)].title, "Final batch decision")
+})
+
+test("MCP confirmation rejects an empty batch and an unpageable heading", () => {
+  assert.throws(() => confirmationForm([], { approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH }), /at least one review item/)
+  assert.throws(() => buildConfirmationForm({
+    accountId: "account",
+    heading: "heading\n".repeat(CONFIRMATION_PROMPT_LINE_LIMIT),
+    planSet: { digest: DIGEST, validatedAt: "2026-09-14T00:00:00Z" },
+    reviewItems: [{ title: "Item", lines: ["value"] }],
+    summaryLines: [],
+  }), /use the CLI or dashboard/)
+})
+
+test("MCP review budgets wide text and escapes controls without splitting surrogate pairs", () => {
+  const form = buildConfirmationForm({
+    accountId: "account",
+    approvalMode: CONFIRMATION_APPROVAL_MODE.BATCH,
+    heading: "Review batch",
+    planSet: { digest: DIGEST, validatedAt: "2026-09-14T00:00:00Z" },
+    reviewItems: [{
+      title: `Wide ${"\u4e2d".repeat(80)}${"\u{1f680}".repeat(40)} label`,
+      lines: [`${" ".repeat(200)}last leaf\tvalue\u001b[31m`],
+    }],
+    summaryLines: [],
+  })
+  for (const field of Object.values(form.requestedSchema.properties)) {
+    for (const line of field.description.split("\n")) {
+      assert.ok(line.isWellFormed())
+      assert.ok(line.replace(/\u4e2d/gu, "xx").length <= 76)
+    }
+  }
+  assert.match(reviewText(form), /last leaf\\u0009value\\u001b\[31m/)
+  assertReadableForm(form)
 })
 
 test("MCP confirmation field keys retain review order past single digits", () => {
