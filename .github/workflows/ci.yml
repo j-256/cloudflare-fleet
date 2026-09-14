@@ -260,7 +260,7 @@ jobs:
       - name: Open an automatically merged cover pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          COVER_WORKFLOWS: ci.yml,codeql.yml
+          COVER_WORKFLOWS: ci.yml
         run: |
           set -eu
           gh auth setup-git --hostname github.com
