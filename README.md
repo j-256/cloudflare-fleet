@@ -297,6 +297,33 @@ Every Cloudflare apply repeats fresh scoped planning inside the exclusive write 
 
 The stable exit contract is documented by `cloudflare-fleet --help`: success is `0`, runtime failure is `1`, invalid usage is `2`, a missing dependency is `3`, blocked or attention-required outcomes are `4`, a changed plan is `5`, a write failure is `6`, and a verification failure is `7`.
 
+### Bounded retrieval
+
+Start with a small read, resolve exact identifiers, and inspect the relevant facet before planning a change. The CLI and MCP use the same retrieval service in local and hosted modes:
+
+| Operator question | CLI | MCP |
+| --- | --- | --- |
+| Which operations failed on this zone? | `activity list --zone-id ID --status write-failed` | `list_activity` |
+| What did one operation change? | `activity get --id ID` | `get_activity` |
+| Which stored policies target this group or zone? | `intent list --group-id ID` or `intent list --zone-id ID` | `list_fleet_policies` |
+| What does one policy require? | `intent get --id ID` | `get_fleet_policy` |
+| What is this zone's exact identifier? | `zone list --name example.com` | `list_zones` |
+| Which records or rules can I inspect? | `resource list --kind dns-record --zone-id ID` | `list_resources` |
+| What normalized facet key should I use? | `facet list --category "Zone settings"` | `list_facets` |
+| Why does this value agree or conflict with intent? | `facet inspect --category "Zone settings" --key always_use_https --zone-id ID` | `inspect_facet` |
+
+Use `cloudflare-fleet help retrieval` for all filters and short options. MCP clients can discover the static `fleet://catalog/retrieval` resource without credentials. It lists supported resource kinds, facet categories, and the workflow from discovery to planning. Resource discovery supports DNS records, zone settings, rulesets, zone/custom ruleset rules, and Email Routing rules; facet discovery covers the dashboard's comparison categories. Exact IDs, rule parent IDs, phases, and capability labels come from observed resources. Capability labels describe supported planners, not permission grants or a promise that a subsequent plan will be applicable.
+
+List responses use `items`, `total`, `returned`, `nextCursor`, `pageLimited`, and `valueTruncated`. Pages default to 20 items, accept up to 100, and stop before their item payload exceeds 128 KiB. Activity, policy, and resource lists default to `view: "summary"`; request `view: "full"` or CLI `--view full` for bounded details. Individual values larger than 32 KiB return `truncated: true`, a byte count, digest, preview, and bounded child keys instead of a partial value that resembles a complete one. Activity and policy detail accept `path` as exact object keys or array indexes; repeat CLI `--path`, for example `activity get --id ID --path plans --path 0 --path operations`. Exact resource reads also accept a path with an ID and full view. Complete stored documents remain available through `intent show` / `get_fleet_intent` and `state export` / `get_fleet_state`.
+
+Continue with `nextCursor` and the original filters, view, and limit. A cursor binds the account, query, and stored revision or observed-content digest. Changed state requires restarting without the cursor; pages are not a historical snapshot. Live pages reread their scope and do not use the write planner's baseline cache. Scope metadata identifies required zone and account surfaces, rule phases, zone count, and whether the listed zone IDs were truncated. `freshness` distinguishes live reads from stored state and gives read time and revision. `coverage.complete` describes only the requested scope. The CLI exits with attention status 4 for incomplete live coverage. An empty incomplete result does not establish absence; an incomplete facet inspection reports unknown observation and intent status, withholds action metadata, and retains bounded failure diagnostics and the hosted request ID.
+
+Resource reads restrict upstream work to one zone and one family after account membership discovery. An exact DNS record, setting, Email Routing rule, or ruleset ID uses its detail endpoint; `rulesetId` / `--ruleset-id` narrows rule discovery to one parent ruleset. Facet inspection reads the selected category's required surfaces across account zones because group precedence, uniqueness constraints, and composite facets need that context. It combines comparison values, inspection values, effective and overridden policies, conflicts, active or stale acknowledgements, and action identifiers. Its policy explanations are paginated. A stored policy-list zone filter selects declared group membership; use facet inspection to determine effective governance. An absent governed facet stays unresolved rather than silently disappearing from the explanation.
+
+Hosted activity lists filter and page in D1, projecting summaries before returning results. Detail lookup selects one record. Counts and JSON filters can still scan matching account history; smaller responses do not imply constant database work. Local reads load the entire state file before filtering. Collection reads follow provider pagination metadata and fail with incomplete coverage if pagination stalls or exceeds the bounded page/item limits. Additional pages and cross-zone facet reads still consume provider requests and the existing [hosted Free-plan budget](docs/deployment.html#free-plan-heading).
+
+**Activity response migration:** `cloudflare-fleet activity list` and MCP `list_activity` return paginated `items` summaries. Consumers of the older unbounded `entries` response should follow cursors and use detail lookup, or export the complete state when full history is required. The legacy hosted `activity-list` command and complete intent/state exports retain their shapes. Summaries preserve recorded outcome, execution progress, verification count, timestamps, undo linkage, and recorded inverse availability. A fresh undo plan must still verify live state before an inverse can be applied.
+
 The stdio MCP server gives compatible agents a narrower tool surface than a raw Cloudflare API proxy. It uses the selected local or hosted backend and is part of the same installed package:
 
 ```sh
@@ -349,7 +376,7 @@ For an explicit standalone profile, append `--state-file /absolute/path/state.js
 The server registers diagnostic, read, plan, and apply tools for fleet audit, complete intent persistence, single or batched intent alignment, coverage-gap adoption, single or batched bounded direct changes, activity inspection, and guarded undo. Plan tools expose the canonical request, digest, and ordered operations. Mutation tools show only changed leaves for comparable updates, summarize an oversized value to a length, digest, and head preview, place the negative decision first, authenticate short-lived method-bound confirmation state, and call the service's fresh apply path only after approval. Single-change tools retain per-review-field approval. Explicit `apply_alignments` and `apply_fleet_changes` batches display every compact operation review behind one all-or-nothing `Approve entire batch` decision. Tool results include typed structured content plus an equivalent serialized JSON text block for clients that have not adopted structured results. Tool-specific output schemas describe the meaningful result fields instead of one generic envelope.
 
 - Diagnose: `get_runtime_status`
-- Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, `list_adoption_candidates`, and `list_activity`
+- Read: `audit_fleet`, `describe_zone_alias_policy`, `describe_hostname_scoped_rate_limit_policy`, `get_fleet_intent`, `list_alignment_candidates`, `list_adoption_candidates`, `list_activity`, `get_activity`, `list_fleet_policies`, `get_fleet_policy`, `list_zones`, `list_resources`, `list_facets`, and `inspect_facet`
 - Plan: `plan_fleet_intent`, `plan_alignment`, `plan_fleet_adoption`, `plan_fleet_change`, `plan_fleet_changes`, and `plan_activity_undo`
 - Apply: `apply_fleet_intent`, `apply_alignment`, `apply_alignments`, `apply_fleet_adoption`, `apply_fleet_change`, `apply_fleet_changes`, and `apply_activity_undo`
 

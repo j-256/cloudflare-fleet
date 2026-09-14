@@ -73,6 +73,7 @@ export function createRemoteFleetService(options = {}) {
     let envelope
     try { envelope = JSON.parse(new TextDecoder().decode(bytes)) } catch { throw new Error("Hosted Fleet returned invalid JSON") }
     if (!response.ok || envelope.success !== true) {
+      if (response.status === 400 && name.startsWith("retrieval-")) throw new TypeError(envelope.errors?.[0]?.message || "Invalid Fleet retrieval query")
       if (envelope.error?.name === "AlignmentPlanChangedError") throw new AlignmentPlanChangedError(input.planDigest, envelope.error.actualDigest || null)
       const diagnostics = commandDiagnosticsSchema.safeParse(envelope.error?.diagnostics)
       if (envelope.error?.name === "FleetCommandError" && diagnostics.success) {
@@ -103,6 +104,7 @@ export function createRemoteFleetService(options = {}) {
     planChanges: (changes, context) => command("changes-plan", { changes }, context),
     applyChanges: (changes, planDigest, context) => command("changes-apply", { changes, planDigest }, context),
     listActivity: () => command("activity-list"),
+    retrieve: (kind, input, context) => command(`retrieval-${kind}`, input, context),
     planActivityUndo: (activityId, context) => command("undo-plan", { activityId }, context),
     applyActivityUndo: (activityId, planDigest, context) => command("undo-apply", { activityId, planDigest }, context),
     getState: (archiveId) => command("state-get", archiveId ? { archiveId } : {}),

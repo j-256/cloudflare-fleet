@@ -15,6 +15,8 @@ import {
 import {
   stableString,
 } from "../normalize.mjs"
+import { cursorOffset } from "../retrieval-values.mjs"
+import { parseRetrievalInput } from "../retrieval-schemas.mjs"
 
 const MAX_CACHE_RECORDS_PER_ACCOUNT = 8
 const INSERT_INITIAL_INTENT_SQL = `
@@ -243,6 +245,61 @@ export async function readHostedOperationActivity(db, accountId) {
     resultRows(metaResult)[0] || null,
     resultRows(entriesResult),
   )
+}
+
+const ACTIVITY_SUMMARY_SQL = `json_object(
+  'id', id, 'title', json_extract(payload_json, '$.title'), 'status', status,
+  'startedAt', started_at, 'completedAt', json_extract(payload_json, '$.completedAt'),
+  'validatedAt', json_extract(payload_json, '$.validatedAt'), 'undoOf', undo_of,
+  'execution', json_extract(payload_json, '$.execution'), 'error', json_extract(payload_json, '$.error'),
+  'verificationCount', json_array_length(payload_json, '$.verification'),
+  'plans', json((SELECT json_group_array(json_object(
+    'zoneId', json_extract(value, '$.zoneId'), 'zoneName', json_extract(value, '$.zoneName'),
+    'worker', json_extract(value, '$.worker')
+  )) FROM json_each(payload_json, '$.plans'))),
+  'inverse', json_object(
+    'available', json(CASE WHEN json_extract(payload_json, '$.inverse.available') = 1 THEN 'true' ELSE 'false' END),
+    'reason', json_extract(payload_json, '$.inverse.reason')
+  )
+)`
+
+export async function queryHostedOperationActivity(db, accountId, input) {
+  const query = parseRetrievalInput("activity-list", input)
+  await ensureHostedAccount(db, accountId)
+  const meta = await db.prepare(READ_ACTIVITY_META_SQL).bind(accountId).first()
+  if (!meta) throw new Error("Hosted operation activity is unavailable")
+  const { offset } = await cursorOffset(accountId, "activity-list", query, meta.revision)
+  const clauses = ["account_id = ?"]
+  const params = [accountId]
+  if (query.status) { clauses.push("status = ?"); params.push(query.status) }
+  if (query.zoneId) {
+    clauses.push("EXISTS (SELECT 1 FROM json_each(payload_json, '$.plans') WHERE json_extract(value, '$.zoneId') = ?)")
+    params.push(query.zoneId)
+  }
+  if (query.after) { clauses.push("julianday(started_at) > julianday(?)"); params.push(query.after) }
+  if (query.before) { clauses.push("julianday(started_at) < julianday(?)"); params.push(query.before) }
+  const where = clauses.join(" AND ")
+  const [snapshot, count, rows] = await db.batch([
+    db.prepare(READ_ACTIVITY_META_SQL).bind(accountId),
+    db.prepare(`SELECT COUNT(*) AS total FROM operation_activity WHERE ${where}`).bind(...params),
+    db.prepare(`SELECT ${query.view === "full" ? "payload_json" : ACTIVITY_SUMMARY_SQL} AS payload_json FROM operation_activity WHERE ${where} ORDER BY julianday(started_at) DESC, id COLLATE BINARY LIMIT ? OFFSET ?`).bind(...params, query.limit, offset),
+  ])
+  const current = resultRows(snapshot)[0]
+  if (current?.revision !== meta.revision) throw new TypeError("Activity changed during retrieval; restart without cursor")
+  return { revision: current.revision, updatedAt: current.updated_at, offset, total: resultRows(count)[0].total, entries: resultRows(rows).map((row) => parsedJson(row.payload_json, "Hosted activity result")) }
+}
+
+export async function getHostedOperationActivity(db, accountId, id) {
+  await ensureHostedAccount(db, accountId)
+  const [meta, entry] = await db.batch([
+    db.prepare(READ_ACTIVITY_META_SQL).bind(accountId),
+    db.prepare(READ_ACTIVITY_ENTRY_SQL).bind(accountId, id),
+  ])
+  const metadata = resultRows(meta)[0]
+  if (!metadata) throw new Error("Hosted operation activity is unavailable")
+  const entries = resultRows(entry).map((row) => parsedJson(row.payload_json, "Hosted activity entry"))
+  if (!entries.every(isOperationActivityEntry)) throw new Error("Hosted operation activity entry is invalid")
+  return { revision: metadata.revision, updatedAt: metadata.updated_at, entries }
 }
 
 function immutableActivityShape(entry) {

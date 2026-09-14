@@ -63,6 +63,7 @@ import { stableString } from "./normalize.mjs"
 import { redactDiagnostics } from "./command-diagnostics.mjs"
 import { OPERATION_ACTIVITY_STATUS } from "./operation-history.mjs"
 import { PACKAGE_VERSION } from "./package-metadata.mjs"
+import { FACET_CATEGORIES, RESOURCE_KINDS, retrievalInputSchemas, retrievalOutputSchemas } from "./retrieval-schemas.mjs"
 import { createProgressReporter } from "./progress.mjs"
 import { diagnoseFleetRuntime } from "./runtime-status.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
@@ -234,38 +235,6 @@ const changePreparationOutputSchema = z.looseObject({
   status: z.string(),
   title: z.string(),
 })
-const verificationGuardOutputSchema = z.looseObject({
-  canonical: z.string(),
-  summary: z.string(),
-  target: z.looseObject({
-    kind: z.string(),
-    zoneId: identifierSchema.optional(),
-    worker: identifierSchema.optional(),
-    accountId: identifierSchema.optional(),
-  }),
-  value: z.unknown(),
-})
-const activityEntryOutputSchema = z.looseObject({
-  completedAt: z.string().nullable(),
-  error: z.string().nullable(),
-  execution: z.looseObject({
-    completed: z.number().int().nonnegative(),
-    total: z.number().int().nonnegative(),
-  }).nullable(),
-  id: identifierSchema,
-  inverse: z.looseObject({
-    available: z.boolean(),
-    plans: z.array(operationPlanOutputSchema),
-    reason: z.string(),
-  }).nullable(),
-  plans: z.array(operationPlanOutputSchema),
-  startedAt: z.string(),
-  status: z.string(),
-  title: z.string(),
-  undoOf: identifierSchema.nullable(),
-  validatedAt: z.string(),
-  verification: z.array(verificationGuardOutputSchema),
-})
 const auditOutputSchema = z.union([
   z.looseObject({
     report: z.looseObject({
@@ -385,13 +354,6 @@ const adoptionCandidatesOutputSchema = z.union([
       presenceGaps: z.number().int(),
       valueGaps: z.number().int(),
     }),
-  }),
-  errorOutputSchema,
-])
-const activityOutputSchema = z.union([
-  accountOutputSchema.extend({
-    entries: z.array(activityEntryOutputSchema),
-    revision: z.string(),
   }),
   errorOutputSchema,
 ])
@@ -631,10 +593,6 @@ function applySummary(result) {
     return `${result.facet?.label || "Alignment"} is ${result.status}: ${result.reason}`
   }
   return `Alignment ${result.status}: ${result.execution.completed}/${result.execution.total} operations completed and ${result.verification.length} resources reread`
-}
-
-function activitySummary(result) {
-  return `Fleet activity contains ${result.entries.length} entries`
 }
 
 function intentSummary(result) {
@@ -912,7 +870,7 @@ export function createFleetMcpServer(options = {}) {
     {
       capabilities: { tools: {} },
       inputRequired: { maxRounds: 2 },
-      instructions: "Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use check_hosted_release for an explicitly selected locked self-hosting archive before an operator deploy, and verify_hosted_release afterward. These read-only checks use the operator-configured release directory and Wrangler configuration, never deploy or migrate, and live checks require local Cloudflare read credentials. Post-deployment verification also requires hosted Access credentials. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Call inspect_worker with worker (exact name) or findingId (supported trigger finding ID), never an empty selector or worker_name, and a bounded past window. Read each version's handlerEvidence independently of its other metadata: assets-only-metadata identifies the recognized no-script static-assets shape; other missing handlers remain unknown. Preserve fixed reasonCode/reason diagnostics without assuming an upstream permission failure. Log counts cover invocation records on that page, not console messages or total HTTP failure rates; logs:false explicitly skips that read. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Use list_adoption_candidates to see ungoverned facets and coverage gaps with named outlier zones, then plan_fleet_adoption and apply_fleet_adoption to govern them; adoption persists intent, not Cloudflare resources, and defaults new presence to required so gaps surface as drift. Use plan_fleet_changes and apply_fleet_changes when several bounded direct changes belong to one operator-approved outcome; one blocked or overlapping member blocks the batch, and Worker schedules stay on their dedicated single-change workflow. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact changed-leaf operation reviews, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Single-change tools require each review field to be approved; explicit batch tools show every operation and require one whole-batch decision. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
+      instructions: "Start retrieval with list_zones, list_fleet_policies, list_activity or the fleet://catalog/retrieval resource. Use list_resources for exact provider IDs and list_facets for normalized keys, then inspect_facet to explain observed state and governing intent. Summaries are the default; use detail tools and explicit full views only when needed. Cursors bind account, query and revision; restart without cursor after a revision change. Honor coverage, truncation and freshness fields. Stored history does not prove present resource state. Alignment planning reads only the selected surfaces and rule phases across all account zones, preserving source discovery and policy composition. Incomplete coverage is blocked, never proof of absence or alignment. Preserve error.diagnostics including the hosted requestId when reporting failures; timeout errors do not prove a write made no changes. Inspect activity and resources before considering another write. Start with get_runtime_status when setup, paths, credentials, or permissions are uncertain. CLOUDFLARE_FLEET_URL selects the shared hosted D1 backend with no local fallback; only an explicit local backend uses private files. Use check_hosted_release for an explicitly selected locked self-hosting archive before an operator deploy, and verify_hosted_release afterward. These read-only checks use the operator-configured release directory and Wrangler configuration, never deploy or migrate, and live checks require local Cloudflare read credentials. Post-deployment verification also requires hosted Access credentials. Use get_fleet_state for export or archive inspection and plan_state_reconciliation/apply_state_reconciliation for reviewed history-preserving migration. Stop old clients and independently inspect affected resources before plan_activity_recovery/apply_activity_recovery closes an interrupted pending journal with an unknown outcome, never a verified result. Use read and plan tools before mutations. GET reads honor Retry-After with bounded retries and a shared cooldown within each API client; cancellation stops waiting reads before dispatch, and mutation requests are never automatically retried. Call inspect_worker with worker (exact name) or findingId (supported trigger finding ID), never an empty selector or worker_name, and a bounded past window. Read each version's handlerEvidence independently of its other metadata: assets-only-metadata identifies the recognized no-script static-assets shape; other missing handlers remain unknown. Preserve fixed reasonCode/reason diagnostics without assuming an upstream permission failure. Log counts cover invocation records on that page, not console messages or total HTTP failure rates; logs:false explicitly skips that read. Record and verify Worker incidents explicitly to preserve assessment history. Use plan_worker_intent and apply_worker_intent for disabled, exact, or unmanaged schedule intent with owning deployment configuration and reconciliation. Use worker-schedules-update through plan_fleet_change and apply_fleet_change for schedule-only writes, then verify_worker_incident after propagation and the activity undo tools for guarded recovery. Configuration acceptance is not observed health. No Worker source, arbitrary local paths or raw log payloads are exposed. Use describe_zone_alias_policy for the strict reusable canonical-web-passthrough facet and describe_hostname_scoped_rate_limit_policy for the paired Free-plan rate rule and host-scope skip, then persist either through plan_fleet_intent and apply_fleet_intent. Remediate drift through the ordinary alignment tools. Use list_adoption_candidates to see ungoverned facets and coverage gaps with named outlier zones, then plan_fleet_adoption and apply_fleet_adoption to govern them; adoption persists intent, not Cloudflare resources, and defaults new presence to required so gaps surface as drift. Use plan_fleet_changes and apply_fleet_changes when several bounded direct changes belong to one operator-approved outcome; one blocked or overlapping member blocks the batch, and Worker schedules stay on their dedicated single-change workflow. Persistence-only tools verify saved state without Cloudflare writes. Every apply tool binds the exact request to signed elicitation state, presents compact changed-leaf operation reviews, replans under the shared write lock, journals Cloudflare writes before execution, and verifies affected live resources. Single-change tools require each review field to be approved; explicit batch tools show every operation and require one whole-batch decision. Fleet intent persistence is revision-safe and guarded undo is blocked when live state drifts.",
       requestState: { verify: requestStateCodec.verify },
     },
   )
@@ -1234,7 +1192,7 @@ export function createFleetMcpServer(options = {}) {
     "get_fleet_intent",
     {
       annotations: stateReadAnnotations,
-      description: "Read the complete revisioned fleet intent document for editing without reading or writing Cloudflare.",
+      description: "Export the complete revisioned fleet intent document for reviewed editing. Prefer list_fleet_policies and get_fleet_policy for routine lookup; this complete export can be large. Does not read or write Cloudflare.",
       inputSchema: emptyInputSchema,
       outputSchema: intentOutputSchema,
       title: "Get fleet intent",
@@ -1353,7 +1311,7 @@ export function createFleetMcpServer(options = {}) {
     "list_alignment_candidates",
     {
       annotations: READ_ONLY_EXTERNAL_ANNOTATIONS,
-      description: "Read complete live fleet inventory and list intent scopes that are aligned, actionable, or blocked.",
+      description: "Read complete live fleet inventory and list actionable or unresolved intent scopes, including blocked candidates when coverage is incomplete. This is not a complete catalog of healthy policies or resources; use list_fleet_policies, list_resources and list_facets for discovery.",
       inputSchema: emptyInputSchema,
       outputSchema: candidatesOutputSchema,
       title: "List fleet alignment candidates",
@@ -1727,14 +1685,14 @@ export function createFleetMcpServer(options = {}) {
     "list_activity",
     {
       annotations: stateReadAnnotations,
-      description: "List durable selected-backend operation activity newest first without reading or writing Cloudflare.",
-      inputSchema: emptyInputSchema,
-      outputSchema: activityOutputSchema,
+      description: "Read a bounded page of durable operation summaries, newest first, filtered by zone, outcome or time. Defaults to 20 compact entries; full view adds bounded details. Continue with the same filters and cursor. Stored undo eligibility still requires a fresh undo plan. Use get_activity for one entry and get_fleet_state for complete exports.",
+      inputSchema: retrievalInputSchemas["activity-list"],
+      outputSchema: z.union([retrievalOutputSchemas["activity-list"], errorOutputSchema]),
       title: "List fleet operation activity",
     },
-    safeToolHandler(async () => {
-      const result = await service.listActivity()
-      return toolResult(result, activitySummary(result))
+    safeToolHandler(async (input, context) => {
+      const result = await service.retrieve("activity-list", input, { signal: context.mcpReq.signal })
+      return toolResult(result, retrievalSummary(result))
     }, secrets),
   )
 
@@ -1785,7 +1743,31 @@ export function createFleetMcpServer(options = {}) {
     }),
   )
 
+  for (const [name, kind, description] of [
+    ["get_activity", "activity-get", "Read one stored activity entry by exact ID, including its plans, recorded verification and inverse. Large values are explicitly truncated with child keys; pass path as exact keys or array indexes for a focused read. Does not reverify live state."],
+    ["list_fleet_policies", "policy-list", "Read bounded stored policy summaries by zone ID, group ID, exact category or search. Includes expected constraints and acknowledgement counts without downloading the entire intent document. A zone filter selects declared group membership, not effective precedence; inspect_facet explains composition."],
+    ["get_fleet_policy", "policy-get", "Read one stored policy and its group by exact ID. Use path to focus large policy values. Use inspect_facet for live observation, effective precedence and acknowledgement validity; get_fleet_intent remains the complete export for reviewed intent editing."],
+    ["list_zones", "zone-list", "Discover exact zone IDs and names in the configured account, with exact-name or substring search and bounded pagination. Reads account zone membership only, without configuration surfaces."],
+    ["list_resources", "resource-list", "Discover exact DNS record IDs, setting IDs, ruleset IDs, rule IDs or Email Routing rule IDs in one zone. Read only the selected resource family; filter by exact ID/name/type/phase or substring search. Summary view returns identifiers and planning capabilities; full view adds bounded provider values. Ruleset rules cover zone/custom rulesets. Coverage failures are unknown, never evidence of absence."],
+    ["list_facets", "facet-list", "Discover normalized dashboard facet keys and capabilities in one explicit category, optionally one zone or ruleset phase. Reads only required surfaces. Returns healthy and ungoverned facets as well as differing ones; this is discovery, not an alignment candidate list."],
+    ["inspect_facet", "facet-inspect", "Explain one exact facet and zone: observed comparison and inspection values, effective and overridden policies, conflicts, acknowledgements and supported actions. Reads the selected category across account zones to preserve uniqueness and policy composition. Policies are paginated. Missing live coverage makes the assessment unknown. Use plan_alignment afterward for fresh executable review."],
+  ]) {
+    server.registerTool(name, {
+      annotations: kind.startsWith("activity-") || kind.startsWith("policy-") ? stateReadAnnotations : READ_ONLY_EXTERNAL_ANNOTATIONS,
+      description, inputSchema: retrievalInputSchemas[kind], outputSchema: z.union([retrievalOutputSchemas[kind], errorOutputSchema]), title: name.replaceAll("_", " "),
+    }, safeToolHandler(async (input, context) => {
+      const result = await service.retrieve(kind, input, { signal: context.mcpReq.signal, onProgress: createProgressReporter(stderr, `[mcp:${name}]`) })
+      return toolResult(result, retrievalSummary(result))
+    }, secrets))
+  }
+  server.registerResource("retrieval-catalog", "fleet://catalog/retrieval", {
+    title: "Fleet retrieval catalog", description: "Discover supported resource kinds, facet categories and the bounded read workflow", mimeType: "application/json",
+  }, async (uri) => ({ contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ resourceKinds: RESOURCE_KINDS, facetCategories: FACET_CATEGORIES, workflow: ["list_zones", "list_resources or list_facets", "inspect_facet", "plan_alignment or plan_fleet_change"], storedReads: ["list_activity", "get_activity", "list_fleet_policies", "get_fleet_policy"], limits: "Pages default to 20 and accept at most 100; large values declare truncation; cursors bind account, query and revision" }) }] }))
   return server
+}
+
+function retrievalSummary(result) {
+  return `${result.status}: ${result.returned ?? (result.detail ? 1 : 0)}${result.total === undefined ? "" : ` of ${result.total}`} result(s); ${result.freshness.source} read at ${result.freshness.readAt}; coverage ${result.coverage.complete ? "complete for requested scope" : "incomplete"}${result.nextCursor ? "; more results available" : ""}${result.valueTruncated ? "; some values truncated" : ""}`
 }
 
 export function runFleetMcpServer(options = {}) {

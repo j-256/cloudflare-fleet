@@ -44,6 +44,7 @@ import {
   FLEET_CHANGE_BATCH_LIMIT,
 } from "./interface-schemas.mjs"
 import { redactDiagnostics } from "./command-diagnostics.mjs"
+import { parseRetrievalArguments, renderRetrieval, retrievalUsage } from "./retrieval-cli.mjs"
 
 const CLI_FORMAT = Object.freeze({
   JSON: "json",
@@ -107,6 +108,10 @@ const SELECTOR_OPTIONS = Object.freeze([
   { key: "zoneIds", multiple: true, name: "zone-id", short: "z", value: true },
 ])
 const HELP_COMMAND_BY_TOPIC = Object.freeze({
+  retrieval: "retrieval-help",
+  zone: "retrieval-help",
+  resource: "retrieval-help",
+  facet: "retrieval-help",
   state: "state-help",
   recovery: "recovery-help",
   activity: "activity-help",
@@ -137,10 +142,13 @@ export function fleetUsage() {
     "  cloudflare-fleet alignment apply SELECTOR_OPTIONS --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet adoption list [FILTER_OPTIONS] [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet adoption plan|apply --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
-    "  cloudflare-fleet intent aliases|rate-limits|show|plan|apply [OPTIONS]",
+    "  cloudflare-fleet intent list|get|aliases|rate-limits|show|plan|apply [OPTIONS]",
+    "  cloudflare-fleet zone list [--name EXACT_NAME] [OPTIONS]",
+    "  cloudflare-fleet resource list --kind KIND --zone-id ID [OPTIONS]",
+    "  cloudflare-fleet facet list|inspect --category CATEGORY [OPTIONS]",
     "  cloudflare-fleet change plan|apply --input FILE|- [OPTIONS]",
     "  cloudflare-fleet worker COMMAND --input FILE|- [--expect-plan DIGEST] [OPTIONS]",
-    "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet activity list|get [OPTIONS] (see help retrieval)",
     "  cloudflare-fleet activity undo plan|apply --id ID [OPTIONS]",
     "  cloudflare-fleet state export|plan|apply [OPTIONS]",
     "  cloudflare-fleet recovery plan|apply --input FILE|- [OPTIONS]",
@@ -215,6 +223,8 @@ export function fleetIntentUsage() {
     "  cloudflare-fleet intent - inspect and atomically replace fleet intent",
     "",
     "SYNOPSIS",
+    "  cloudflare-fleet intent list [--zone-id ID] [--group-id ID] [--category CATEGORY] [--search TEXT] [OPTIONS]",
+    "  cloudflare-fleet intent get --id ID [--path KEY ...] [OPTIONS]",
     "  cloudflare-fleet intent show [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet intent aliases [--format text|json]",
     "  cloudflare-fleet intent rate-limits [--format text|json]",
@@ -229,6 +239,7 @@ export function fleetIntentUsage() {
     "  -h, --help               Show this help",
     "",
     "WORKFLOW",
+    "  list and get are bounded stored reads; see cloudflare-fleet help retrieval for pagination and filters",
     "  aliases emits the strict reusable passthrough facet and initial templates",
     "  rate-limits emits the typed Free-plan rate rule and host-scope skip posture",
     "  intent show emits an editable document in text mode",
@@ -361,11 +372,13 @@ export function fleetActivityUsage() {
     "  cloudflare-fleet activity - inspect durable write history and perform guarded undo",
     "",
     "SYNOPSIS",
-    "  cloudflare-fleet activity list [--format text|json] [--state-file PATH]",
+    "  cloudflare-fleet activity list [--zone-id ID] [--status STATUS] [--limit N] [OPTIONS]",
+    "  cloudflare-fleet activity get --id ID [--path KEY ...] [OPTIONS]",
     "  cloudflare-fleet activity undo plan --id ID [--format text|json] [--state-file PATH]",
     "  cloudflare-fleet activity undo apply --id ID --expect-plan DIGEST [--format text|json] [--state-file PATH]",
     "",
     "OPTIONS",
+    "  See cloudflare-fleet help retrieval for list filters, pagination and focused detail reads",
     "  --id ID                  Select a verified reversible activity entry",
     "  -e, --expect-plan DIGEST Require the exact guarded inverse plan before writes",
     "  -f, --format text|json   Select operator text or structured JSON output",
@@ -530,6 +543,8 @@ function selectorFromOptions(options) {
 }
 
 export function parseFleetArguments(argv) {
+  const retrieval = parseRetrievalArguments(argv, COMMON_OPTIONS)
+  if (retrieval) return retrieval
   const [resource, action, ...rest] = argv
   if (!resource || resource === "-h" || resource === "--help") {
     return { command: "help" }
@@ -794,17 +809,8 @@ export function parseFleetArguments(argv) {
   }
   if (resource === "activity") {
     if (!action || isHelpArgument(action)) return { command: "activity-help" }
-    if (action === "list") {
-      const options = parseOptions(rest, COMMON_OPTIONS)
-      if (options.help) return { command: "activity-help" }
-      return {
-        command: "activity-list",
-        format: options.format,
-        stateFile: options.statefile,
-      }
-    }
     if (action !== "undo") {
-      throw new CliUsageError("Activity command must be list or undo")
+      throw new CliUsageError("Activity command must be list, get or undo")
     }
     const [undoAction, ...undoArguments] = rest
     if (!undoAction || isHelpArgument(undoAction)) {
@@ -933,22 +939,6 @@ function renderAlignmentApply(result) {
   return lines.join("\n")
 }
 
-function renderActivity(result) {
-  const lines = [
-    `Operation activity for account ${result.accountId}`,
-    `${result.entries.length} entries`,
-  ]
-  for (const entry of result.entries) {
-    const execution = entry.execution
-      ? ` ${entry.execution.completed}/${entry.execution.total}`
-      : ""
-    lines.push(`- [${entry.status}] ${entry.startedAt} ${entry.title}${execution}`)
-    if (entry.error) lines.push(`  ${entry.error}`)
-  }
-  if (result.entries.length === 0) lines.push("No operation activity")
-  return lines.join("\n")
-}
-
 function renderReviewedPlan(result, label) {
   const lines = [
     `${label} ${result.status}: ${result.reason}`,
@@ -1051,6 +1041,7 @@ function renderRuntimeDoctor(result) {
 }
 
 function renderResult(command, result) {
+  if (command.startsWith("retrieval-")) return renderRetrieval(result)
   if (command === "state-export") return JSON.stringify(result.state, null, 2)
   if (command.startsWith("state-") || command.startsWith("recovery-")) return JSON.stringify(result, null, 2)
   if (command.startsWith("worker-")) return JSON.stringify(result, null, 2)
@@ -1060,7 +1051,6 @@ function renderResult(command, result) {
   if (command === "alignment-plan") return renderAlignmentPlan(result)
   if (command === "alignment-apply") return renderAlignmentApply(result)
   if (command === "adoption-list") return renderAdoptionList(result)
-  if (command === "activity-list") return renderActivity(result)
   if (command === "intent-show") return JSON.stringify(result.document, null, 2)
   if (command === "intent-aliases") return [
     "Canonical web passthrough fleet intent",
@@ -1098,7 +1088,7 @@ function resultExitCode(result) {
   if (result.status === FLEET_RUNTIME_STATUS.ATTENTION) {
     return FLEET_CLI_EXIT_CODE.ATTENTION
   }
-  if (result.status === ALIGNMENT_PREPARATION_STATUS.BLOCKED) {
+  if (result.status === ALIGNMENT_PREPARATION_STATUS.BLOCKED || result.status === "incomplete") {
     return FLEET_CLI_EXIT_CODE.BLOCKED
   }
   if (result.status === OPERATION_ACTIVITY_STATUS.WRITE_FAILED) {
@@ -1123,6 +1113,11 @@ export async function runFleetCommand(options = {}) {
   const stdout = options.stdout || process.stdout
   const stderr = options.stderr || process.stderr
   const parsed = parseFleetArguments(argv)
+  if (parsed.command === "retrieval-help") {
+    stdout.write(`${retrievalUsage()}\n`)
+    options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
+    return null
+  }
   if (parsed.command === "help") {
     stdout.write(`${fleetUsage()}\n`)
     options.onExitCode?.(FLEET_CLI_EXIT_CODE.SUCCESS)
@@ -1412,8 +1407,9 @@ export async function runFleetCommand(options = {}) {
       }
       throw error
     }
-  } else if (parsed.command === "activity-list") {
-    result = await service.listActivity(commandOptions)
+  } else if (parsed.retrievalKind) {
+    try { result = await service.retrieve(parsed.retrievalKind, parsed.query, commandOptions) }
+    catch (error) { if (error instanceof TypeError) throw new CliUsageError(error.message); throw error }
   } else if (parsed.command === "intent-show") {
     result = await service.getIntent(commandOptions)
   } else if (["intent-plan", "intent-apply"].includes(parsed.command)) {

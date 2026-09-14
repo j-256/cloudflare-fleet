@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { WORKER_NAME_PATTERN, WORKER_FINDING_PATTERN, WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
 
-import { INVENTORY_COVERAGE_KIND } from "./constants.mjs"
+import { INVENTORY_COVERAGE_KIND, INVENTORY_READ_REASON } from "./constants.mjs"
 import {
   FLEET_INTENT_EXPECTED_ORIGIN,
   FLEET_INTENT_GROUP_MODE,
@@ -56,6 +56,7 @@ export const alignmentCoverageSchema = z.strictObject({
     zoneId: identifierSchema.nullable(), zoneName: z.string().nullable(),
     surfaceId: identifierSchema, phase: identifierSchema.optional(), rulesetId: identifierSchema.optional(),
     errorKind: z.enum(["timeout", "cancelled", "read-failed", "not-read"]),
+    reasonCode: z.enum(Object.values(INVENTORY_READ_REASON)).optional(),
     status: z.number().int().nullable(),
   })).max(50),
 })
