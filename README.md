@@ -493,6 +493,8 @@ npm run screenshots
 
 The capture script drives the real dashboard through its deterministic local test broker. It uses reserved example hostnames, documentation IP addresses, the synthetic `example-worker`, synthetic configuration, and a literal fake test token. It does not read shell Cloudflare credentials, ignored operator files, D1, the hosted Worker, or a live API endpoint.
 
+CI and release verification run `npm run screenshots:ci` and retain the generated images as browser evidence. After successful default-branch verification and any enabled deployments, CI publishes the generated cover to `docs/screenshots/cover.png` through an image-only pull request that retains the required checks and merges automatically. Repository settings must allow automatic merging and Actions-created pull requests; the workflow never approves pull request reviews. A superseded source revision cannot publish its cover; the newer revision's workflow owns that update. Pull requests render without publishing.
+
 ## Development
 
 Install the exact lockfile and browser once per checkout:

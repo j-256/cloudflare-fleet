@@ -269,7 +269,8 @@ test("internal CI helper supports help and refuses local deployment without touc
 
 test("the workflow gates secrets and same-run artifacts behind complete verification and protected main", async () => {
   const source = await fs.readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")
-  const job = source.slice(source.indexOf("\n  production:"))
+  const job = source.match(/\n  production:[\s\S]*?(?=\n  [\w-]+:|$)/)?.[0]
+  assert.ok(job, "The production job must be present")
   for (const contract of ["needs: verify", "needs.verify.result == 'success'", "github.ref_protected", "github.ref == 'refs/heads/main'", "vars.CLOUDFLARE_FLEET_DEPLOY_PRODUCTION == 'true'", "name: production", "group: fleet-production", "cancel-in-progress: false", "name: self-hosted-release", "needs.verify.outputs.hosting_sha256", "persist-credentials: false", "CLOUDFLARE_FLEET_RELEASE_ID: ${{ steps.prepare.outputs.release_id }}"]) assert.ok(job.includes(contract), contract)
   assert.doesNotMatch(job, /workflow_run|pull_request_target|secrets: inherit|db:migrate|secrets bulk|rollback|continue-on-error|always\(\)/)
   assert.ok(job.indexOf("npm ci --include=dev") < job.indexOf("secrets.CLOUDFLARE_WORKERS_DEPLOY_TOKEN"))
