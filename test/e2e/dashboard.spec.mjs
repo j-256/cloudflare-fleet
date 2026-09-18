@@ -88,6 +88,30 @@ test("matrix focus keeps search recovery and the table inside the viewport", asy
   await expect(page.getByRole("navigation", { name: "Fleet sections" })).toBeHidden()
 })
 
+test("tooltips stay within the viewport and Escape preserves keyboard navigation", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.setViewportSize({ width: 1720, height: 932 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1720)
+  const control = page.locator("#difference-toggle")
+  await control.evaluate((node) => {
+    node.style.position = "fixed"
+    node.style.right = "0"
+    node.style.top = "0"
+  })
+  await control.focus()
+  const tooltip = control.locator(":scope > .tooltip")
+  await expect(tooltip).toBeVisible()
+  const bounds = await tooltip.boundingBox()
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(1720)
+  expect(bounds.y).toBeGreaterThanOrEqual(0)
+  await control.press("Escape")
+  await expect(tooltip).toBeHidden()
+  await expect(control).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(page.locator("#change-support-toggle")).toBeFocused()
+})
+
 test("refresh recovers from a proxied rate limit using the upstream retry delay", async ({ dashboard }) => {
   const { allowBrowserError, page, queueFailure, requests } = dashboard
   allowBrowserError(/429/)
