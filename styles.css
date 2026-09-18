@@ -3353,6 +3353,96 @@ dialog form {
   width: var(--dialog-workspace-width);
 }
 
+.operator-dialog {
+  width: min(860px, calc(100vw - 24px));
+}
+
+.operator-dialog .dialog-actions {
+  position: sticky;
+  bottom: -24px;
+  z-index: 3;
+  padding: 12px 0;
+  background: var(--panel);
+}
+
+.operator-scope {
+  min-width: 0;
+  margin: 16px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.zone-picker-tools,
+.zone-picker-group-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.zone-picker-tools input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.zone-picker-groups {
+  margin: 10px 0;
+}
+
+.zone-picker-summary {
+  margin: 10px 0;
+  color: var(--muted);
+}
+
+.zone-picker-options {
+  display: grid;
+  align-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.operator-dialog label.zone-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.operator-dialog label.zone-picker-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(84, 208, 195, 0.08);
+}
+
+.operator-dialog label.zone-picker-option[hidden] {
+  display: none;
+}
+
+.operator-dialog input[type="search"] {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--bg);
+  font: inherit;
+}
+
+.operator-dialog .zone-picker-option input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
 .value-comparison-dialog {
   width: var(--dialog-workspace-width);
 }

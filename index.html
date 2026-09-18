@@ -562,6 +562,26 @@
     </form>
   </dialog>
 
+  <dialog class="operator-dialog" id="rule-copy-dialog" aria-labelledby="rule-copy-title">
+    <form method="dialog" id="rule-copy-form">
+      <button class="dialog-close" type="button" data-dialog-close aria-label="Close rule copy">&times;</button>
+      <p class="dialog-kicker">Copy between zones</p>
+      <h2 id="rule-copy-title">Copy rule</h2>
+      <label for="rule-copy-source">Copy from</label>
+      <select id="rule-copy-source"></select>
+      <div id="rule-copy-preview"></div>
+      <p id="rule-copy-reason"></p>
+      <fieldset class="operator-scope">
+        <legend>Copy to</legend>
+        <div id="rule-copy-zones"></div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button class="button button-quiet" value="cancel">Cancel</button>
+        <button class="button button-primary" id="rule-copy-review" value="review">Review copy</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="hole-dialog" aria-labelledby="hole-title" aria-describedby="hole-target">
     <form method="dialog" id="hole-form">
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close fleet value selection">&times;</button>

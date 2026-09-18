@@ -233,11 +233,11 @@ const directFleetChangeSchemas = [
   }),
   z.strictObject({
     kind: z.literal("ruleset-rule-copy"),
-    phase: identifierSchema,
-    ruleId: identifierSchema,
-    rulesetId: identifierSchema,
-    sourceZoneId: identifierSchema,
-    targetZoneIds: zoneIdsSchema,
+    phase: identifierSchema.describe("The source rule phase; destinations use the same phase"),
+    ruleId: identifierSchema.describe("Exact source rule ID from list_resources"),
+    rulesetId: identifierSchema.describe("Exact source ruleset ID"),
+    sourceZoneId: identifierSchema.describe("Zone to copy from; it is never modified"),
+    targetZoneIds: zoneIdsSchema.describe("Explicit destination zones, independent of dashboard selections"),
   }),
   z.strictObject({
     desiredName: z.string().trim().min(1).max(5000),
