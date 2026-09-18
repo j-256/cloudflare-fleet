@@ -221,6 +221,7 @@ import {
   editableDnsRecordPayload,
   editableEmailRoutingRulePayload,
   editableRulePayload,
+  ruleCopyCapability,
   emailIssues,
   evaluateFleetEmailPolicyExceptions,
   wafIssues,
@@ -284,6 +285,7 @@ import {
 } from "./write-verification.mjs"
 import { executeVerifiedPlanSet } from "./write-executor.mjs"
 import { mountWorkerPanel } from "./worker-panel.mjs"
+import { createZonePicker } from "./zone-picker.mjs"
 import { icon } from "./app-icons.mjs"
 import {
   actionButton,
@@ -586,6 +588,7 @@ const state = {
   matrixFocusScrollY: 0,
   matrixReveal: null,
   ruleRename: null,
+  ruleCopy: null,
   rulesetWorkspace: null,
   selectedColumnsOnly: false,
   selectedZoneIds: new Set(),
@@ -2268,6 +2271,12 @@ function createRulesetRuleCard(workspace, rule) {
 
   const actions = createElement("div", { className: "rule-card-actions" })
   if (editable) {
+    actions.append(workspaceButton("Copy to zones", "button button-quiet", () => openRuleCopy({
+      phase: workspace.ruleset.phase,
+      ruleId: rule.id,
+      rulesetId: workspace.ruleset.id,
+      sourceZoneId: workspace.action.zoneId,
+    }), { ariaLabel: `Copy ${label} to other zones`, icon: "copy", write: true }))
     actions.append(
       workspaceButton(
         "Edit",
@@ -9730,15 +9739,14 @@ function renderMatrix() {
         "start",
       ))
     }
-    if (secondaryActionTypes.has("ruleset-rule-copy")) {
-      facetActions.append(matrixStatusChip(
-        "copy",
-        "Copy",
-        "Rules in this row can be copied to selected target zones after live validation",
-        "capability-badge copy",
-        "small",
-        "start",
-      ))
+    if (secondaryActionTypes.has("ruleset-rule-copy") && !readOnly) {
+      const copy = matrixActionButton("Copy rule", "copy-rule-row", {
+        accessibleName: `Copy ${row.label} between zones`,
+        icon: "copy",
+        title: "Choose a source and destination zones",
+      })
+      copy.addEventListener("click", () => openRuleCopy(null, row))
+      facetActions.append(copy)
     }
     if (row.resolutionKind === HOLE_RESOLUTION_KIND.DNS_RECORDS && !readOnly) {
       const bulkFillButton = matrixActionButton("Fill targets", "bulk-fill", {
@@ -10337,15 +10345,11 @@ function updateActionButtons() {
         : `Bulk fill unavailable for ${row?.label || "this DNS facet"}. ${batch.reason}`,
     )
   }
-  for (const button of matrixAwareQuery(".copy-rule")) {
-    const targetCount = state.selectedZoneIds.size
-      - (state.selectedZoneIds.has(button.dataset.sourceZoneId) ? 1 : 0)
-    button.disabled = writeLocked || targetCount === 0
+  for (const button of matrixAwareQuery(".copy-rule, .copy-rule-row")) {
+    button.disabled = writeLocked
     setControlTooltip(button, writeLocked
       ? writeLockReason
-      : targetCount === 0
-        ? "Choose at least one destination zone other than the source"
-        : `Copy this rule to ${targetCount} selected destination zone${targetCount === 1 ? "" : "s"} after live validation`)
+      : "Choose destination zones, then review the copy")
   }
   for (const button of matrixAwareQuery(".rename-rule")) {
     button.disabled = writeLocked
@@ -11557,22 +11561,69 @@ async function copyRule(source, targetZoneIds, title = "") {
   }
 }
 
-async function copyRuleToSelected(button) {
-  const sourceZoneId = button.dataset.sourceZoneId
-  const targetZoneIds = [...state.selectedZoneIds].filter((zoneId) => zoneId !== sourceZoneId)
-  if (targetZoneIds.length === 0) {
-    toast("Choose at least one destination zone other than the source", "error")
-    return
-  }
-  await copyRule(
-    {
-      phase: button.dataset.phase,
-      ruleId: button.dataset.ruleId,
-      rulesetId: button.dataset.rulesetId,
-      sourceZoneId,
-    },
-    targetZoneIds,
-  )
+function copyRuleToSelected(button) {
+  openRuleCopy({
+    phase: button.dataset.phase,
+    ruleId: button.dataset.ruleId,
+    rulesetId: button.dataset.rulesetId,
+    sourceZoneId: button.dataset.sourceZoneId,
+  })
+}
+
+function renderRuleCopySource() {
+  const draft = state.ruleCopy
+  if (!draft) return
+  const source = draft.sources[Number(document.querySelector("#rule-copy-source").value)]
+  const cached = cachedRule(zoneById(source.sourceZoneId), source.rulesetId, source.ruleId)
+  const capability = ruleCopyCapability(cached?.ruleset, cached?.rule)
+  const preview = document.querySelector("#rule-copy-preview")
+  preview.replaceChildren()
+  if (cached) preview.append(ruleCardPreview({ action: { zoneId: source.sourceZoneId }, ruleset: cached.ruleset }, cached.rule))
+  document.querySelector("#rule-copy-reason").textContent = capability.copyable
+    ? "The source stays in place. A matching rule at the destination is updated; an absent rule is added. Review the exact changes before applying."
+    : capability.reason
+  draft.source = source
+  draft.picker = createZonePicker(document.querySelector("#rule-copy-zones"), {
+    excludedZoneIds: [source.sourceZoneId],
+    groups: state.intent.groups,
+    selectedZoneIds: draft.picker?.selectedZoneIds() || [...state.selectedZoneIds],
+    zones: state.inventory.zones,
+    onChange: (ids) => { document.querySelector("#rule-copy-review").disabled = !capability.copyable || ids.length === 0 },
+  })
+}
+
+function openRuleCopy(source, row = null) {
+  if (state.busy || readOnly || !state.transportAvailable) return
+  const sources = row
+    ? [...row.cells.entries()].flatMap(([name, cell]) => {
+        const zone = state.inventory.zones.find((entry) => entry.meta.name === name)
+        const action = cell.secondaryAction || cell.action
+        return action?.ruleId && zone ? [{ phase: action.phase || row.phase, ruleId: action.ruleId, rulesetId: action.rulesetId, sourceZoneId: zone.meta.id }] : []
+      })
+    : [source]
+  if (sources.length === 0) return
+  const first = sources[0]
+  const cached = cachedRule(zoneById(first.sourceZoneId), first.rulesetId, first.ruleId)
+  state.ruleCopy = { sources, picker: null }
+  document.querySelector("#rule-copy-title").textContent = `Copy ${row?.label || cached?.rule.description || "rule"}`
+  document.querySelector("#rule-copy-source").replaceChildren(...sources.map((entry, index) => {
+    const option = createElement("option", { text: zoneById(entry.sourceZoneId).meta.name })
+    option.value = String(index)
+    return option
+  }))
+  renderRuleCopySource()
+  showDialog(document.querySelector("#rule-copy-dialog"), { initialFocus: state.ruleCopy.picker.search })
+}
+
+async function reviewRuleCopy(event) {
+  if (event.submitter?.value === "cancel") return
+  event.preventDefault()
+  const draft = state.ruleCopy
+  const targets = draft?.picker.selectedZoneIds() || []
+  if (!draft || targets.length === 0) return
+  document.querySelector("#rule-copy-dialog").close()
+  state.ruleCopy = null
+  await copyRule(draft.source, targets)
 }
 
 function openRuleRename(button) {
@@ -14064,6 +14115,8 @@ elements.holeDialog.addEventListener("close", () => {
   state.holeResolution = null
 })
 elements.holeForm.addEventListener("submit", reviewHoleResolution)
+document.querySelector("#rule-copy-form").addEventListener("submit", reviewRuleCopy)
+document.querySelector("#rule-copy-source").addEventListener("change", renderRuleCopySource)
 elements.renameDialog.addEventListener("close", () => {
   state.ruleRename = null
 })

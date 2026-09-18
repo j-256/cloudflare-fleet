@@ -59,6 +59,31 @@ const CHANGES = Object.freeze([
     zoneId: "zone-one",
   }),
 ])
+
+test("MCP rule copying uses explicit destinations and requires reviewed approval", async (context) => {
+  let approve = false
+  const { client, calls } = await connectedFixture(context, {
+    elicitationHandler: async (request) => approve ? approvedElicitation(request) : { action: "cancel" },
+  })
+  const change = {
+    kind: "ruleset-rule-copy",
+    phase: "http_request_firewall_custom",
+    ruleId: "source-rule",
+    rulesetId: "source-ruleset",
+    sourceZoneId: "source-zone",
+    targetZoneIds: ["destination-zone"],
+  }
+  const plan = await client.callTool({ name: "plan_fleet_change", arguments: { change } })
+  assert.equal(plan.structuredContent.planSet.digest, DIGEST)
+  assert.deepEqual(calls.planChange[0], change)
+  const declined = await client.callTool({ name: "apply_fleet_change", arguments: { change, planDigest: DIGEST } })
+  assert.equal(declined.structuredContent.status, "confirmation-declined")
+  assert.equal(calls.applyChange.length, 0)
+  approve = true
+  const applied = await client.callTool({ name: "apply_fleet_change", arguments: { change, planDigest: DIGEST } })
+  assert.notEqual(applied.isError, true)
+  assert.deepEqual(calls.applyChange, [{ change, digest: DIGEST }])
+})
 const TOOL_NAMES = Object.freeze([
   "get_runtime_status",
   "check_hosted_release",
