@@ -3547,7 +3547,7 @@ function prefersReducedMotion() {
 }
 
 function followSkipLink(event) {
-  const link = event.target.closest(SKIP_LINK_SELECTOR)
+  const link = event.target.closest(`${SKIP_LINK_SELECTOR}, .workspace-nav a`)
   if (!link) return
   const targetId = new URL(link.href).hash.slice(1)
   const target = document.getElementById(decodeURIComponent(targetId))

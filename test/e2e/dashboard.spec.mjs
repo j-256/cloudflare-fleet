@@ -51,6 +51,43 @@ test("loads the cached fleet into a useful review surface", async ({ dashboard }
   )
 })
 
+test("section links reach configuration before specialized workflows and keep headings visible", async ({ dashboard }) => {
+  const { page } = dashboard
+  const navigation = page.getByRole("navigation", { name: "Fleet sections" })
+  await navigation.getByRole("link", { name: "Configuration", exact: true }).click()
+  await expect(page.locator("#configuration-heading")).toBeFocused()
+  const layout = await page.evaluate(() => ({
+    heading: document.querySelector("#configuration-heading").getBoundingClientRect().top,
+    navigation: document.querySelector(".workspace-nav").getBoundingClientRect().bottom,
+    matrix: document.querySelector("#matrix-shell").getBoundingClientRect().top,
+    workflows: document.querySelector("#workflow-heading").getBoundingClientRect().top,
+  }))
+  expect(layout.heading).toBeGreaterThanOrEqual(layout.navigation)
+  expect(layout.matrix).toBeLessThan(layout.workflows)
+  await navigation.getByRole("link", { name: "Workflows", exact: true }).click()
+  await expect(page.locator("#workflow-heading")).toBeFocused()
+  await expect(navigation).toBeInViewport()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await navigation.getByRole("link", { name: "Configuration", exact: true }).click()
+  expect(await page.locator("#configuration-heading").evaluate((heading) => (
+    heading.getBoundingClientRect().top
+      >= document.querySelector(".workspace-nav").getBoundingClientRect().bottom
+  ))).toBe(true)
+})
+
+test("matrix focus keeps search recovery and the table inside the viewport", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.locator("#scope").selectOption("zone-specific")
+  await page.locator("#search").fill("always_use_https")
+  await page.locator("#matrix-focus").click()
+  await expect(page.locator("#matrix-search-show-all")).toBeInViewport()
+  await page.locator("#matrix-search-show-all").click()
+  await expect(page.locator("#matrix-body tr")).toHaveCount(1)
+  const frame = await page.locator("#matrix-shell").boundingBox()
+  expect(frame.y + frame.height).toBeLessThanOrEqual(page.viewportSize().height + 1)
+  await expect(page.getByRole("navigation", { name: "Fleet sections" })).toBeHidden()
+})
+
 test("refresh recovers from a proxied rate limit using the upstream retry delay", async ({ dashboard }) => {
   const { allowBrowserError, page, queueFailure, requests } = dashboard
   allowBrowserError(/429/)
