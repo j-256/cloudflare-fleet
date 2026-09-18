@@ -57,6 +57,7 @@ async function openDashboardPage(context, session, viewport, browserErrors) {
 
 async function capture(page, outputDirectory, filename) {
   const outputPath = path.join(outputDirectory, filename)
+  await page.mouse.move(0, 0)
   await page.evaluate(() => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
