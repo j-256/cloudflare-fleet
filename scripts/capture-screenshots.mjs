@@ -117,6 +117,18 @@ export async function capturePublicationScreenshots(options = {}) {
       "dashboard-overview.png",
     ))
 
+    await overview.getByPlaceholder("Search facets, values, or zones").fill("Protect service")
+    await overview.getByRole("button", { name: "Accept current state for Protect service", exact: true }).click()
+    const currentIntent = overview.locator("#facet-intent-dialog")
+    await currentIntent.getByRole("status").filter({ hasText: "Live values loaded" }).waitFor()
+    screenshots.push(await capture(overview, outputDirectory, "intent-current.png"))
+    await currentIntent.getByRole("button", { name: "Cancel", exact: true }).click()
+    await overview.getByRole("button", { name: "Copy Protect service between zones", exact: true }).click()
+    const copyRule = overview.locator("#rule-copy-dialog")
+    await copyRule.getByRole("checkbox", { name: "bravo.example", exact: true }).check()
+    screenshots.push(await capture(overview, outputDirectory, "rule-copy.png"))
+    await copyRule.getByRole("button", { name: "Cancel", exact: true }).click()
+
     await overview.getByPlaceholder("Search facets, values, or zones").fill(
       "always_use_https",
     )
