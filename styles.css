@@ -758,6 +758,54 @@ h1 {
   white-space: nowrap;
 }
 
+.workspace-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px var(--page-gutter);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.workspace-nav a {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: var(--fs-xs);
+  text-decoration: none;
+}
+
+.workspace-nav a:hover,
+.workspace-nav a:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#start-here-heading,
+#configuration-heading,
+#workflow-heading,
+#coverage-heading {
+  scroll-margin-top: 64px;
+}
+
+@media (max-width: 620px) {
+  .workspace-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #start-here-heading,
+  #configuration-heading,
+  #workflow-heading,
+  #coverage-heading {
+    scroll-margin-top: 104px;
+  }
+}
+
 main {
   padding: 12px var(--page-gutter) 24px;
 }
@@ -3226,6 +3274,7 @@ body.matrix-focus #application {
 }
 
 body.matrix-focus .hero,
+body.matrix-focus .workspace-nav,
 body.matrix-focus .task-hub,
 body.matrix-focus .workflow-section,
 body.matrix-focus .configuration-explorer > .section-introduction,
@@ -3250,8 +3299,8 @@ body.matrix-focus main {
 }
 
 body.matrix-focus .configuration-explorer {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   margin: 0;
@@ -3266,7 +3315,18 @@ body.matrix-focus .matrix-tools {
   background: rgba(10, 17, 24, 0.96);
 }
 
+body.matrix-focus .toolbar,
+body.matrix-focus .matrix-tools,
+body.matrix-focus .matrix-search-recovery {
+  flex-shrink: 0;
+}
+
+body.matrix-focus .matrix-search-recovery {
+  padding: 8px var(--page-gutter);
+}
+
 body.matrix-focus .matrix-shell {
+  flex: 1;
   width: 100%;
   height: 100%;
   max-height: none;

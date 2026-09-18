@@ -54,12 +54,19 @@
       <progress class="load-progress" id="load-progress" max="100" value="0" aria-label="Fleet loading progress" hidden></progress>
     </header>
 
+    <nav class="workspace-nav" aria-label="Fleet sections">
+      <a href="#start-here-heading">Overview</a>
+      <a href="#configuration-heading">Configuration</a>
+      <a href="#workflow-heading">Workflows</a>
+      <a href="#coverage-heading">Read health</a>
+    </nav>
+
     <main id="main-content">
       <section class="task-hub" id="start-here" aria-labelledby="start-here-heading">
         <div class="section-introduction">
           <p class="policy-kicker">Start here</p>
-          <h2 id="start-here-heading">What do you want to do?</h2>
-          <p>Review the fleet first, define which differences are acceptable, or browse configuration that this dashboard can change. Every write still receives a fresh live check and a separate confirmation.</p>
+          <h2 id="start-here-heading" tabindex="-1">What do you want to do?</h2>
+          <p>Review differences, manage expected state, or find a setting to change. Changes are checked live and require confirmation.</p>
         </div>
         <div class="task-grid">
           <article class="task-card review-task-card">
@@ -112,7 +119,7 @@
                 <h3>Make supported changes</h3>
               </div>
             </div>
-            <p>Browse facets with a matrix change path: direct edit, editable workspace, Copy or Fill, fleet rename, or DNSSEC intent. The special multi-setting workflows are listed separately below.</p>
+            <p>Find editable settings, DNS records, and rules. Use the Workflows section for Email Routing, Shared WAF, and DNSSEC alignment.</p>
             <div class="task-card-status"><strong id="supported-change-count">0</strong><span id="supported-change-label">facets have a matrix change path</span></div>
             <div class="change-readiness" id="write-panel">
               <span>Write readiness</span>
@@ -132,80 +139,6 @@
             <button class="button button-quiet" id="review-operation-activity" type="button" aria-haspopup="dialog"><span id="review-operation-count">0</span> recorded operations</button>
           </div>
         </nav>
-      </section>
-
-      <section class="workflow-section" aria-labelledby="workflow-heading">
-        <div class="section-introduction workflow-introduction">
-          <p class="policy-kicker">Automated fleet workflows</p>
-          <h2 id="workflow-heading">The special multi-setting actions</h2>
-          <p>Email Routing and Shared WAF are shown here because each builds one reviewed plan across related settings. They are not examples of support shared by every category. DNSSEC alignment is available only after exact intent is defined.</p>
-        </div>
-
-        <div class="workflow-targeting" id="workflow-targeting">
-          <div>
-            <strong>Target zones for multi-zone actions</strong>
-            <span id="write-selection-summary" aria-live="polite">No target zones selected</span>
-          </div>
-          <p>Choose targets for these workflows and matrix Copy or Fill actions. A direct Edit button always targets only the cell you opened.</p>
-          <button class="button button-accent" id="choose-targets" type="button" aria-label="Choose zones for automated workflows and matrix copy or fill actions">Choose zones</button>
-        </div>
-
-        <div class="workflow-grid">
-          <article class="workflow-card email-workflow-card">
-            <div class="workflow-card-heading">
-              <div>
-                <span class="workflow-type">Composite workflow</span>
-                <h3>Email Routing</h3>
-              </div>
-              <button class="drift-badge" id="email-policy-drift" type="button" disabled>0 drifted</button>
-            </div>
-            <p class="workflow-status" id="email-policy-detail">Loading forwarding consensus</p>
-            <dl class="workflow-scope">
-              <div><dt>Changes</dt><dd>Routing enablement, catch-all forwarding, required Email Routing DNS, SPF, and DMARC</dd></div>
-              <div><dt>Policy source</dt><dd>The unique observed fleet consensus and a verified account destination</dd></div>
-            </dl>
-            <div class="workflow-actions">
-              <button class="policy-exception-badge" id="email-policy-exceptions" type="button" hidden>0 policy exceptions</button>
-              <button class="button button-accent" id="align-email" type="button" disabled>Review Email alignment</button>
-            </div>
-          </article>
-
-          <article class="workflow-card waf-workflow-card">
-            <div class="workflow-card-heading">
-              <div>
-                <span class="workflow-type">Named-rule workflow</span>
-                <h3>Shared WAF rules</h3>
-              </div>
-              <button class="drift-badge" id="waf-policy-drift" type="button" disabled>0 drifted</button>
-            </div>
-            <p class="workflow-status" id="waf-policy-detail">Loading rule consensus</p>
-            <dl class="workflow-scope">
-              <div><dt>Changes</dt><dd>Exactly the configured named fleet rules in the custom firewall phase</dd></div>
-              <div><dt>Not covered</dt><dd>Managed WAF rules, other custom rules, and unrelated Security or Rulesets facets</dd></div>
-            </dl>
-            <div class="workflow-actions">
-              <button class="button button-accent" id="align-waf" type="button" disabled>Review WAF alignment</button>
-            </div>
-          </article>
-
-          <article class="workflow-card dnssec-workflow-card">
-            <div class="workflow-card-heading">
-              <div>
-                <span class="workflow-type">Intent-driven workflow</span>
-                <h3>DNSSEC status</h3>
-              </div>
-              <span class="workflow-state" id="dnssec-workflow-state">Set intent first</span>
-            </div>
-            <p class="workflow-status" id="dnssec-workflow-detail">Define an exact DNSSEC status in Fleet intent to evaluate correctable zones.</p>
-            <dl class="workflow-scope">
-              <div><dt>Changes</dt><dd>Enable or disable DNSSEC status when exact intent requires it</dd></div>
-              <div><dt>Not covered</dt><dd>Cloudflare-generated keys, digests, and parent registrar DS publication</dd></div>
-            </dl>
-            <div class="workflow-actions">
-              <button class="button button-quiet" id="show-dnssec-workflow" type="button">Open DNSSEC in matrix</button>
-            </div>
-          </article>
-        </div>
       </section>
 
       <section class="configuration-explorer" aria-labelledby="configuration-heading">
@@ -329,6 +262,80 @@
           <tbody id="matrix-body"></tbody>
         </table>
       </section>
+      </section>
+
+      <section class="workflow-section" aria-labelledby="workflow-heading">
+        <div class="section-introduction workflow-introduction">
+          <p class="policy-kicker">Automated fleet workflows</p>
+          <h2 id="workflow-heading" tabindex="-1">Email, WAF, and DNSSEC</h2>
+          <p>Review changes across selected zones. Email Routing and Shared WAF each coordinate related settings; DNSSEC uses saved exact intent.</p>
+        </div>
+
+        <div class="workflow-targeting" id="workflow-targeting">
+          <div>
+            <strong>Target zones for multi-zone actions</strong>
+            <span id="write-selection-summary" aria-live="polite">No target zones selected</span>
+          </div>
+          <p>Choose targets for these workflows and matrix Copy or Fill actions. A direct Edit button always targets only the cell you opened.</p>
+          <button class="button button-accent" id="choose-targets" type="button" aria-label="Choose zones for automated workflows and matrix copy or fill actions">Choose zones</button>
+        </div>
+
+        <div class="workflow-grid">
+          <article class="workflow-card email-workflow-card">
+            <div class="workflow-card-heading">
+              <div>
+                <span class="workflow-type">Composite workflow</span>
+                <h3>Email Routing</h3>
+              </div>
+              <button class="drift-badge" id="email-policy-drift" type="button" disabled>0 drifted</button>
+            </div>
+            <p class="workflow-status" id="email-policy-detail">Loading forwarding consensus</p>
+            <dl class="workflow-scope">
+              <div><dt>Changes</dt><dd>Routing enablement, catch-all forwarding, required Email Routing DNS, SPF, and DMARC</dd></div>
+              <div><dt>Policy source</dt><dd>The unique observed fleet consensus and a verified account destination</dd></div>
+            </dl>
+            <div class="workflow-actions">
+              <button class="policy-exception-badge" id="email-policy-exceptions" type="button" hidden>0 policy exceptions</button>
+              <button class="button button-accent" id="align-email" type="button" disabled>Review Email alignment</button>
+            </div>
+          </article>
+
+          <article class="workflow-card waf-workflow-card">
+            <div class="workflow-card-heading">
+              <div>
+                <span class="workflow-type">Named-rule workflow</span>
+                <h3>Shared WAF rules</h3>
+              </div>
+              <button class="drift-badge" id="waf-policy-drift" type="button" disabled>0 drifted</button>
+            </div>
+            <p class="workflow-status" id="waf-policy-detail">Loading rule consensus</p>
+            <dl class="workflow-scope">
+              <div><dt>Changes</dt><dd>Exactly the configured named fleet rules in the custom firewall phase</dd></div>
+              <div><dt>Not covered</dt><dd>Managed WAF rules, other custom rules, and unrelated Security or Rulesets facets</dd></div>
+            </dl>
+            <div class="workflow-actions">
+              <button class="button button-accent" id="align-waf" type="button" disabled>Review WAF alignment</button>
+            </div>
+          </article>
+
+          <article class="workflow-card dnssec-workflow-card">
+            <div class="workflow-card-heading">
+              <div>
+                <span class="workflow-type">Intent-driven workflow</span>
+                <h3>DNSSEC status</h3>
+              </div>
+              <span class="workflow-state" id="dnssec-workflow-state">Set intent first</span>
+            </div>
+            <p class="workflow-status" id="dnssec-workflow-detail">Define an exact DNSSEC status in Fleet intent to evaluate correctable zones.</p>
+            <dl class="workflow-scope">
+              <div><dt>Changes</dt><dd>Enable or disable DNSSEC status when exact intent requires it</dd></div>
+              <div><dt>Not covered</dt><dd>Cloudflare-generated keys, digests, and parent registrar DS publication</dd></div>
+            </dl>
+            <div class="workflow-actions">
+              <button class="button button-quiet" id="show-dnssec-workflow" type="button">Open DNSSEC in matrix</button>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="coverage" id="coverage" aria-labelledby="coverage-heading">
