@@ -138,9 +138,9 @@ export function createFleetRetrievalService({ accountId, api, readActivity, read
     return {
       ...base, freshness: { ...base.freshness, source: "live-and-stored", revision, storedAt: document.updatedAt },
       ...await page(kind, query, revision, policyStates, async (state) => ({
-        policy: await policySummary(state.policy, document), targeted: state.targetedZoneIds.includes(query.zoneId), effective: state.cells.has(query.zoneId),
+        policy: await policySummary(state.policy, document), targeted: state.targetedZoneIds.includes(query.zoneId), effective: state.effectiveZoneIds.includes(query.zoneId),
         overriddenBy: (state.overriddenByZone.get(query.zoneId) || []).map((policy) => typeof policy === "string" ? policy : policy.id),
-        status: complete ? state.cells.get(query.zoneId)?.status || null : "unknown", reason: state.reason || null,
+        status: !complete ? "unknown" : !row && state.effectiveZoneIds.includes(query.zoneId) ? "unresolved" : state.cells.get(query.zoneId)?.status || null, reason: state.reason || null,
         acknowledgements: await boundedValue(acknowledgements.filter((entry) => entry.acknowledgement.policyId === state.policy.id).map((entry) => complete ? entry : { ...entry, status: "unknown", reason: "Required live reads are incomplete" })),
       })),
       facet: facetIdentity(row || query), zoneId: query.zoneId, zoneName: zone.meta.name,
