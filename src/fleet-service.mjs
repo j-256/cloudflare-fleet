@@ -1,3 +1,6 @@
+import { buildFacetIntentDocument, facetIntentReadRequirements } from "./intent-shortcuts.mjs"
+import { composeReadPlan } from "./read-composer.mjs"
+import { facetIntentRequestSchema } from "./interface-schemas.mjs"
 import { createFleetRetrievalService } from "./retrieval.mjs"
 import {
   appendOperationActivity,
@@ -347,43 +350,70 @@ export function createFleetService(options) {
         document,
         { validatedAt: commandOptions.validatedAt },
       )
-      if (preparation.planSet.digest !== expectedDigest) {
-        throw new AlignmentPlanChangedError(
-          expectedDigest,
-          preparation.planSet.digest,
-        )
-      }
-      if (preparation.status === FLEET_INTENT_CHANGE_STATUS.UNCHANGED) {
-        return {
-          ...intentPreparationResult(accountId, preparation),
-          applied: false,
-          document: current,
-        }
-      }
-      let persisted
-      try {
-        persisted = await dependencies.persistIntent(
-          stateFile,
-          accountId,
-          current.revision,
-          preparation.desired,
-        )
-      } catch (error) {
-        if (error?.name === "FleetIntentRevisionConflictError") {
-          throw new FleetIntentChangedError(expectedDigest)
-        }
-        throw error
-      }
-      invalidateBaseline()
+      return persistPreparedIntent(current, preparation, expectedDigest)
+    })
+  }
+
+  async function persistPreparedIntent(current, preparation, expectedDigest) {
+    if (preparation.planSet.digest !== expectedDigest) {
+      throw new AlignmentPlanChangedError(
+        expectedDigest,
+        preparation.planSet.digest,
+      )
+    }
+    if (preparation.status === FLEET_INTENT_CHANGE_STATUS.UNCHANGED) {
       return {
-        accountId,
-        applied: true,
-        diff: preparation.diff,
-        document: persisted,
-        planDigest: preparation.planSet.digest,
-        schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
-        status: "saved",
+        ...intentPreparationResult(accountId, preparation),
+        applied: false,
+        document: current,
       }
+    }
+    let persisted
+    try {
+      persisted = await dependencies.persistIntent(
+        stateFile,
+        accountId,
+        current.revision,
+        preparation.desired,
+      )
+    } catch (error) {
+      if (error?.name === "FleetIntentRevisionConflictError") {
+        throw new FleetIntentChangedError(expectedDigest)
+      }
+      throw error
+    }
+    invalidateBaseline()
+    return {
+      accountId,
+      applied: true,
+      diff: preparation.diff,
+      document: persisted,
+      planDigest: preparation.planSet.digest,
+      schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+      status: "saved",
+    }
+  }
+
+  async function prepareFacetIntent(request, commandOptions = {}) {
+    request = facetIntentRequestSchema.parse(request)
+    const current = await dependencies.readIntent(stateFile, accountId)
+    const readPlan = composeReadPlan(facetIntentReadRequirements(request))
+    const inventory = await dependencies.loadInventory(api, { ...readPlan.inventory, onProgress: commandOptions.onProgress, signal: commandOptions.signal })
+    const change = buildFacetIntentDocument(current, inventory, buildMatrix(inventory), request)
+    const preparation = await dependencies.prepareIntentChange(accountId, current, change.document, { validatedAt: commandOptions.validatedAt })
+    return { current, preparation, summaries: change.summaries, zoneIds: change.zoneIds }
+  }
+
+  async function planFacetIntent(request, commandOptions = {}) {
+    const result = await prepareFacetIntent(request, commandOptions)
+    return { ...intentPreparationResult(accountId, result.preparation), summaries: result.summaries, zoneIds: result.zoneIds }
+  }
+
+  async function applyFacetIntent(request, expectedDigest, commandOptions = {}) {
+    requiredString(expectedDigest, "Expected facet intent plan digest")
+    return dependencies.withWriteLock(async () => {
+      const result = await prepareFacetIntent(request, commandOptions)
+      return { ...await persistPreparedIntent(result.current, result.preparation, expectedDigest), summaries: result.summaries, zoneIds: result.zoneIds }
     })
   }
 
@@ -959,6 +989,7 @@ export function createFleetService(options) {
     applyChange,
     applyChanges,
     applyIntent,
+    applyFacetIntent,
     getIntent,
     listActivity,
     listAdoptionCandidates,
@@ -970,6 +1001,7 @@ export function createFleetService(options) {
     planChange,
     planChanges,
     planIntent,
+    planFacetIntent,
     policyFile,
     stateFile,
   })

@@ -82,6 +82,12 @@ test("actual Worker runtime shares command persistence, browser reads and recove
   assert.equal(written.inverse.available, true)
   const browserActivity = await runtime.dispatchFetch("http://localhost/api/activity")
   assert.equal((await browserActivity.json()).result.entries[0].id, written.activity.id)
+  const facetRequest = { facets: [{ category: "Zone settings", key: "always_use_https" }], mode: "current", zoneIds: ["zone-one"] }
+  const facetPlan = await remote.planFacetIntent(facetRequest)
+  assert.equal(facetPlan.status, "planned")
+  const facetResult = await remote.applyFacetIntent(facetRequest, facetPlan.planSet.digest)
+  assert.equal(facetResult.status, "saved")
+  assert.equal((await (await runtime.dispatchFetch("http://localhost/api/intent")).json()).result.policies.some((policy) => policy.facet.key === "always_use_https"), true)
   const undo = await remote.planActivityUndo(written.activity.id)
   assert.equal((await remote.applyActivityUndo(written.activity.id, undo.planSet.digest)).status, "verified")
   assert.equal((await remote.planChange(change)).status, "planned")

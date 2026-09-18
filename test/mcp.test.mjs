@@ -84,6 +84,26 @@ test("MCP rule copying uses explicit destinations and requires reviewed approval
   assert.notEqual(applied.isError, true)
   assert.deepEqual(calls.applyChange, [{ change, digest: DIGEST }])
 })
+test("MCP facet intent accepts a bounded multi-group request only after signed consent", async (context) => {
+  let approve = false
+  const { client, calls } = await connectedFixture(context, {
+    elicitationHandler: async (request) => approve ? approvedElicitation(request) : { action: "cancel" },
+  })
+  const request = { facets: [{ category: "Zone settings", key: "always_use_https" }], mode: "source", sourceZoneId: "zone-one", groupIds: ["first", "second", "third"] }
+  const plan = await client.callTool({ name: "plan_facet_intent", arguments: { request } })
+  assert.equal(plan.isError, undefined)
+  assert.deepEqual(calls.planFacetIntent, [request])
+  const declined = await client.callTool({ name: "apply_facet_intent", arguments: { request, planDigest: DIGEST } })
+  assert.equal(declined.structuredContent.status, "confirmation-declined")
+  assert.equal(calls.applyFacetIntent.length, 0)
+  approve = true
+  const applied = await client.callTool({ name: "apply_facet_intent", arguments: { request, planDigest: DIGEST } })
+  assert.notEqual(applied.isError, true)
+  assert.deepEqual(calls.applyFacetIntent, [{ request, digest: DIGEST }])
+  const invalid = await client.callTool({ name: "plan_facet_intent", arguments: { request: { ...request, zoneIds: ["zone-one"] } } })
+  assert.equal(invalid.isError, true)
+})
+
 const TOOL_NAMES = Object.freeze([
   "get_runtime_status",
   "check_hosted_release",
@@ -105,6 +125,8 @@ const TOOL_NAMES = Object.freeze([
   "get_fleet_intent",
   "plan_fleet_intent",
   "apply_fleet_intent",
+  "plan_facet_intent",
+  "apply_facet_intent",
   "list_adoption_candidates",
   "plan_fleet_adoption",
   "apply_fleet_adoption",
@@ -358,6 +380,7 @@ function serviceFixture(overrides = {}) {
     applyChange: [],
     applyChanges: [],
     applyIntent: [],
+    applyFacetIntent: [],
     applyUndo: [],
     apply: [],
     applyBatch: [],
@@ -371,6 +394,7 @@ function serviceFixture(overrides = {}) {
     planChange: [],
     planChanges: [],
     planIntent: [],
+    planFacetIntent: [],
     planUndo: [],
   }
   const service = {
@@ -437,6 +461,14 @@ function serviceFixture(overrides = {}) {
         schemaVersion: 1,
         status: "saved",
       }
+    },
+    async planFacetIntent(request) {
+      calls.planFacetIntent.push(request)
+      return this.planIntent(INTENT_DOCUMENT)
+    },
+    async applyFacetIntent(request, digest) {
+      calls.applyFacetIntent.push({ request, digest })
+      return this.applyIntent(INTENT_DOCUMENT, digest)
     },
     async getIntent() {
       calls.getIntent += 1
