@@ -2276,7 +2276,6 @@ function createRulesetRuleCard(workspace, rule) {
         {
           ariaLabel: `Edit ${label}`,
           icon: "edit",
-          iconOnly: true,
           title: "Edit this rule after an exact live reread",
           tooltipAlign: "end",
           write: true,
@@ -2289,7 +2288,6 @@ function createRulesetRuleCard(workspace, rule) {
         {
           ariaLabel: `${enabled ? "Disable" : "Enable"} ${label}`,
           icon: enabled ? "absent" : "active",
-          iconOnly: true,
           title: `${enabled ? "Disable" : "Enable"} this rule after an exact live reread`,
           tooltipAlign: "end",
           write: true,
@@ -4139,7 +4137,7 @@ function renderCategoryCapability() {
       matrixCapabilityFact(
         "info",
         "Cell-scoped paths",
-        "Row and cell actions show the available path; multi-setting workflows remain scoped separately above",
+        "Row and cell actions show the available path; use Workflows for Email Routing, Shared WAF, and DNSSEC",
       ),
     )
   } else {
@@ -7197,9 +7195,7 @@ function intentActionButton(label, action, options = {}) {
   return button
 }
 
-// Compact "icon + number" chip for the policy row's effective-result counts. The
-// word (and, for need-attention, the affected zones) lives in the hover tooltip
-// and aria-label, so the counts read at a glance instead of as a pipe-run
+// Keep outcome labels visible so policy counts can be understood without hover
 function intentResultChip(iconName, count, label, options = {}) {
   const { tone = "", title = "", onClick = null } = options
   const interactive = typeof onClick === "function"
@@ -7208,7 +7204,7 @@ function intentResultChip(iconName, count, label, options = {}) {
   })
   const description = title || `${count} ${label}`
   chip.setAttribute("aria-label", description)
-  chip.append(icon(iconName), document.createTextNode(String(count)))
+  chip.append(icon(iconName), document.createTextNode(`${count} ${label}`))
   if (interactive) {
     chip.type = "button"
     chip.addEventListener("click", onClick)
@@ -7228,7 +7224,6 @@ function intentPolicyMatrixButton(policy, row, context) {
       context,
       disabled: !available,
       icon: "matrix",
-      iconOnly: true,
       title: available
         ? "Close fleet intent and focus this facet in the matrix"
         : "This saved facet is absent from every loaded zone, so the matrix has no observed row to show",
@@ -7443,7 +7438,7 @@ function renderIntentGroups() {
       actions.append(intentActionButton(
         "Edit",
         () => openIntentGroupEditor(group),
-        { context: group.name, icon: "edit", iconOnly: true, write: true },
+        { context: group.name, icon: "edit", write: true },
       ))
       if (policies.length === 0) {
         actions.append(intentActionButton("Remove", () => requestIntentRemoval({
@@ -7455,7 +7450,6 @@ function renderIntentGroups() {
           context: group.name,
           danger: true,
           icon: "remove",
-          iconOnly: true,
           write: true,
         }))
       }
@@ -7979,7 +7973,7 @@ function renderIntentPolicies() {
         successMessage: `${policy.facet.label} intent removed`,
         summary: `Remove intent for ${policy.facet.label}? Its acknowledgements will also be removed.`,
         title: "Remove facet intent",
-      }), { context: actionContext, danger: true, icon: "remove", iconOnly: true, write: true }),
+      }), { context: actionContext, danger: true, icon: "remove", write: true }),
     )
     item.append(actions)
     fragment.append(item)
@@ -9259,7 +9253,6 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
       {
         context: `${row.label} on ${zone.meta.name}`,
         icon: alignment.available ? "align" : "drift",
-        iconOnly: true,
         title: alignment.reason,
       },
     )
@@ -9291,7 +9284,6 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
     const button = matrixActionButton("Acknowledge", "acknowledge-intent", {
       accessibleName: `Acknowledge ${row.label} on ${zone.meta.name}`,
       icon: "ack",
-      iconOnly: true,
       title: "Accept only this exact observed state as intentional",
     })
     button.disabled = !intentWritable()
@@ -9311,7 +9303,6 @@ function appendIntentCellAction(actions, row, zone, intentCell) {
       {
         context: `Remove acknowledgement for ${row.label} on ${zone.meta.name}`,
         icon: "remove",
-        iconOnly: true,
         title: "Return this exact difference to actionable drift",
       },
     )
@@ -9375,7 +9366,6 @@ function matrixCell(row, zone) {
       const fillButton = matrixActionButton("Fill", "fill-hole", {
         accessibleName: label,
         icon: "add",
-        iconOnly: true,
         title: "Build a live plan from the fleet value",
         tooltipAlign: "end",
         tooltipBelow: true,
@@ -9462,7 +9452,6 @@ function matrixCell(row, zone) {
       const inspectButton = matrixActionButton("Inspect", "inspect-facet-value", {
         accessibleName: `Inspect compared and source values for ${row.label} on ${zone.meta.name}`,
         icon: "inspect",
-        iconOnly: true,
         title: "See the exact compared value beside its source value",
       })
       inspectButton.addEventListener("click", () => {
@@ -9474,7 +9463,6 @@ function matrixCell(row, zone) {
       const parentButton = matrixActionButton("Ruleset", "open-ruleset", {
         accessibleName: `Open the parent ruleset for ${row.label} on ${zone.meta.name}`,
         icon: "layers",
-        iconOnly: true,
         title: "Open the parent ruleset workspace",
       })
       workspaceActionByButton.set(parentButton, cell.parentAction)
@@ -9484,7 +9472,6 @@ function matrixCell(row, zone) {
       const editButton = matrixActionButton("Edit", "edit-cell", {
         accessibleName: editActionLabel(cell.action, row, zone),
         icon: "edit",
-        iconOnly: true,
         title: "Open the desired-state editor; live state is checked before confirmation",
       })
       editButton.disabled = state.busy
@@ -9495,7 +9482,6 @@ function matrixCell(row, zone) {
       const button = matrixActionButton("Copy", "copy-rule", {
         accessibleName: `Copy ${row.label} from ${zone.meta.name} to selected zones`,
         icon: "copy",
-        iconOnly: true,
         title: `Copy this rule from ${zone.meta.name} to the selected zones after live validation`,
       })
       button.dataset.phase = cell.secondaryAction.phase

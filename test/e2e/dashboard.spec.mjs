@@ -228,9 +228,8 @@ test("keeps dense matrix controls legible and self-explanatory", async ({ dashbo
   const edit = page.getByRole("button", {
     name: `Edit always_use_https on ${zoneNames[0]}`,
   })
-  await expect(edit).toHaveClass(/matrix-icon-action/)
   await expect(edit.locator(":scope > .icon")).toHaveCount(1)
-  await expect(edit.locator(":scope > .control-label")).toHaveCount(0)
+  await expect(edit.locator(":scope > .control-label")).toHaveText("Edit")
   await edit.hover()
   await expect(edit.locator(":scope > .tooltip")).toHaveCSS("opacity", "1")
 
@@ -428,9 +427,8 @@ test("keeps the ruleset workspace and desired-state editor legible", async ({ da
     .toHaveCount(3)
   await expect(ruleset.locator(".rule-card-badge > .icon")).toHaveCount(2)
   const edit = ruleset.getByRole("button", { name: "Edit Protect service" })
-  await expect(edit).toHaveClass(/ruleset-icon-action/)
   await expect(edit.locator(":scope > .icon")).toHaveCount(1)
-  await expect(edit.locator(":scope > .control-label")).toHaveCount(0)
+  await expect(edit.locator(":scope > .control-label")).toHaveText("Edit")
   await expectKeyboardTooltip(edit)
   await expect(ruleset).toBeVisible()
   await expectLegibleSurface(ruleset)
