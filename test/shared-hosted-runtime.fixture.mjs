@@ -10,6 +10,7 @@ globalThis.fetch = (input, options) => {
       success: true, result: [zone], result_info: { page: 1, per_page: 50, total_pages: 1, count: 1, total_count: 1 },
     }))
     if (url.pathname === "/client/v4/zones/zone-one") return Promise.resolve(Response.json({ success: true, result: zone }))
+    if (url.pathname === "/client/v4/zones/zone-one/settings") return Promise.resolve(Response.json({ success: true, result: [{ id: "always_use_https", editable: true, value: settingValue }] }))
     if (url.pathname === "/client/v4/zones/zone-one/settings/always_use_https") {
       if (options?.method === "PATCH") settingValue = JSON.parse(options.body).value
       return Promise.resolve(Response.json({ success: true, result: { id: "always_use_https", editable: true, value: settingValue } }))

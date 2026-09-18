@@ -1,6 +1,6 @@
 import { z } from "zod"
 import {
-  fleetChangeSchema, fleetChangesSchema, fleetIntentDocumentSchema, digestSchema, identifierSchema, activityRecoverySchema,
+  fleetChangeSchema, fleetChangesSchema, fleetIntentDocumentSchema, facetIntentRequestSchema, digestSchema, identifierSchema, activityRecoverySchema,
   workerInspectionSchema, workerHistorySchema, workerIntentInputSchema, workerVerificationSchema,
 } from "./interface-schemas.mjs"
 import { normalizeAlignmentSelector, normalizeAlignmentSelectors } from "./alignment-service.mjs"
@@ -21,6 +21,8 @@ const schemas = {
   "intent-get": empty,
   "intent-plan": z.strictObject({ document: fleetIntentDocumentSchema }),
   "intent-apply": z.strictObject({ document: fleetIntentDocumentSchema, planDigest: digestSchema }),
+  "facet-intent-plan": z.strictObject({ request: facetIntentRequestSchema }),
+  "facet-intent-apply": z.strictObject({ request: facetIntentRequestSchema, planDigest: digestSchema }),
   "alignment-list": empty,
   "alignment-plan": z.strictObject({ selector }),
   "alignment-apply": z.strictObject({ selector, planDigest: digestSchema }),
@@ -109,6 +111,8 @@ async function dispatchFleetServiceCommand(service, command, accountId, input, c
     case "intent-get": return service.getIntent()
     case "intent-plan": return service.planIntent(input.document, context)
     case "intent-apply": return service.applyIntent(input.document, input.planDigest, context)
+    case "facet-intent-plan": return service.planFacetIntent(input.request, context)
+    case "facet-intent-apply": return service.applyFacetIntent(input.request, input.planDigest, context)
     case "alignment-list": return service.listAlignments(context)
     case "alignment-plan": return service.planAlignment(normalizeAlignmentSelector(input.selector), context)
     case "alignment-apply": return service.applyAlignment(normalizeAlignmentSelector(input.selector), input.planDigest, context)

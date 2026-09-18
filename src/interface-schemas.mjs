@@ -1,3 +1,4 @@
+import { FACET_INTENT_LIMIT, FACET_INTENT_ZONE_LIMIT, FACET_INTENT_MODE } from "./intent-shortcuts.mjs"
 import { z } from "zod"
 import { WORKER_NAME_PATTERN, WORKER_FINDING_PATTERN, WORKER_SCHEDULE_KIND } from "./worker-triggers.mjs"
 
@@ -437,6 +438,27 @@ export const fleetIntentDocumentSchema = z.strictObject({
       message: "Document relationships or normalized values are invalid",
     })
   }
+})
+
+export const facetIntentRequestSchema = z.strictObject({
+  facets: z.array(z.strictObject({ category: identifierSchema, key: identifierSchema, phase: identifierSchema.optional() })).min(1).max(FACET_INTENT_LIMIT)
+    .describe("Exact facet keys from list_facets; each selected facet is saved atomically"),
+  mode: z.enum(Object.values(FACET_INTENT_MODE))
+    .describe("current preserves each selected zone's exact present value or absence; source sets one observed value across the selected scopes; saved keeps an existing policy expectation; absent forbids presence"),
+  groupIds: z.array(identifierSchema).min(1).max(FACET_INTENT_ZONE_LIMIT).optional()
+    .describe("Apply to all selected groups in one save; use this or zoneIds"),
+  zoneIds: z.array(identifierSchema).min(1).max(FACET_INTENT_ZONE_LIMIT).optional(),
+  sourceZoneId: identifierSchema.optional().describe("Required for source mode"),
+  policyId: identifierSchema.optional().describe("Required for saved mode; preserve this facet policy's presence, value constraint and expected value while editing its scopes"),
+  removeGroupIds: z.array(identifierSchema).max(FACET_INTENT_ZONE_LIMIT).optional()
+    .describe("Explicitly remove these groups' policies for the selected facets"),
+  absentOutside: z.boolean().optional()
+    .describe("In source or saved mode, replace this facet's other scopes with an all-zones absence default; selected groups override it"),
+}).superRefine((value, context) => {
+  if (Boolean(value.groupIds) === Boolean(value.zoneIds)) context.addIssue({ code: "custom", message: "Choose groupIds or zoneIds" })
+  if ((value.mode === "source") !== Boolean(value.sourceZoneId)) context.addIssue({ code: "custom", message: "Only source mode requires sourceZoneId" })
+  if ((value.mode === "saved") !== Boolean(value.policyId)) context.addIssue({ code: "custom", message: "Only saved mode requires policyId" })
+  if (value.absentOutside && !["source", "saved"].includes(value.mode)) context.addIssue({ code: "custom", message: "absentOutside requires source or saved mode" })
 })
 
 export const activityUndoInputSchema = z.strictObject({
