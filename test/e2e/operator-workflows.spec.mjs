@@ -1,4 +1,129 @@
 import { expect, test } from "./dashboard.fixture.mjs"
+import { persistFleetIntentDocument, readFleetIntentDocument } from "../../src/intent-store.mjs"
+import { createAuthoredFleetIntentExpected, replaceFleetIntentGroup, replaceFleetIntentPolicy } from "../../src/fleet-intent.mjs"
+
+test("accepts differing current values in one save and supports undo", async ({ dashboard }) => {
+  const { page, requests, stateFile } = dashboard
+  await page.getByPlaceholder("Search facets, values, or zones").fill("always_use_https")
+  await page.getByRole("button", { name: "Accept current state for always_use_https", exact: true }).click()
+  const editor = page.locator("#facet-intent-dialog")
+  await expect(editor.getByRole("button", { name: "Save intent", exact: true })).toBeEnabled()
+  await expect(editor).toContainText("Differences between zones stay intentional")
+  await expect(editor.locator("textarea")).toHaveCount(0)
+  await editor.getByRole("button", { name: "Save intent", exact: true }).click()
+  await expect(editor).not.toBeVisible()
+  const saved = await readFleetIntentDocument(stateFile, "e2e-account")
+  const policies = saved.policies.filter((policy) => policy.facet.key === "always_use_https")
+  expect(policies).toHaveLength(3)
+  expect(new Set(policies.map((policy) => policy.expected.value))).toEqual(new Set(["on", "off"]))
+  expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
+  await page.getByRole("button", { name: /Undo last fleet intent change: Intent saved for always_use_https/ }).click()
+  await expect(page.locator("#toast-message")).toHaveText("Fleet intent change undone")
+  expect((await readFleetIntentDocument(stateFile, "e2e-account")).policies).toHaveLength(0)
+})
+
+test("saves one rule to several groups without switching editors or reading JSON", async ({ dashboard }) => {
+  const { page, requests, stateFile, zoneNames, waitForReady } = dashboard
+  const initial = await readFleetIntentDocument(stateFile, "e2e-account")
+  let seeded = initial
+  for (const [index, name] of zoneNames.entries()) seeded = replaceFleetIntentGroup(seeded, {
+    id: `group-${index}`, name: `Sites ${index + 1}`, nameSource: "custom", mode: "members", members: [{ zoneId: `zone-${name}`, zoneName: name }],
+  })
+  await persistFleetIntentDocument(stateFile, "e2e-account", initial.revision, seeded)
+  await page.reload()
+  await waitForReady()
+  await page.getByPlaceholder("Search facets, values, or zones").fill("Protect service")
+  await page.getByRole("button", { name: "Set intent: Set intent for Protect service" }).click()
+  const editor = page.locator("#facet-intent-dialog")
+  await editor.getByRole("button", { name: "Match a zone", exact: true }).click()
+  for (const name of ["Sites 1", "Sites 2", "Sites 3"]) await editor.getByRole("checkbox", { name: new RegExp(`^${name}`) }).check()
+  await expect(editor.getByRole("checkbox", { name: /^All zones/ })).not.toBeChecked()
+  await editor.getByLabel("Use the value from").selectOption(`zone-${zoneNames[0]}`)
+  for (const name of ["Sites 1", "Sites 2", "Sites 3"]) await expect(editor.getByRole("checkbox", { name: new RegExp(`^${name}`) })).toBeChecked()
+  await editor.getByRole("button", { name: "Save intent", exact: true }).click()
+  await expect(editor).not.toBeVisible()
+  const saved = await readFleetIntentDocument(stateFile, "e2e-account")
+  expect(saved.policies.map((policy) => policy.groupId).sort()).toEqual(["group-0", "group-1", "group-2"])
+  expect(new Set(saved.policies.map((policy) => policy.expected.canonical)).size).toBe(1)
+  expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
+})
+
+test("accepts selected facets together without applying Cloudflare changes", async ({ dashboard }) => {
+  const { page, requests, stateFile } = dashboard
+  for (const name of ["always_use_https", "Protect service"]) {
+    await page.getByPlaceholder("Search facets, values, or zones").fill(name)
+    await page.getByRole("checkbox", { name: `Select ${name} for intent`, exact: true }).check()
+  }
+  await page.getByRole("button", { name: "Accept current state (2)", exact: true }).click()
+  const editor = page.locator("#facet-intent-dialog")
+  await expect(editor).toContainText("always_use_https")
+  await expect(editor).toContainText("Protect service")
+  await editor.getByRole("button", { name: "Save intent", exact: true }).click()
+  await expect(editor).not.toBeVisible()
+  const saved = await readFleetIntentDocument(stateFile, "e2e-account")
+  expect(new Set(saved.policies.map((policy) => policy.facet.category))).toEqual(new Set(["Zone settings", "Ruleset rules"]))
+  expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
+})
+
+test("changing coverage preserves a saved custom value", async ({ dashboard }) => {
+  const { page, stateFile, zoneNames, waitForReady } = dashboard
+  const initial = await readFleetIntentDocument(stateFile, "e2e-account")
+  const expected = createAuthoredFleetIntentExpected("a-custom-saved-value")
+  let seeded = replaceFleetIntentGroup(initial, { id: "one-zone", name: "One zone", nameSource: "custom", mode: "members", members: [{ zoneId: `zone-${zoneNames[0]}`, zoneName: zoneNames[0] }] })
+  seeded = replaceFleetIntentPolicy(seeded, { id: "custom-setting", groupId: "all-zones", facet: { category: "Zone settings", key: "always_use_https", label: "always_use_https", description: "" }, expected, presenceConstraint: "required", valueConstraint: "exact" })
+  await persistFleetIntentDocument(stateFile, "e2e-account", initial.revision, seeded)
+  await page.reload()
+  await waitForReady()
+  await page.getByPlaceholder("Search facets, values, or zones").fill("always_use_https")
+  await page.locator(".intent-set-policy").click()
+  const editor = page.locator("#facet-intent-dialog")
+  await expect(editor.getByRole("button", { name: "Keep saved expectation" })).toHaveAttribute("aria-pressed", "true")
+  await expect(editor).toContainText("a-custom-saved-value")
+  await editor.getByRole("checkbox", { name: /^One zone/ }).check()
+  await editor.getByRole("button", { name: "Save intent", exact: true }).click()
+  await expect(editor).not.toBeVisible()
+  const saved = await readFleetIntentDocument(stateFile, "e2e-account")
+  expect(saved.policies).toHaveLength(1)
+  expect(saved.policies[0].groupId).toBe("one-zone")
+  expect(saved.policies[0].expected).toEqual(expected)
+})
+
+test("live changes invalidate current-state acceptance until the new values are reviewed", async ({ dashboard }) => {
+  const { page, stateFile, zoneNames, setSettingValue } = dashboard
+  await page.getByPlaceholder("Search facets, values, or zones").fill("always_use_https")
+  await page.getByRole("button", { name: "Accept current state for always_use_https", exact: true }).click()
+  const editor = page.locator("#facet-intent-dialog")
+  await expect(editor.getByRole("button", { name: "Save intent", exact: true })).toBeEnabled()
+  setSettingValue(zoneNames[0], "always_use_https", "changed-live")
+  await editor.getByRole("button", { name: "Save intent", exact: true }).click()
+  await expect(editor.getByRole("alert")).toContainText("Live values changed")
+  expect((await readFleetIntentDocument(stateFile, "e2e-account")).policies).toHaveLength(0)
+  await expect(editor).toContainText("changed-live")
+  await editor.getByRole("button", { name: "Save intent", exact: true }).click()
+  await expect(editor).not.toBeVisible()
+  expect((await readFleetIntentDocument(stateFile, "e2e-account")).policies.some((policy) => policy.expected.value === "changed-live")).toBe(true)
+})
+
+test("intent and copy pickers fit a phone and retain a visible save action", async ({ dashboard }) => {
+  const { page, zoneNames } = dashboard
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByPlaceholder("Search facets, values, or zones").fill("Protect service")
+  await page.getByRole("button", { name: "Accept current state for Protect service", exact: true }).click()
+  const editor = page.locator("#facet-intent-dialog")
+  await expect(editor.getByRole("button", { name: "Save intent", exact: true })).toBeInViewport()
+  expect(await editor.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await editor.getByRole("button", { name: "Cancel", exact: true }).click()
+  await page.getByRole("button", { name: "Copy Protect service between zones", exact: true }).click()
+  const copy = page.locator("#rule-copy-dialog")
+  await copy.getByRole("checkbox", { name: zoneNames[1], exact: true }).check()
+  await expect(copy.getByRole("button", { name: "Review copy", exact: true })).toBeInViewport()
+  expect(await copy.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await copy.getByRole("button", { name: "Review copy", exact: true }).click()
+  const confirmation = page.locator("#confirm-dialog")
+  expect(await confirmation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await expect(confirmation.locator(".operation-change")).toContainText("StatusDisabled")
+  await expect(confirmation.locator(".operation-change")).toContainText("StatusEnabled")
+})
 
 test("copies a rule without global targets and verifies guarded undo", async ({ dashboard }) => {
   const { page, requests, zoneNames } = dashboard
@@ -14,7 +139,7 @@ test("copies a rule without global targets and verifies guarded undo", async ({ 
   const confirmation = page.locator("#confirm-dialog")
   await expect(confirmation).toBeVisible()
   await expect(confirmation).toContainText(zoneNames[1])
-  await expect(confirmation.locator(".operation-change")).toContainText("EnabledYes")
+  await expect(confirmation.locator(".operation-change")).toContainText("StatusEnabled")
   expect(requests.filter((request) => request.method !== "GET")).toHaveLength(0)
   await confirmation.getByRole("checkbox").check()
   await confirmation.getByRole("button", { name: "Apply and verify" }).click()

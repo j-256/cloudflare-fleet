@@ -119,7 +119,7 @@ test("reviews and applies exact intent alignment from a drifting cell", async ({
   await page.getByRole("button", { name: "Manage fleet intent" }).click()
   const manager = page.getByRole("dialog", { name: "Fleet intent" })
   await expect(manager.getByRole("button", {
-    name: "Review alignment (1): always_use_https for All zones",
+    name: "Align 1: always_use_https",
   })).toBeVisible()
   await manager.getByRole("button", { name: "Done" }).click()
 
@@ -184,6 +184,7 @@ test("uses the typed alias template and reviewed alignment in the dashboard", as
   await page.getByRole("button", {
     name: "Set intent: Set intent for Canonical web passthrough",
   }).click()
+  await page.locator("#facet-intent-dialog").getByRole("button", { name: "Advanced", exact: true }).click()
 
   const policy = page.getByRole("dialog", { name: "Set facet intent" })
   await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
@@ -256,6 +257,7 @@ test("keeps hostname-scoped rate limits and their WAF skip in one reviewed postu
   await page.getByRole("button", {
     name: "Set intent: Set intent for Hostname-scoped Free rate limit",
   }).click()
+  await page.locator("#facet-intent-dialog").getByRole("button", { name: "Advanced", exact: true }).click()
 
   const policy = page.getByRole("dialog", { name: "Set facet intent" })
   await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
@@ -430,13 +432,12 @@ test("aligns Email Routing settings and shows unsupported reasons", async ({ ema
 
   await page.getByRole("button", { name: "Manage fleet intent" }).click()
   const manager = page.getByRole("dialog", { name: "Fleet intent" })
-  const blockedPolicy = manager.locator("[data-intent-policy-card]").filter({
+  const blockedPolicy = manager.locator("[data-intent-facet-card]").filter({
     hasText: "Cloudflare reports Email Routing status as read-only",
   })
   await expect(blockedPolicy).toBeVisible()
-  await expect(blockedPolicy.getByRole("button", {
-    name: "Alignment blocked (1): status for All zones",
-  })).toBeDisabled()
+  await expect(blockedPolicy.locator(":scope > .intent-facet-coverage [data-alignment-blocked-reason]")).toContainText("Cloudflare reports Email Routing status as read-only")
+  await expect(blockedPolicy.getByRole("button", { name: "Edit coverage: status" })).toBeVisible()
 })
 
 test("confirms rules individually without exposing a parent ruleset facet", async ({ dashboard }) => {
@@ -455,6 +456,7 @@ test("confirms rules individually without exposing a parent ruleset facet", asyn
   await page.getByRole("button", {
     name: "Set intent: Set intent for Protect service",
   }).click()
+  await page.locator("#facet-intent-dialog").getByRole("button", { name: "Advanced", exact: true }).click()
   const policy = page.getByRole("dialog", { name: "Set facet intent" })
   await expect(policy).toContainText("Ruleset rules | Protect service")
   await expect(policy.getByRole("radio", { name: /^Required/ })).toBeChecked()
