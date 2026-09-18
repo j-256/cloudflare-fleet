@@ -117,7 +117,7 @@ afterEach(() => {
   else globalThis.document = ORIGINAL_DOCUMENT
 })
 
-test("attachTooltip creates a positioned focus target that Escape dismisses", () => {
+test("Escape dismisses a tooltip without losing focus or trapping the next Escape", () => {
   const document = new FakeDocument()
   const host = document.createElement("span")
   attachTooltip(host, "Live state was validated", {
@@ -138,9 +138,13 @@ test("attachTooltip creates a positioned focus target that Escape dismisses", ()
 
   host.focus()
   const event = host.dispatch("keydown", { key: ESCAPE_KEY })
-  assert.equal(document.activeElement, null)
+  assert.equal(document.activeElement, host)
+  assert.equal(host.classList.contains("tooltip-dismissed"), true)
   assert.equal(event.defaultPrevented, true)
   assert.equal(event.propagationStopped, true)
+  const next = host.dispatch("keydown", { key: ESCAPE_KEY })
+  assert.equal(next.defaultPrevented, undefined)
+  assert.equal(next.propagationStopped, undefined)
 })
 
 test("attachTooltip updates one tooltip without duplicating listeners", () => {

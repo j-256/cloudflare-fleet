@@ -3,6 +3,7 @@ import { icon as createIcon } from "./app-icons.mjs"
 
 const ESCAPE_KEY = "Escape"
 const TOOLTIP_DISMISSED_CLASS = "tooltip-dismissed"
+const TOOLTIP_VIEWPORT_MARGIN = 8
 const TOOLTIP_ALIGNMENT_CLASS = Object.freeze({
   end: " tooltip--align-end",
   start: " tooltip--align-start",
@@ -13,11 +14,12 @@ const tooltipEscapeHosts = new WeakSet()
 function dismissTooltipOnEscape(event) {
   if (event.key !== ESCAPE_KEY) return
   const host = event.currentTarget
+  if (host.classList.contains(TOOLTIP_DISMISSED_CLASS)) return
   const active = host.ownerDocument?.activeElement
   if (active !== host && !host.contains(active)) return
   event.preventDefault()
   event.stopPropagation()
-  active?.blur()
+  host.classList.add(TOOLTIP_DISMISSED_CLASS)
 }
 
 function dismissTooltipOnActivation(event) {
@@ -26,6 +28,28 @@ function dismissTooltipOnActivation(event) {
 
 function restoreTooltip(event) {
   event.currentTarget.classList.remove(TOOLTIP_DISMISSED_CLASS)
+}
+
+function positionTooltip(event) {
+  restoreTooltip(event)
+  const host = event.currentTarget
+  const viewport = host.ownerDocument.defaultView
+  if (!viewport) return
+  const tip = host.querySelector(":scope > .tooltip")
+  if (!tip) return
+  tip.style.setProperty("--tooltip-offset-x", "0px")
+  tip.style.setProperty("--tooltip-offset-y", "0px")
+  const bounds = tip.getBoundingClientRect()
+  const offsetX = Math.max(
+    TOOLTIP_VIEWPORT_MARGIN - bounds.left,
+    Math.min(0, viewport.innerWidth - TOOLTIP_VIEWPORT_MARGIN - bounds.right),
+  )
+  const offsetY = Math.max(
+    TOOLTIP_VIEWPORT_MARGIN - bounds.top,
+    Math.min(0, viewport.innerHeight - TOOLTIP_VIEWPORT_MARGIN - bounds.bottom),
+  )
+  tip.style.setProperty("--tooltip-offset-x", `${offsetX}px`)
+  tip.style.setProperty("--tooltip-offset-y", `${offsetY}px`)
 }
 
 export function attachTooltip(element, text, options = {}) {
@@ -46,12 +70,13 @@ export function attachTooltip(element, text, options = {}) {
   if (!existingTip) element.append(tip)
   if (!tooltipEscapeHosts.has(element)) {
     element.addEventListener("keydown", dismissTooltipOnEscape)
+    element.addEventListener("pointerenter", positionTooltip)
+    element.addEventListener("focusin", positionTooltip)
     tooltipEscapeHosts.add(element)
   }
   if (options.dismissOnActivation && !tooltipActivationHosts.has(element)) {
     element.addEventListener("click", dismissTooltipOnActivation)
     element.addEventListener("blur", restoreTooltip)
-    element.addEventListener("pointerenter", restoreTooltip)
     tooltipActivationHosts.add(element)
   }
   return element
