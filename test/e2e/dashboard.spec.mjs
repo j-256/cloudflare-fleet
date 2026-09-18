@@ -2,6 +2,15 @@ import {
   expect,
   test,
 } from "./dashboard.fixture.mjs"
+import {
+  createAuthoredFleetIntentExpected,
+  FLEET_INTENT_ALL_ZONES_GROUP_ID,
+  replaceFleetIntentPolicy,
+} from "../../src/fleet-intent.mjs"
+import {
+  persistFleetIntentDocument,
+  readFleetIntentDocument,
+} from "../../src/intent-store.mjs"
 
 const MINIMUM_VISIBLE_FONT_SIZE = 11
 
@@ -322,6 +331,38 @@ test("persists a saved intent scope and lets browser Back exit the workspace", a
   await page.getByRole("button", { name: "Manage fleet intent" }).click()
   await intentDialog.getByRole("button", { name: /^Groups/ }).click()
   await expect(intentDialog).toContainText("Primary sites")
+})
+
+test("an unavailable facet's saved policy stays editable without claiming observed matches", async ({ dashboard }) => {
+  const { page, stateFile, requests } = dashboard
+  const accountId = "e2e-account"
+  const initial = await readFleetIntentDocument(stateFile, accountId)
+  const seeded = replaceFleetIntentPolicy(initial, {
+    id: "retired-policy",
+    groupId: FLEET_INTENT_ALL_ZONES_GROUP_ID,
+    facet: { category: "Zone settings", key: "retired_setting", label: "Retired setting", description: "A saved setting absent from the snapshot" },
+    expected: createAuthoredFleetIntentExpected(null),
+  })
+  await persistFleetIntentDocument(stateFile, accountId, initial.revision, seeded)
+  await page.reload()
+  await page.getByRole("button", { name: "Manage fleet intent", exact: true }).click()
+  const card = page.locator("[data-intent-policy-card]").filter({ hasText: "Retired setting" })
+  await expect(card).toContainText("Not evaluated")
+  await expect(card.locator(".intent-result-chip.aligned")).toHaveCount(0)
+  await card.getByRole("button", { name: "Edit: Retired setting for All zones", exact: true }).click()
+  const editor = page.locator("#intent-policy-dialog")
+  await expect(editor).toBeVisible()
+  await expect(editor.locator("#intent-policy-target")).toContainText("No loaded observation")
+  await expect(editor.locator("#intent-policy-custom-raw")).toHaveValue("null")
+  await editor.locator("#intent-policy-presence-forbidden").check()
+  await editor.locator("#intent-policy-save").click()
+  await expect(page.locator("#intent-dialog")).toBeVisible()
+  const saved = await readFleetIntentDocument(stateFile, accountId)
+  expect(saved.policies.find((policy) => policy.id === "retired-policy").presenceConstraint).toBe("forbidden")
+  expect(saved.policies).toHaveLength(seeded.policies.length)
+  expect(requests.every((request) => request.method === "GET")).toBe(true)
+  await page.reload()
+  await expect(page.locator("[data-intent-policy-card]").filter({ hasText: "Retired setting" })).toContainText("Not evaluated")
 })
 
 test("applies and verifies a setting change through the reviewed write flow", async ({ dashboard }) => {

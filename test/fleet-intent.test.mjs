@@ -1591,3 +1591,25 @@ test("unresolved policies and unavailable group members stay visible", () => {
   evaluation = evaluateFleetIntent(document, inventory, matrix)
   assert.equal(evaluation.summary.unresolvedPolicies, 1)
 })
+
+test("unavailable facets never produce matching or actionable policy cells", () => {
+  const { inventory, row } = fixture()
+  for (const presenceConstraint of Object.values(FLEET_INTENT_PRESENCE_CONSTRAINT)) {
+    const document = replaceFleetIntentPolicy(
+      createEmptyFleetIntentDocument("account-id"),
+      policy(row, {
+        expected: null,
+        presenceConstraint,
+        valueConstraint: FLEET_INTENT_VALUE_CONSTRAINT.MAY_DIFFER,
+      }),
+    )
+    const evaluation = evaluateFleetIntent(document, inventory, { rows: [] })
+    const result = evaluation.policyStates[0]
+    assert.equal(result.unresolved, true)
+    assert.equal(result.matchCount, 0)
+    assert.equal(result.actionableCount, 0)
+    assert.equal(result.cells.size, 0)
+    assert.equal(result.targetCount, inventory.zones.length)
+    assert.equal(result.effectiveCount, inventory.zones.length)
+  }
+})

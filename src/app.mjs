@@ -5511,6 +5511,15 @@ function intentPolicyRow(policy) {
   ) || null
 }
 
+function savedIntentPolicyRow(policy) {
+  return {
+    ...policy.facet,
+    cells: new Map(),
+    missingResolutions: new Map(),
+    observationUnavailable: true,
+  }
+}
+
 function intentAlignmentAction(row, options = {}) {
   if (options.policyId) {
     return {
@@ -5587,12 +5596,12 @@ function rowIntentVariants(
       })
     }
   }
-  const missingZones = zones
+  const missingZones = (row.observationUnavailable ? [] : zones)
     .filter((zone) => !row.cells.has(zone.meta.name))
     .map((zone) => ({ id: zone.meta.id, name: zone.meta.name }))
   const comparison = compareFleetValueVariants([...variants.values()], {
     missingZones,
-    zoneCount: zones.length,
+    zoneCount: row.observationUnavailable ? 0 : zones.length,
   })
   return {
     ...comparison,
@@ -6219,7 +6228,7 @@ function loadIntentPolicyGroupContext(groupId, options = {}) {
     ? draft.variants.find((variant) => variant.canonical === selectedCanonical)
     : draft.variants[0]
   const customSeed = policyIsAuthored
-    ? selection.policy?.expected?.value ?? aliasTemplate.value
+    ? selection.policy ? selection.policy.expected.value : aliasTemplate.value
     : selected?.value ?? ""
 
   draft.activeGroupId = group.id
@@ -6347,7 +6356,7 @@ function openIntentPolicyEditor(row, policy = null, options = {}) {
     valueComparison: null,
     variants: [],
   }
-  elements.intentPolicyTarget.textContent = `${matrixCategoryLabel(row.category)} | ${row.label}`
+  elements.intentPolicyTarget.textContent = `${matrixCategoryLabel(row.category)} | ${row.label}${row.observationUnavailable ? " | No loaded observation. You can edit saved intent; matching cannot be evaluated." : ""}`
   elements.intentPolicyEquivalence.replaceChildren(
     createFacetEquivalencePanel(row),
   )
@@ -7861,7 +7870,10 @@ function renderIntentPolicies() {
         }),
       }),
     )
-    result.append(createElement("strong", { text: "Effective result" }), chips)
+    result.append(createElement("strong", {
+      text: row ? "Effective result" : "Not evaluated",
+    }))
+    if (row) result.append(chips)
     if (policyState?.reason) {
       result.append(createElement("span", {
         className: "intent-result-reason",
@@ -7939,15 +7951,14 @@ function renderIntentPolicies() {
         ))
       }
     }
+    actions.append(
+      intentActionButton("Edit", () => openIntentPolicyEditor(row || savedIntentPolicyRow(policy), policy), {
+        context: actionContext,
+        icon: "edit",
+        write: true,
+      }),
+    )
     if (row) {
-      actions.append(
-        intentActionButton("Edit", () => openIntentPolicyEditor(row, policy), {
-          context: actionContext,
-          icon: "edit",
-          iconOnly: true,
-          write: true,
-        }),
-      )
       const facetId = fleetIntentFacetId(policy.facet.category, policy.facet.key)
       if (firstPolicyByFacet.get(facetId) === policy.id) {
         actions.append(intentActionButton(

@@ -1056,7 +1056,7 @@ function policyEvaluation(
   const zoneById = new Map(inventory.zones.map((zone) => [zone.meta.id, zone]))
   const presenceConstraint = fleetIntentPolicyPresenceConstraint(policy)
   const valueConstraint = fleetIntentPolicyValueConstraint(policy)
-  const observations = scope.effectiveZoneIds
+  const observations = (row ? scope.effectiveZoneIds : [])
     .map((zoneId) => zoneById.get(zoneId))
     .map((zone) => ({
       observedCanonical: observedCanonical(row, zone.meta.name),
@@ -1124,7 +1124,8 @@ function policyEvaluation(
         || status === FLEET_INTENT_CELL_STATUS.VARIANT,
     ).length,
     cells,
-    effectiveCount: cells.size,
+    effectiveCount: scope.effectiveZoneIds.length,
+    effectiveZoneIds: scope.effectiveZoneIds,
     loadedTargetZoneIds: scope.loadedTargetZoneIds,
     matchCount: statuses.filter(
       (status) => status === FLEET_INTENT_CELL_STATUS.MATCH,
