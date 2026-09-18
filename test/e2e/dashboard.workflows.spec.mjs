@@ -608,9 +608,12 @@ test("fills a missing DNS cell through live validation and guarded undo", async 
   )
 
   expect(targetRecords()).toHaveLength(0)
-  await page.getByRole("button", {
+  const fill = page.getByRole("button", {
     name: `Fill CNAME docs on ${targetZone}`,
-  }).click()
+  })
+  await expect(fill.locator(":scope > .control-label")).toHaveText("Fill")
+  expect(await fill.evaluate((node) => getComputedStyle(node).color)).not.toBe("rgba(0, 0, 0, 0)")
+  await fill.click()
 
   const chooser = page.locator("#hole-dialog")
   await expect(chooser).toBeVisible()
