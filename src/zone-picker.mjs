@@ -13,7 +13,7 @@ export function createZonePicker(container, options) {
   }
   const search = make("input")
   search.type = "search"
-  search.placeholder = "Search destination zones"
+  search.placeholder = options.searchLabel || "Search destination zones"
   search.setAttribute("aria-label", options.searchLabel || "Search destination zones")
   const summary = make("p", "", "zone-picker-summary")
   summary.setAttribute("role", "status")

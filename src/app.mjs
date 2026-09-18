@@ -1,3 +1,5 @@
+import { openFacetIntentEditor } from "./intent-quick-editor.mjs"
+import { facetIntentReadRequirements, FACET_INTENT_MODE, FACET_INTENT_LIMIT } from "./intent-shortcuts.mjs"
 import { contextualActionLabel } from "./accessibility.mjs"
 import {
   MATRIX_CAPABILITY,
@@ -589,6 +591,7 @@ const state = {
   matrixReveal: null,
   ruleRename: null,
   ruleCopy: null,
+  selectedFacetIds: new Set(),
   rulesetWorkspace: null,
   selectedColumnsOnly: false,
   selectedZoneIds: new Set(),
@@ -7586,6 +7589,7 @@ function filterIntentPolicies() {
     card.hidden = !visible
     if (visible) visibleCount += 1
   }
+  for (const facet of elements.intentPolicyList.querySelectorAll("[data-intent-facet-card]")) facet.hidden = [...facet.querySelectorAll("[data-intent-policy-card]")].every((card) => card.hidden)
   const empty = elements.intentPolicyList.querySelector("[data-intent-policy-filter-empty]")
   if (empty) {
     empty.textContent = status === INTENT_MANAGER_POLICY_FILTER.ATTENTION
@@ -7658,6 +7662,67 @@ function showIntentPoliciesForGroup(groupId) {
   setIntentManagerSection(INTENT_MANAGER_SECTION.POLICIES)
   filterIntentPolicies()
   elements.intentPolicyGroupFilter.focus()
+}
+
+function groupIntentPolicyCards(fragment, policyEntries) {
+  const facets = new Map()
+  for (const entry of policyEntries) {
+    const id = fleetIntentFacetId(entry.policy.facet.category, entry.policy.facet.key)
+    if (!facets.has(id)) facets.set(id, [])
+    facets.get(id).push(entry)
+  }
+  const cards = [...fragment.querySelectorAll("[data-intent-policy-card]")]
+  const result = document.createDocumentFragment()
+  for (const entries of facets.values()) {
+    const policies = entries.map((entry) => entry.policy)
+    const row = entries[0].display.row
+    const policyCards = cards.filter((card) => policies.some((policy) => card.dataset.policyId === policy.id))
+    if (!row) {
+      result.append(...policyCards)
+      continue
+    }
+    const item = createElement("article", { className: "intent-facet-item" })
+    item.dataset.intentFacetCard = ""
+    const heading = createElement("div", { className: "intent-item-heading" })
+    heading.append(createElement("h4", { text: row.label }), intentStatusBadge(entries[0].display.statusLabel, entries[0].display.status), createElement("span", { className: "intent-facet-category", text: matrixCategoryLabel(row.category) }))
+    const coverage = createElement("div", { className: "intent-facet-coverage" })
+    const values = new Map()
+    for (const policy of policies) {
+      const key = JSON.stringify([policy.presenceConstraint, policy.valueConstraint, policy.expected?.canonical])
+      if (!values.has(key)) values.set(key, [])
+      values.get(key).push(policy)
+    }
+    for (const related of values.values()) {
+      const policy = related[0]
+      const line = createElement("div", { className: "intent-coverage-line" })
+      const name = policy.presenceConstraint === FLEET_INTENT_PRESENCE_CONSTRAINT.FORBIDDEN ? "Must be absent"
+        : policy.valueConstraint !== FLEET_INTENT_VALUE_CONSTRAINT.EXACT ? intentPolicyConstraintLabel(policy)
+        : policy.expected?.value?.enabled === false ? "Disabled value" : policy.expected?.value?.enabled === true ? "Enabled value"
+        : typeof policy.expected?.value !== "object" ? String(policy.expected?.value) : "Exact value"
+      line.append(createElement("strong", { text: name }))
+      for (const scopedPolicy of related) line.append(intentActionButton(intentGroupById(scopedPolicy.groupId)?.name || "Unavailable group", () => openQuickIntent([row], { policy: scopedPolicy }), {
+        context: `Edit ${row.label} coverage`, write: true,
+      }))
+      coverage.append(line)
+    }
+    const actions = intentItemActions()
+    actions.append(intentActionButton("Edit coverage", () => openQuickIntent([row], { policy: preferredIntentPolicy(policies) }), { context: row.label, icon: "edit", write: true }))
+    actions.append(intentActionButton("Current is good", () => openQuickIntent([row], { mode: FACET_INTENT_MODE.CURRENT }), { context: row.label, icon: "ok", write: true }))
+    actions.append(intentPolicyMatrixButton(policies[0], row, row.label))
+    const alignment = assessIntentAlignment(row)
+    if (alignment.available && alignment.targets.length) actions.append(intentActionButton(`Align ${alignment.targets.length}`, () => reviewIntentAlignment(intentAlignmentAction(row)), { context: row.label, icon: "align", write: true }))
+    if (!alignment.available && alignment.actionableCount > 0) {
+      const reason = createElement("p", { className: "intent-facet-blocker", text: alignment.reason })
+      reason.dataset.alignmentBlockedReason = ""
+      coverage.append(reason)
+    }
+    const details = document.createElement("details")
+    details.className = "intent-facet-details"
+    details.append(createElement("summary", { text: "Individual policies and advanced controls" }), ...policyCards)
+    item.append(heading, coverage, actions, details)
+    result.append(item)
+  }
+  fragment.replaceChildren(result)
 }
 
 function renderIntentPolicies() {
@@ -7760,6 +7825,7 @@ function renderIntentPolicies() {
     item.dataset.category = policy.facet.category
     item.dataset.groupId = policy.groupId
     item.dataset.intentPolicyCard = ""
+    item.dataset.policyId = policy.id
     item.dataset.search = [
       policy.facet.label,
       policy.facet.description,
@@ -7987,6 +8053,7 @@ function renderIntentPolicies() {
     item.append(actions)
     fragment.append(item)
   }
+  groupIntentPolicyCards(fragment, policyEntries)
   if (fragment.childNodes.length === 0) {
     fragment.append(createElement("p", {
       className: "intent-empty",
@@ -8999,10 +9066,94 @@ function activateIntentCellAction(button) {
   }
 }
 
+function mergeIntentRead(previous, incoming, requirement) {
+  const surfaces = (before, after, ids) => ({ ...before, ...Object.fromEntries((ids || []).map((id) => [id, after?.[id]])) })
+  return {
+    ...previous,
+    account: { ...previous.account, surfaces: surfaces(previous.account.surfaces, incoming.account.surfaces, requirement.accountSurfaceIds) },
+    zones: incoming.zones.map((fresh) => {
+      const old = previous.zones.find((zone) => zone.meta.id === fresh.meta.id)
+      if (!old) return fresh
+      const selectedDetail = (detail) => {
+        const summary = old.surfaces.rulesets?.result?.find((ruleset) => ruleset.id === (detail.rulesetId || detail.result?.id))
+        const kind = detail.result?.kind || summary?.kind
+        const phase = detail.result?.phase || summary?.phase
+        return (!requirement.ruleDetailKinds || requirement.ruleDetailKinds.includes(kind))
+          && (!requirement.ruleDetailPhases || requirement.ruleDetailPhases.includes(phase))
+      }
+      return { ...old, meta: fresh.meta,
+        surfaces: surfaces(old.surfaces, fresh.surfaces, requirement.surfaceIds),
+        ruleDetails: requirement.includeRuleDetails
+          ? [...old.ruleDetails.filter((detail) => !selectedDetail(detail)), ...fresh.ruleDetails]
+          : old.ruleDetails,
+      }
+    }),
+  }
+}
+
+function openQuickIntent(rows, options = {}) {
+  if (!intentWritable()) return
+  let latestRead = null
+  openFacetIntentEditor({
+    dialog: document.querySelector("#facet-intent-dialog"),
+    rows, inventory: state.inventory, matrix: state.matrix, intent: state.intent,
+    ...options,
+    renderValue: (row, variant, { compact = false } = {}) => {
+      const value = variant.inspectionValue || variant.value
+      if (value && typeof value === "object" && value.expression !== undefined) {
+        const summary = createElement("div")
+        summary.append(createElement("p", { text: `${value.enabled === false ? "Disabled" : "Enabled"} | ${value.action || "Rule"}` }))
+        const preview = ruleCardPreview({ ruleset: { phase: row.phase } }, value)
+        if (compact) {
+          const details = document.createElement("details")
+          details.append(createElement("summary", { text: "View rule value" }), preview)
+          summary.append(details)
+        } else summary.append(preview)
+        return summary
+      }
+      return createElement("p", { text: variant.display })
+    },
+    loadFresh: async (request, signal) => {
+      latestRead = await executeReadPlan(api, facetIntentReadRequirements(request), { signal })
+      return { inventory: latestRead.inventory, matrix: buildMatrix(latestRead.inventory) }
+    },
+    save: async (desired, saveButton) => {
+      const saved = await persistIntentDocument(desired, rows.length === 1 ? `Intent saved for ${rows[0].label}` : `Current state accepted for ${rows.length} facets`, { saveButton })
+      if (saved && latestRead) {
+        state.selectedFacetIds.clear()
+        renderInventory(mergeIntentRead(state.inventory, latestRead.inventory, latestRead.plan.inventory), state.inventorySource)
+      }
+      if (!saved) throw new Error(state.intentSaveFailure || "Intent could not be saved. Review the latest state and reopen the editor.")
+      return saved
+    },
+    advanced: () => openIntentPolicyEditor(rows[0], options.policy || preferredIntentPolicy(intentPoliciesForRow(rows[0]))),
+  })
+}
+
+function acceptCurrentFacets() {
+  const rows = state.matrix.rows.filter((row) => state.selectedFacetIds.has(fleetIntentFacetId(row.category, row.key)))
+  if (!rows.length) {
+    toast("Select facets using the checkboxes beside their names, then accept their current state.")
+    return
+  }
+  openQuickIntent(rows, { mode: FACET_INTENT_MODE.CURRENT, zoneIds: [...state.selectedZoneIds] })
+}
+
+function renderFacetSelection() {
+  const count = state.selectedFacetIds.size
+  const button = document.querySelector("#accept-current-facets")
+  button.textContent = count ? `Accept current state (${count})` : "Accept current state"
+  button.disabled = !intentWritable()
+  document.querySelector(".intent-batch-tools").hidden = readOnly || !api.usesBackend
+  for (const checkbox of document.querySelectorAll(".intent-facet-select")) checkbox.checked = state.selectedFacetIds.has(checkbox.value)
+  document.querySelector("#intent-facet-selection-count").textContent = `${count} facets selected`
+}
+
 function activateIntentPolicyRow(button) {
   const action = intentPolicyRowByButton.get(button)
   if (!action) return
-  openIntentPolicyEditor(action.row, action.policy)
+  if (!state.matrix.rows.includes(action.row)) return openIntentPolicyEditor(action.row, action.policy)
+  openQuickIntent([action.row], { policy: action.policy })
 }
 
 function zoneHeading(zone) {
@@ -9657,7 +9808,7 @@ function renderMatrix() {
           ? `Intent: ${intentPolicyConstraintLabel(policies[0])}`
           : `Intent (${policies.length})`
       const intentDescription = policies.length > 1
-        ? "Open this facet's policy editor and switch or combine zone scopes"
+        ? "Choose several groups or zones and save their intent together"
         : policies.length === 1
           ? `${policyGroup?.name || "Configured coverage"} | ${intentPolicyConstraintLabel(policies[0])}. Click to edit.`
           : "Choose coverage, presence, and the relationship between present values"
@@ -9677,6 +9828,32 @@ function renderMatrix() {
         row,
       })
       facetActions.append(intentButton)
+      const currentButton = matrixActionButton("Current is good", "intent-accept-current", {
+        accessibleName: `Accept current state for ${row.label}`, icon: "ok",
+        title: "Keep each selected zone's current value or absence as its exact intent",
+      })
+      currentButton.disabled = !intentWritable()
+      currentButton.addEventListener("click", () => openQuickIntent([row], { mode: FACET_INTENT_MODE.CURRENT, zoneIds: [...state.selectedZoneIds] }))
+      facetActions.append(currentButton)
+      const selection = createElement("label", { className: "intent-facet-selection" })
+      const checkbox = document.createElement("input")
+      checkbox.type = "checkbox"
+      checkbox.className = "intent-facet-select"
+      checkbox.value = fleetIntentFacetId(row.category, row.key)
+      checkbox.checked = state.selectedFacetIds.has(checkbox.value)
+      checkbox.setAttribute("aria-label", `Select ${row.label} for intent`)
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked && state.selectedFacetIds.size >= FACET_INTENT_LIMIT) {
+          checkbox.checked = false
+          toast(`Choose up to ${FACET_INTENT_LIMIT} facets per save. Save this selection before starting another.`)
+          return
+        }
+        if (checkbox.checked) state.selectedFacetIds.add(checkbox.value)
+        else state.selectedFacetIds.delete(checkbox.value)
+        renderFacetSelection()
+      })
+      selection.append(checkbox, createElement("span", { text: "Select" }))
+      facetActions.prepend(selection)
     }
     const alignment = assessIntentAlignment(row)
     if (!readOnly && alignment.actionableCount > 0) {
@@ -10102,6 +10279,7 @@ function filterRows(options = {}) {
   elements.matrixEmpty.hidden = emptyMessage.length === 0
   elements.matrixTable.hidden = emptyMessage.length > 0
   syncMatrixFilterControls(filters)
+  renderFacetSelection()
   syncMatrixControlTabStop()
   if (options.preserveReveal && !restoreMatrixRevealClasses()) {
     state.matrixReveal = null
@@ -10617,6 +10795,8 @@ function operationChangeValue(label, presentation) {
       className: "operation-change-absence",
       text: presentation.label,
     }))
+  } else if (presentation.value?.action && presentation.value.expression !== undefined) {
+    content.append(createRuleSummary(presentation.value))
   } else {
     const serialized = formattedJson(presentation.value)
     if (serialized.length > OPERATION_FRIENDLY_VALUE_LIMIT) {
@@ -10645,9 +10825,10 @@ function operationChangeElement(operation) {
   change.setAttribute("role", "group")
   change.setAttribute("aria-label", "Value change")
   change.append(
-    operationChangeValue("Before", hasCurrent
-      ? { absent: false, value: operation.currentValue }
-      : { absent: true, label: "Missing" }),
+    operationChangeValue("Before", !hasCurrent || operation.method === HTTP_METHOD.POST
+      && (operation.currentValue?.matchedBy === "none" || operation.currentValue?.entrypoint === "missing")
+      ? { absent: true, label: "Missing" }
+      : { absent: false, value: operation.currentValue?.rule || operation.currentValue }),
     createElement("span", {
       className: "operation-change-arrow",
       text: "to",
@@ -11210,7 +11391,7 @@ function confirmPlans(title, planSet, options = {}) {
     const change = operationChangeElement(operation)
     if (change) item.append(change)
     const rules = operationRuleDefinitions(operation)
-    if (rules.length > 0) {
+    if (rules.length > 0 && !(change && operation.body?.action && operation.body.expression !== undefined)) {
       const summary = createElement("div", { className: "operation-rule-summary" })
       for (const [index, definition] of rules.entries()) {
         if (rules.length > 1) {
@@ -11553,7 +11734,7 @@ async function copyRule(source, targetZoneIds, title = "") {
       rulesetId: source.rulesetId,
     })
     await applyPlans(
-      title || `Copy ${phase} rule from ${sourceZone?.meta.name || liveSource.meta.name}`,
+      title || `Copy ${sourceRuleset.rules.find((rule) => rule.id === source.ruleId)?.description || "rule"} from ${sourceZone?.meta.name || liveSource.meta.name}`,
       createLivePlanSet(plans),
     )
   } catch (error) {
@@ -14137,6 +14318,17 @@ for (const button of elements.intentManagerSectionButtons) {
     setIntentManagerSection(button.dataset.intentManagerSection, { focus: true })
   })
 }
+document.querySelector("#accept-current-facets").addEventListener("click", acceptCurrentFacets)
+document.querySelector("#select-visible-facets").addEventListener("click", () => {
+  const visible = [...elements.matrixBody.querySelectorAll("tr[data-facet-key]")]
+  if (visible.length > FACET_INTENT_LIMIT) {
+    toast(`Filter to ${FACET_INTENT_LIMIT} or fewer facets, or select individual rows.`)
+    return
+  }
+  state.selectedFacetIds = new Set(visible.map((row) => fleetIntentFacetId(row.dataset.category, row.dataset.facetKey)))
+  renderFacetSelection()
+})
+document.querySelector("#clear-selected-facets").addEventListener("click", () => { state.selectedFacetIds.clear(); renderFacetSelection() })
 elements.intentPolicySearch.addEventListener("input", filterIntentPolicies)
 elements.intentPolicyStatusFilter.addEventListener("change", filterIntentPolicies)
 elements.intentPolicyCategoryFilter.addEventListener("change", filterIntentPolicies)

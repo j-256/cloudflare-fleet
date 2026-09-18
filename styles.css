@@ -8149,3 +8149,36 @@ dialog details > summary {
     justify-self: start;
   }
 }
+.intent-batch-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; font-size: 12px; }
+.intent-facet-selection { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; cursor: pointer; }
+.operator-choice-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.operator-choice-row [aria-pressed="true"] { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+.operator-help, .operator-read-status { font-size: 13px; color: var(--muted); }
+.operator-group-options { margin-top: 10px; max-height: 220px; }
+.operator-group-options label span { display: grid; gap: 3px; min-width: 0; }
+.operator-group-options small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.operator-value-area { margin: 12px 0; }
+.operator-value-preview { margin-top: 8px; }
+.operator-value-preview p, .operator-intent-preview p { margin: 6px 0; }
+.operator-selection-summary { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.operator-intent-preview { font-size: 13px; max-height: 200px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.operator-current-value { padding: 8px 0; border-top: 1px solid var(--line); }
+.operator-current-value > strong { font-size: 12px; }
+.operator-dialog label.operator-outside { margin-top: 10px; }
+.operator-dialog .field-error:empty { display: none; }
+.operator-dialog .rule-card-preview code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.intent-facet-item { border: 1px solid var(--line); border-radius: 10px; padding: 16px; background: var(--panel); min-width: 0; }
+.intent-facet-item h4 { margin: 0; font-size: 15px; }
+.intent-facet-category { color: var(--muted); font-size: 12px; }
+.intent-facet-coverage { display: grid; gap: 8px; margin: 12px 0; }
+.intent-coverage-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.intent-coverage-line > strong { min-width: 105px; font-size: 12px; }
+.intent-facet-details { margin-top: 12px; }
+.intent-facet-details > summary { color: var(--muted); font-size: 12px; }
+.intent-facet-details .intent-item { margin-top: 10px; }
+.intent-facet-blocker { margin: 4px 0; color: var(--accent-2); font-size: 12px; }
+.operation-change-content .structured-object { grid-template-columns: minmax(0, 0.38fr) minmax(0, 1fr); }
+.operation-change-content .structured-object .structured-object { grid-template-columns: minmax(0, 1fr); margin-left: 6px; }
+.operation-change-content .rule-facts { grid-template-columns: minmax(70px, 0.3fr) minmax(0, 1fr); }
+.operation-change-content .rule-summary { min-width: 0; }
+.operation-change-content code { white-space: pre-wrap; overflow-wrap: anywhere; }

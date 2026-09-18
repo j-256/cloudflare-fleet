@@ -233,6 +233,13 @@
           <button class="button button-quiet" id="clear-selection" type="button">Clear</button>
         </section>
 
+        <div class="intent-batch-tools" aria-label="Accept current configuration" data-write-only>
+          <button class="button button-accent" id="accept-current-facets" type="button">Accept current state</button>
+          <button class="button button-quiet" id="select-visible-facets" type="button">Select shown facets</button>
+          <button class="button button-quiet" id="clear-selected-facets" type="button">Clear facets</button>
+          <span id="intent-facet-selection-count" role="status">0 facets selected</span>
+        </div>
+
         <details class="matrix-guide">
           <summary>Matrix guide</summary>
           <div class="matrix-guide-content">
@@ -561,6 +568,8 @@
       </div>
     </form>
   </dialog>
+
+  <dialog class="operator-dialog" id="facet-intent-dialog" aria-labelledby="facet-intent-title"></dialog>
 
   <dialog class="operator-dialog" id="rule-copy-dialog" aria-labelledby="rule-copy-title">
     <form method="dialog" id="rule-copy-form">
