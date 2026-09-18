@@ -35,6 +35,7 @@
       <h1>Install once. Begin read-only. Keep your data.</h1>
       <p class="lede">The CLI, dashboard launcher, and stdio MCP server ship as one versioned package. Connect them to a shared hosted control plane or deliberately use standalone local files. Operator state and policy live outside the installed package.</p>
       <p>For control from multiple devices, start with the <a href="deployment#shared-control-heading">shared hosted backend</a>. It uses one D1 authority and scoped Access credentials instead of distributing the account API token. The standalone instructions below apply when no hosted URL is selected.</p>
+      <p>Dashboard search respects the selected filters, including the initial review and fleet-pattern filters. When those filters hide matching configuration, a notice reports the hidden matches. Choose <strong>Show all matches</strong> to search across all loaded facets while keeping the query and selected target zones. For bounded agent lookup, <code>list_facets</code> supports search without inheriting dashboard filters.</p>
     </header>
 
     <section class="section" aria-labelledby="first-run-heading">

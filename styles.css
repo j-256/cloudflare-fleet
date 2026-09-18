@@ -1629,6 +1629,20 @@ button.drift-badge:disabled {
   display: none;
 }
 
+.matrix-search-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+  color: var(--ink);
+}
+
+.matrix-search-recovery p {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
 table {
   width: max-content;
   min-width: 100%;

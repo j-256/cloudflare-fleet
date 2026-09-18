@@ -174,6 +174,7 @@ import {
   OPERATION_ACTIVITY_STATUS,
 } from "./operation-history.mjs"
 import {
+  allMatrixSearchFilters,
   DEFAULT_MATRIX_FILTERS,
   DEFAULT_MATRIX_SCOPE,
   DNS_MATRIX_CATEGORIES,
@@ -842,6 +843,9 @@ const elements = {
   matrixBody: document.querySelector("#matrix-body"),
   matrixChooseTargets: document.querySelector("#matrix-choose-targets"),
   matrixEmpty: document.querySelector("#matrix-empty"),
+  matrixSearchRecovery: document.querySelector("#matrix-search-recovery"),
+  matrixSearchSummary: document.querySelector("#matrix-search-summary"),
+  matrixSearchShowAll: document.querySelector("#matrix-search-show-all"),
   matrixFocus: document.querySelector("#matrix-focus"),
   matrixGuide: document.querySelector(".matrix-guide"),
   matrixShell: document.querySelector("#matrix-shell"),
@@ -10029,6 +10033,8 @@ function renderCoverage() {
 
 function filterRows(options = {}) {
   const filters = currentMatrixFilters()
+  const searchFilters = allMatrixSearchFilters(filters)
+  let searchMatches = 0
   clearMatrixReveal({ forget: !options.preserveReveal })
   const rows = sortMatrixRows(matrixRowElements.map((row) => ({
     category: row.dataset.category,
@@ -10040,7 +10046,7 @@ function filterRows(options = {}) {
   const visibleRows = []
 
   for (const row of rows) {
-    const show = matrixRowMatchesFilters({
+    const rowFilters = {
       actionable: row.dataset.actionable === "true",
       category: row.dataset.category,
       changeable: row.dataset.changeable === "true",
@@ -10053,7 +10059,11 @@ function filterRows(options = {}) {
       redirectTypes: row.dataset.redirectTypes.split(" ").filter(Boolean),
       search: row.dataset.search,
       txtPurposes: row.dataset.txtPurposes.split(" ").filter(Boolean),
-    }, filters)
+    }
+    const show = matrixRowMatchesFilters(rowFilters, filters)
+    if (filters.query.trim() && matrixRowMatchesFilters(rowFilters, searchFilters)) {
+      searchMatches += 1
+    }
     for (const cell of row.querySelectorAll(".matrix-cell")) {
       const labels = [...cell.querySelectorAll(".txt-purpose-label")]
       const matchesTxtPurpose = filters.txtPurpose
@@ -10069,6 +10079,12 @@ function filterRows(options = {}) {
     if (show) visibleRows.push(row)
   }
   elements.matrixBody.replaceChildren(...visibleRows)
+
+  const hiddenMatches = searchMatches - visibleRows.length
+  elements.matrixSearchRecovery.hidden = !filters.query.trim() || hiddenMatches <= 0
+  elements.matrixSearchSummary.textContent = hiddenMatches > 0
+    ? `${hiddenMatches} matching facet${hiddenMatches === 1 ? " is" : "s are"} hidden by the active filters.`
+    : ""
 
   elements.visibleCount.replaceChildren(
     icon("matrix"),
@@ -13774,6 +13790,11 @@ elements.filterPanelToggle.addEventListener("click", () => {
   syncMatrixFilterControls()
 })
 elements.filterReset.addEventListener("click", resetMatrixFilters)
+elements.matrixSearchShowAll.addEventListener("click", () => {
+  applyViewFilters(allMatrixSearchFilters(currentMatrixFilters()))
+  filterRows()
+  elements.search.focus({ preventScroll: true })
+})
 elements.matrixFocus.addEventListener("click", () => {
   setMatrixFocus(!document.body.classList.contains(MATRIX_FOCUS_CLASS))
 })

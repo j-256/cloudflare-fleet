@@ -94,6 +94,42 @@ test("filters the matrix and preserves the view in the address bar", async ({ da
   await expect.poll(() => new URL(page.url()).search).toBe("")
 })
 
+test("search reveals matching configuration hidden by filters without changing targets", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.locator("#matrix-head input").first().check()
+  await page.locator("#scope").selectOption("zone-specific")
+  await page.locator("#search").fill("always_use_https")
+  await expect(page.locator("#matrix-body tr")).toHaveCount(0)
+  await expect(page.locator("#matrix-search-summary")).toHaveText(
+    "1 matching facet is hidden by the active filters.",
+  )
+
+  await page.getByRole("button", { name: "Show all matches", exact: true }).click()
+
+  await expect(page.locator("#matrix-body tr")).toHaveCount(1)
+  await expect(page.locator("#search")).toHaveValue("always_use_https")
+  await expect(page.locator("#search")).toBeFocused()
+  await expect(page.locator("#selection-count")).toHaveText("1")
+  await expect(page.locator("#matrix-search-recovery")).toBeHidden()
+  await page.reload()
+  await expect(page.locator("#matrix-body tr")).toHaveCount(1)
+  await expect(page.locator("#selection-count")).toHaveText("1")
+
+  await page.locator("#search").fill("does-not-exist-anywhere")
+  await expect(page.locator("#matrix-empty")).toBeVisible()
+  await expect(page.locator("#matrix-search-recovery")).toBeHidden()
+})
+
+test("search reports hidden matches even when some results remain visible", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.locator("#search").fill("alpha.example")
+  const visible = await page.locator("#matrix-body tr").count()
+  expect(visible).toBeGreaterThan(0)
+  await expect(page.locator("#matrix-search-recovery")).toBeVisible()
+  await page.getByRole("button", { name: "Show all matches", exact: true }).click()
+  expect(await page.locator("#matrix-body tr").count()).toBeGreaterThan(visible)
+})
+
 test("keeps secondary filters usable on a phone viewport", async ({ dashboard }) => {
   const { page } = dashboard
   await page.setViewportSize({ height: 844, width: 390 })

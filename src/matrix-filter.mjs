@@ -58,6 +58,17 @@ export function matrixEmptyMessage(totalCount, visibleCount) {
   return "No comparable facets are available in this fleet snapshot."
 }
 
+export function allMatrixSearchFilters(filters) {
+  return {
+    ...filters,
+    ...DEFAULT_MATRIX_FILTERS,
+    query: filters.query,
+    sort: filters.sort,
+    scope: MATRIX_SCOPE.ALL,
+    differencesOnly: false,
+  }
+}
+
 export function matrixVisibleCountText(totalCount, visibleCount, filters = {}) {
   const base = `${visibleCount} of ${totalCount} facet${totalCount === 1 ? "" : "s"}`
   const contexts = []

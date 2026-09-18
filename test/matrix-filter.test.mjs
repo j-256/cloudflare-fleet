@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  allMatrixSearchFilters,
   DEFAULT_MATRIX_FILTERS,
   facetMatchesScope,
   MATRIX_INTENT_FILTER,
@@ -14,6 +15,33 @@ import {
   matrixVisibleCountText,
   sortMatrixRows,
 } from "../src/matrix-filter.mjs"
+
+test("search recovery removes restrictive filters while retaining the query, sort, and targets", () => {
+  const filters = {
+    ...DEFAULT_MATRIX_FILTERS,
+    category: "DNS records",
+    intentStatus: MATRIX_INTENT_FILTER.DRIFT,
+    query: "always_use_https",
+    recordType: "TXT",
+    sort: MATRIX_SORT.CATEGORY,
+    targetHolesOnly: true,
+    targetZoneIds: new Set(["zone-a"]),
+    zoneCount: 3,
+  }
+  const recovered = allMatrixSearchFilters(filters)
+  const row = {
+    actionable: false,
+    category: "Zone settings",
+    presentCount: 1,
+    search: "always_use_https on zone-a",
+  }
+  assert.equal(matrixRowMatchesFilters(row, recovered), true)
+  assert.equal(matrixRowMatchesFilters({ ...row, search: "unrelated" }, recovered), false)
+  assert.equal(recovered.query, filters.query)
+  assert.equal(recovered.sort, filters.sort)
+  assert.equal(recovered.targetZoneIds, filters.targetZoneIds)
+  assert.equal(filters.targetHolesOnly, true)
+})
 
 test("matrix empty messages distinguish filters from empty inventory", () => {
   assert.equal(matrixEmptyMessage(251, 61), "")
