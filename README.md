@@ -545,6 +545,10 @@ Read [SECURITY.md](SECURITY.md) and the [security architecture](docs/security.ht
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, verification, screenshot, documentation, and pull request guidance.
 
+## Cover image density
+
+The project cover is rendered at 4x pixel density while preserving its logical viewport, so enlarged previews retain more detail. Higher density does not increase the displayed text size; use zoom to inspect small labels.
+
 ## License
 
 Cloudflare Fleet is licensed under [AGPL-3.0-only](LICENSE).
