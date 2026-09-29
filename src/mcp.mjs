@@ -32,9 +32,10 @@ import {
   activityUndoInputSchema,
   activityRecoverySchema,
   alignmentCoverageSchema,
-  commandDiagnosticsSchema,
+  fleetErrorDiagnosticsSchema,
   digestSchema,
   FLEET_CHANGE_BATCH_LIMIT,
+  HOSTED_TRANSPORT_STAGE,
   fleetChangeSchema,
   fleetChangesSchema,
   fleetIntentDocumentSchema,
@@ -159,7 +160,7 @@ const errorOutputSchema = z.looseObject({
   error: z.looseObject({
     message: z.string(),
     name: z.string(),
-    diagnostics: commandDiagnosticsSchema.optional(),
+    diagnostics: fleetErrorDiagnosticsSchema.optional(),
   }),
   schemaVersion: z.number().int(),
   status: z.string(),
@@ -543,7 +544,7 @@ function errorEnvelope(error, secrets) {
     result.error.actualDigest = error.actualDigest
     result.error.expectedDigest = error.expectedDigest
   }
-  const diagnostics = commandDiagnosticsSchema.safeParse(error?.diagnostics)
+  const diagnostics = fleetErrorDiagnosticsSchema.safeParse(error?.diagnostics)
   if (diagnostics.success) result.error.diagnostics = redactDiagnostics(diagnostics.data, secrets)
   return result
 }
@@ -978,7 +979,9 @@ export function createFleetMcpServer(options = {}) {
           stderr,
           `[mcp:${configuration.toolName}]`,
         ),
+        retryReadOnlyNetworkFailure: true,
         signal: context.mcpReq.signal,
+        transportStage: HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN,
       })
       if (plan.status !== "planned") {
         return toolResult(

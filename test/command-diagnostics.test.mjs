@@ -166,6 +166,36 @@ test("remote CLI and MCP retain typed hosted diagnostics and the request ID", as
   }
 })
 
+test("remote CLI retains bounded client transport diagnostics without raw errors", async () => {
+  const remote = createRemoteFleetService({
+    environment,
+    fetchImpl: async () => { throw new TypeError(`Unsafe client transport ${SECRET}`) },
+  })
+  let output = ""
+  let exitCode
+  await runFleetCli({
+    argv: ["alignment", "list", "--format", "json"],
+    environment,
+    service: remote,
+    stdout: { write: (value) => { output += value } },
+    stderr: { write() {} },
+    onExitCode: (value) => { exitCode = value },
+  })
+  const result = JSON.parse(output)
+  assert.equal(exitCode, 1)
+  assert.deepEqual(result.error.diagnostics, {
+    attempts: 1,
+    command: "alignment-list",
+    httpStatus: null,
+    kind: "hosted-transport",
+    readOnly: true,
+    reason: "network",
+    retried: false,
+    stage: "hosted-command",
+  })
+  assert.doesNotMatch(JSON.stringify(result), /Unsafe client transport|synthetic-secret-token/)
+})
+
 test("hosted command handler returns correlated timeout responses without dispatching cancelled work", async (context) => {
   const logs = []
   context.mock.method(console, "error", (value) => logs.push(value))

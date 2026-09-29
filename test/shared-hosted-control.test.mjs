@@ -8,6 +8,10 @@ import { hostedExecutionLock, HOSTED_LEASE_MS } from "../src/hosted/execution-lo
 import { diagnoseFleetRuntime } from "../src/runtime-status.mjs"
 import { validateFleetCommand } from "../src/fleet-command.mjs"
 import { createEmptyFleetIntentDocument } from "../src/fleet-intent.mjs"
+import {
+  hostedTransportDiagnosticsSchema,
+  HOSTED_TRANSPORT_STAGE,
+} from "../src/interface-schemas.mjs"
 import { AlignmentPlanChangedError } from "../src/write-executor.mjs"
 import { createPendingOperationActivity, completeOperationActivity } from "../src/operation-history.mjs"
 import { hostedActivityRecovery } from "../src/hosted/activity-recovery.mjs"
@@ -36,7 +40,7 @@ function client(env, options = {}) {
     environment: clientEnvironment,
     fetchImpl: async (url, request) => {
       assert.equal(new URL(url).origin, clientEnvironment.CLOUDFLARE_FLEET_URL)
-      assert.equal(request.redirect, "error")
+      assert.equal(request.redirect, "manual")
       assert.equal(request.headers.Authorization, undefined)
       return fetchHostedFleet(new Request("http://localhost/api/commands", request), env)
     },
@@ -296,7 +300,11 @@ test("read-only hosted deployment permits reads but refuses persistence", async 
   assert.equal((await remote.status()).readOnly, true)
   const document = createEmptyFleetIntentDocument(ACCOUNT)
   const plan = await remote.planIntent(document)
-  await assert.rejects(() => remote.applyIntent(document, plan.planSet.digest), /denied access/)
+  await assert.rejects(() => remote.applyIntent(document, plan.planSet.digest), (error) => {
+    assert.equal(error.diagnostics.reason, "access-denied")
+    assert.match(error.message, /access was denied/)
+    return true
+  })
 })
 
 test("remote client never retries uncertain mutations or sends the account token", async () => {
@@ -309,13 +317,138 @@ test("remote client never retries uncertain mutations or sends the account token
       throw new Error("transport leaked secret")
     },
   })
-  await assert.rejects(() => remote.applyIntent({}, "sha256:bad"), /outcome is unknown/)
+  await assert.rejects(
+    () => remote.applyIntent({}, "sha256:bad", {
+      retryReadOnlyNetworkFailure: true,
+      transportStage: HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN,
+    }),
+    (error) => {
+      assert.match(error.message, /outcome may be unknown/)
+      assert.doesNotMatch(error.message, /transport leaked secret/)
+      assert.equal(error.diagnostics.reason, "network")
+      assert.equal(error.diagnostics.readOnly, false)
+      assert.equal(error.diagnostics.retried, false)
+      assert.equal(error.diagnostics.stage, "hosted-command")
+      return true
+    },
+  )
   assert.equal(calls, 1)
+})
+
+test("remote client retries one pre-confirmation network failure and bounds repeated failures", async () => {
+  let recoveredCalls = 0
+  const recovered = createRemoteFleetService({
+    environment: clientEnvironment,
+    fetchImpl: async () => {
+      recoveredCalls += 1
+      if (recoveredCalls === 1) throw new TypeError("private network detail")
+      return Response.json({
+        accountId: ACCOUNT,
+        result: { status: "planned" },
+        success: true,
+        version: 1,
+      })
+    },
+  })
+  const commandOptions = {
+    retryReadOnlyNetworkFailure: true,
+    transportStage: HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN,
+  }
+  assert.deepEqual(await recovered.planChanges([], commandOptions), { status: "planned" })
+  assert.equal(recoveredCalls, 2)
+
+  let failedCalls = 0
+  const failed = createRemoteFleetService({
+    environment: clientEnvironment,
+    fetchImpl: async () => {
+      failedCalls += 1
+      throw new TypeError("private DNS and TLS detail")
+    },
+  })
+  await assert.rejects(() => failed.planChanges([], commandOptions), (error) => {
+    assert.equal(error.name, "HostedFleetTransportError")
+    assert.equal(hostedTransportDiagnosticsSchema.safeParse(error.diagnostics).success, true)
+    assert.deepEqual(error.diagnostics, {
+      attempts: 2,
+      command: "changes-plan",
+      httpStatus: null,
+      kind: "hosted-transport",
+      readOnly: true,
+      reason: "network",
+      retried: true,
+      stage: "pre-confirmation-replan",
+    })
+    assert.match(error.message, /no Cloudflare write was attempted/)
+    assert.doesNotMatch(error.message, /private DNS and TLS detail/)
+    return true
+  })
+  assert.equal(failedCalls, 2)
+})
+
+test("remote client distinguishes cancellation and timeout without retrying either", async (context) => {
+  await context.test("cancelled before dispatch", async () => {
+    let calls = 0
+    const controller = new AbortController()
+    controller.abort()
+    const remote = createRemoteFleetService({
+      environment: clientEnvironment,
+      fetchImpl: async () => { calls += 1 },
+    })
+    await assert.rejects(() => remote.planChanges([], {
+      retryReadOnlyNetworkFailure: true,
+      signal: controller.signal,
+      transportStage: HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN,
+    }), (error) => {
+      assert.equal(error.diagnostics.attempts, 0)
+      assert.equal(error.diagnostics.reason, "cancelled")
+      return true
+    })
+    assert.equal(calls, 0)
+  })
+
+  await context.test("timeout from fetch", async () => {
+    let calls = 0
+    const remote = createRemoteFleetService({
+      environment: clientEnvironment,
+      fetchImpl: async () => {
+        calls += 1
+        const error = new Error("private timeout detail")
+        error.name = "TimeoutError"
+        throw error
+      },
+    })
+    await assert.rejects(() => remote.planChanges([], {
+      retryReadOnlyNetworkFailure: true,
+      transportStage: HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN,
+    }), (error) => {
+      assert.equal(error.diagnostics.attempts, 1)
+      assert.equal(error.diagnostics.reason, "timeout")
+      assert.equal(error.diagnostics.retried, false)
+      assert.doesNotMatch(error.message, /private timeout detail/)
+      return true
+    })
+    assert.equal(calls, 1)
+  })
 })
 
 test("remote client rejects login redirects and response account confusion", async () => {
   const redirected = createRemoteFleetService({ environment: clientEnvironment, fetchImpl: async () => new Response(null, { status: 302 }) })
-  await assert.rejects(() => redirected.getIntent(), /denied access/)
+  await assert.rejects(() => redirected.getIntent(), (error) => {
+    assert.equal(error.diagnostics.reason, "redirect")
+    assert.equal(error.diagnostics.httpStatus, 302)
+    assert.match(error.message, /request was redirected/)
+    return true
+  })
+  const unexpected = createRemoteFleetService({
+    environment: clientEnvironment,
+    fetchImpl: async () => new Response("upstream detail", { status: 502 }),
+  })
+  await assert.rejects(() => unexpected.getIntent(), (error) => {
+    assert.equal(error.diagnostics.reason, "unexpected-response")
+    assert.equal(error.diagnostics.httpStatus, 502)
+    assert.doesNotMatch(error.message, /upstream detail/)
+    return true
+  })
   const confused = createRemoteFleetService({
     environment: clientEnvironment,
     fetchImpl: async () => Response.json({ success: true, result: {}, accountId: "wrong", version: 1 }),
