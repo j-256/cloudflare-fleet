@@ -2,10 +2,16 @@ import { selectFleetBackend, hostedCredentialPresence } from "./backend-selectio
 import { FleetConfigurationError } from "./cli-contract.mjs"
 import { FLEET_COMMAND_VERSION, fleetCommandIsReadOnly } from "./fleet-command.mjs"
 import { AlignmentPlanChangedError } from "./write-executor.mjs"
-import { commandDiagnosticsSchema } from "./interface-schemas.mjs"
+import {
+  commandDiagnosticsSchema,
+  HOSTED_TRANSPORT_DIAGNOSTIC_KIND,
+  HOSTED_TRANSPORT_REASON,
+  HOSTED_TRANSPORT_STAGE,
+} from "./interface-schemas.mjs"
 
 const RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 110000
+const PRE_CONFIRMATION_REPLAN_MAX_ATTEMPTS = 2
 function wireSelector(value) {
   const { kind: _kind, zoneIds, ...selector } = value
   return { ...selector, ...(zoneIds ? { zoneIds } : {}) }
@@ -24,6 +30,56 @@ function accessHeaders(environment) {
   return headers
 }
 
+function transportDescription(reason) {
+  return {
+    [HOSTED_TRANSPORT_REASON.ACCESS_DENIED]: "access was denied",
+    [HOSTED_TRANSPORT_REASON.CANCELLED]: "the request was cancelled",
+    [HOSTED_TRANSPORT_REASON.NETWORK]: "the network connection failed",
+    [HOSTED_TRANSPORT_REASON.REDIRECT]: "the request was redirected",
+    [HOSTED_TRANSPORT_REASON.TIMEOUT]: "the request timed out",
+    [HOSTED_TRANSPORT_REASON.UNEXPECTED_RESPONSE]: "the endpoint returned an unexpected response",
+  }[reason]
+}
+
+class HostedFleetTransportError extends Error {
+  constructor(options) {
+    const description = transportDescription(options.reason)
+    const guidance = options.stage === HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN
+      ? "The failure occurred during the read-only pre-confirmation replan; no confirmation was requested and no Cloudflare write was attempted"
+      : options.readOnly
+        ? "This read-only command made no changes; no local fallback was used"
+        : "Write outcome may be unknown; inspect hosted activity and affected resources before taking further action. The request was not retried"
+    const retry = options.retried ? " The read-only replan was retried once." : "."
+    super(`Hosted Fleet request failed because ${description}. ${guidance}${retry}`)
+    this.name = "HostedFleetTransportError"
+    this.diagnostics = {
+      attempts: options.attempts,
+      command: options.command,
+      httpStatus: options.httpStatus ?? null,
+      kind: HOSTED_TRANSPORT_DIAGNOSTIC_KIND,
+      readOnly: options.readOnly,
+      reason: options.reason,
+      retried: options.retried,
+      stage: options.stage,
+    }
+  }
+}
+
+function requestFailureReason(error, callerSignal, timeoutSignal) {
+  if (callerSignal?.aborted) {
+    return callerSignal.reason?.name === "TimeoutError"
+      ? HOSTED_TRANSPORT_REASON.TIMEOUT
+      : HOSTED_TRANSPORT_REASON.CANCELLED
+  }
+  if (timeoutSignal?.aborted || error?.name === "TimeoutError") return HOSTED_TRANSPORT_REASON.TIMEOUT
+  if (error?.name === "AbortError") return HOSTED_TRANSPORT_REASON.CANCELLED
+  return HOSTED_TRANSPORT_REASON.NETWORK
+}
+
+async function cancelResponse(response) {
+  try { await response.body?.cancel() } catch {}
+}
+
 export function createRemoteFleetService(options = {}) {
   const environment = options.environment || process.env
   const backend = selectFleetBackend(options)
@@ -31,47 +87,80 @@ export function createRemoteFleetService(options = {}) {
   const headers = accessHeaders(environment)
   const fetchImpl = options.fetchImpl || globalThis.fetch
   async function command(name, input = {}, commandOptions = {}) {
-    commandOptions.signal?.throwIfAborted()
+    const readOnly = fleetCommandIsReadOnly(name)
+    const stage = readOnly && Object.values(HOSTED_TRANSPORT_STAGE).includes(commandOptions.transportStage)
+      ? commandOptions.transportStage
+      : HOSTED_TRANSPORT_STAGE.COMMAND
+    const retryNetworkFailure = readOnly
+      && stage === HOSTED_TRANSPORT_STAGE.PRE_CONFIRMATION_REPLAN
+      && commandOptions.retryReadOnlyNetworkFailure === true
+    const maxAttempts = retryNetworkFailure ? PRE_CONFIRMATION_REPLAN_MAX_ATTEMPTS : 1
+    let attempts = 0
     let response
-    try {
-      response = await fetchImpl(new URL("/api/commands", backend.endpoint), {
-        method: "POST", headers, redirect: "error",
-        body: JSON.stringify({ version: FLEET_COMMAND_VERSION, accountId: backend.accountId, command: name, input }),
-        signal: commandOptions.signal
-          ? AbortSignal.any([commandOptions.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
-          : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      })
-    } catch {
-      throw new Error(fleetCommandIsReadOnly(name)
-        ? "Hosted Fleet could not be reached or Access redirected the request; check authentication. No local fallback was used"
-        : "Hosted Fleet write outcome is unknown after a connection failure; inspect hosted activity before taking further action. The request was not retried")
-    }
-    if ([301, 302, 303, 307, 308, 401, 403].includes(response.status)) {
-      await response.body?.cancel()
-      throw new Error("Hosted Fleet denied access; check the application-scoped credential and write policy")
-    }
-    if (!response.headers.get("Content-Type")?.includes("application/json")) {
-      await response.body?.cancel()
-      throw new Error("Hosted Fleet returned an unexpected response; check the endpoint, Access login, and deployed command API")
-    }
-    const reader = response.body.getReader()
-    const chunks = []
-    let size = 0
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > RESPONSE_LIMIT_BYTES) {
-        await reader.cancel()
-        throw new Error("Hosted Fleet response exceeded the bounded client limit")
-      }
-      chunks.push(value)
-    }
-    const bytes = new Uint8Array(size)
-    let offset = 0
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
     let envelope
-    try { envelope = JSON.parse(new TextDecoder().decode(bytes)) } catch { throw new Error("Hosted Fleet returned invalid JSON") }
+    while (attempts < maxAttempts) {
+      if (commandOptions.signal?.aborted) {
+        throw new HostedFleetTransportError({
+          attempts,
+          command: name,
+          readOnly,
+          reason: requestFailureReason(null, commandOptions.signal),
+          retried: attempts > 1,
+          stage,
+        })
+      }
+      const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      const signal = commandOptions.signal
+        ? AbortSignal.any([commandOptions.signal, timeoutSignal])
+        : timeoutSignal
+      attempts += 1
+      try {
+        response = await fetchImpl(new URL("/api/commands", backend.endpoint), {
+          method: "POST", headers, redirect: "manual",
+          body: JSON.stringify({ version: FLEET_COMMAND_VERSION, accountId: backend.accountId, command: name, input }),
+          signal,
+        })
+        if (response.status >= 300 && response.status < 400) {
+          await cancelResponse(response)
+          throw new HostedFleetTransportError({ attempts, command: name, httpStatus: response.status, readOnly, reason: HOSTED_TRANSPORT_REASON.REDIRECT, retried: attempts > 1, stage })
+        }
+        if ([401, 403].includes(response.status)) {
+          await cancelResponse(response)
+          throw new HostedFleetTransportError({ attempts, command: name, httpStatus: response.status, readOnly, reason: HOSTED_TRANSPORT_REASON.ACCESS_DENIED, retried: attempts > 1, stage })
+        }
+        if (!response.headers.get("Content-Type")?.includes("application/json") || !response.body) {
+          await cancelResponse(response)
+          throw new HostedFleetTransportError({ attempts, command: name, httpStatus: response.status, readOnly, reason: HOSTED_TRANSPORT_REASON.UNEXPECTED_RESPONSE, retried: attempts > 1, stage })
+        }
+        const reader = response.body.getReader()
+        const chunks = []
+        let size = 0
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          size += value.byteLength
+          if (size > RESPONSE_LIMIT_BYTES) {
+            await reader.cancel()
+            throw new HostedFleetTransportError({ attempts, command: name, httpStatus: response.status, readOnly, reason: HOSTED_TRANSPORT_REASON.UNEXPECTED_RESPONSE, retried: attempts > 1, stage })
+          }
+          chunks.push(value)
+        }
+        const bytes = new Uint8Array(size)
+        let offset = 0
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+        try {
+          envelope = JSON.parse(new TextDecoder().decode(bytes))
+        } catch {
+          throw new HostedFleetTransportError({ attempts, command: name, httpStatus: response.status, readOnly, reason: HOSTED_TRANSPORT_REASON.UNEXPECTED_RESPONSE, retried: attempts > 1, stage })
+        }
+        break
+      } catch (error) {
+        if (error instanceof HostedFleetTransportError) throw error
+        const reason = requestFailureReason(error, commandOptions.signal, timeoutSignal)
+        if (reason === HOSTED_TRANSPORT_REASON.NETWORK && attempts < maxAttempts) continue
+        throw new HostedFleetTransportError({ attempts, command: name, readOnly, reason, retried: attempts > 1, stage })
+      }
+    }
     if (!response.ok || envelope.success !== true) {
       if (response.status === 400 && name.startsWith("retrieval-")) throw new TypeError(envelope.errors?.[0]?.message || "Invalid Fleet retrieval query")
       if (envelope.error?.name === "AlignmentPlanChangedError") throw new AlignmentPlanChangedError(input.planDigest, envelope.error.actualDigest || null)

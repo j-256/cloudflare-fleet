@@ -28,6 +28,19 @@ export const hostedReleaseCheckOutputSchema = z.looseObject({
 
 export const identifierSchema = z.string().trim().min(1).max(256)
 export const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+export const HOSTED_TRANSPORT_STAGE = Object.freeze({
+  COMMAND: "hosted-command",
+  PRE_CONFIRMATION_REPLAN: "pre-confirmation-replan",
+})
+export const HOSTED_TRANSPORT_REASON = Object.freeze({
+  ACCESS_DENIED: "access-denied",
+  CANCELLED: "cancelled",
+  NETWORK: "network",
+  REDIRECT: "redirect",
+  TIMEOUT: "timeout",
+  UNEXPECTED_RESPONSE: "unexpected-response",
+})
+export const HOSTED_TRANSPORT_DIAGNOSTIC_KIND = "hosted-transport"
 export const commandDiagnosticsSchema = z.strictObject({
   command: z.string().max(64),
   deadlineMs: z.number().int().nonnegative(),
@@ -51,6 +64,20 @@ export const commandDiagnosticsSchema = z.strictObject({
     status: z.number().int().nullable(),
   }).nullable(),
 })
+export const hostedTransportDiagnosticsSchema = z.strictObject({
+  attempts: z.number().int().nonnegative(),
+  command: z.string().max(64),
+  httpStatus: z.number().int().nullable(),
+  kind: z.literal(HOSTED_TRANSPORT_DIAGNOSTIC_KIND),
+  readOnly: z.boolean(),
+  reason: z.enum(Object.values(HOSTED_TRANSPORT_REASON)),
+  retried: z.boolean(),
+  stage: z.enum(Object.values(HOSTED_TRANSPORT_STAGE)),
+})
+export const fleetErrorDiagnosticsSchema = z.union([
+  commandDiagnosticsSchema,
+  hostedTransportDiagnosticsSchema,
+])
 export const alignmentCoverageSchema = z.strictObject({
   complete: z.boolean(), failureCount: z.number().int().nonnegative(), truncated: z.boolean(),
   failures: z.array(z.strictObject({

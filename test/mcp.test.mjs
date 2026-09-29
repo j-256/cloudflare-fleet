@@ -393,6 +393,7 @@ function serviceFixture(overrides = {}) {
     planBatch: [],
     planChange: [],
     planChanges: [],
+    planChangesOptions: [],
     planIntent: [],
     planFacetIntent: [],
     planUndo: [],
@@ -635,8 +636,10 @@ function serviceFixture(overrides = {}) {
         title: "Update zone setting",
       })
     },
-    async planChanges(changes) {
+    async planChanges(changes, commandOptions = {}) {
       calls.planChanges.push(changes)
+      calls.planChangesOptions.push(commandOptions)
+      if (overrides.planChangesError) throw overrides.planChangesError
       return overrides.planChangesResult || plannedChangeBatch()
     },
     async planIntent(document) {
@@ -1276,6 +1279,10 @@ test("MCP direct change batch plans and applies through one complete review", as
 
   assert.equal(planned.structuredContent.status, "planned")
   assert.deepEqual(calls.planChanges, [CHANGES, CHANGES])
+  assert.equal(calls.planChangesOptions[0].transportStage, undefined)
+  assert.equal(calls.planChangesOptions[0].retryReadOnlyNetworkFailure, undefined)
+  assert.equal(calls.planChangesOptions[1].transportStage, "pre-confirmation-replan")
+  assert.equal(calls.planChangesOptions[1].retryReadOnlyNetworkFailure, true)
   assert.deepEqual(calls.applyChanges, [{
     changes: CHANGES,
     digest: DIGEST,
@@ -1339,6 +1346,35 @@ test("MCP direct change batch refuses a changed plan before approval", async (co
   assert.equal(result.structuredContent.status, "plan-changed")
   assert.equal(result.structuredContent.actualDigest, DIFFERENT_DIGEST)
   assert.equal(elicitations, 0)
+  assert.equal(calls.applyChanges.length, 0)
+})
+
+test("MCP preserves bounded hosted transport diagnostics from the pre-confirmation replan", async (context) => {
+  const transportError = new Error("Hosted Fleet request failed because the network connection failed")
+  transportError.name = "HostedFleetTransportError"
+  transportError.diagnostics = {
+    attempts: 2,
+    command: "changes-plan",
+    httpStatus: null,
+    kind: "hosted-transport",
+    readOnly: true,
+    reason: "network",
+    retried: true,
+    stage: "pre-confirmation-replan",
+  }
+  const { calls, client } = await connectedFixture(context, {
+    serviceOverrides: { planChangesError: transportError },
+  })
+
+  const result = await client.callTool({
+    arguments: { changes: CHANGES, planDigest: DIGEST },
+    name: "apply_fleet_changes",
+  })
+
+  assert.equal(result.isError, true)
+  assert.equal(result.structuredContent.error.name, "HostedFleetTransportError")
+  assert.deepEqual(result.structuredContent.error.diagnostics, transportError.diagnostics)
+  assert.equal(calls.planChangesOptions[0].transportStage, "pre-confirmation-replan")
   assert.equal(calls.applyChanges.length, 0)
 })
 

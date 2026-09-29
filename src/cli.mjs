@@ -40,7 +40,7 @@ import { describeZoneAliasPolicy } from "./zone-alias-intent.mjs"
 import { describeHostnameScopedFreeRateLimitPolicy } from "./rate-limit-intent.mjs"
 import { runWorkerCommand, WORKER_COMMANDS } from "./worker-command.mjs"
 import {
-  commandDiagnosticsSchema,
+  fleetErrorDiagnosticsSchema,
   FLEET_CHANGE_BATCH_LIMIT,
 } from "./interface-schemas.mjs"
 import { redactDiagnostics } from "./command-diagnostics.mjs"
@@ -1512,7 +1512,7 @@ function errorResult(error, environment) {
     result.error.actualDigest = error.actualDigest
     result.error.expectedDigest = error.expectedDigest
   }
-  const diagnostics = commandDiagnosticsSchema.safeParse(error?.diagnostics)
+  const diagnostics = fleetErrorDiagnosticsSchema.safeParse(error?.diagnostics)
   if (diagnostics.success) {
     result.error.diagnostics = redactDiagnostics(diagnostics.data, [
       environment.CLOUDFLARE_API_TOKEN, environment.CLOUDFLARE_FLEET_ACCESS_CLIENT_ID,
