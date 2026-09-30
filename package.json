@@ -1,6 +1,6 @@
 {
   "name": "cloudflare-fleet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A self-hosted control plane for auditing and safely aligning Cloudflare zones",
   "license": "AGPL-3.0-only",
