@@ -96,15 +96,27 @@ Deployment jobs serialize without cancelling an in-flight upload. The helper rec
 
 ## Releases
 
-Update `package.json` and `package-lock.json` to the intended version, complete the full verification surface, and merge the release-ready source before creating its annotated tag. The tag must exactly equal `v` followed by the package version. Pushing that tag runs the complete release gate again, builds the locked self-hosting archive and CLI-only package, verifies those exact artifacts, and attaches them to a generated GitHub Release with the self-hosting checksum. Nothing is repacked after verification. The workflow refuses a mismatched tag or uncommitted source, and the package remains private to prevent npm registry publication. Never replace an existing release to add a missing artifact; publish a new version.
+Use the release-preparation workflow from protected `main` with an exact new version:
 
-Ordinary CI uploads the same verified artifact set for review. Forks can run this credential-free verification without hosting Fleet or deploying it. Production deployment is separately opt-in through the protected job described above; database migration and rollback remain explicit operator actions. Tagged releases do not trigger production deployment, and deploying `main` does not create or replace a public release.
+```sh
+gh workflow run prepare-release.yml --ref main -f version=X.Y.Z
+```
+
+The workflow refuses an existing tag or unowned candidate branch, updates only `package.json` and `package-lock.json`, opens a release pull request, and starts its normal required checks after validating the exact branch, author, base revision, changed files, and version values. Review that pull request and merge it after all required checks pass. Do not enable auto-merge: merging is the explicit release approval.
+
+The successful protected-`main` CI run builds and verifies the locked self-hosting archive and CLI package once. Release automation selects that immutable artifact by its exact workflow run ID, independently verifies the run, source revision, package version, archive identity, checksum, and bounded asset set, then creates an annotated tag for that source. It stages assets on a draft GitHub Release, verifies their published bytes, and makes the release public only after every check passes. A safe rerun can resume a matching draft or verify an already complete release; conflicting tags or assets fail closed. The package remains private to prevent npm registry publication. Never replace a published release to add a missing artifact; publish a new version.
+
+Ordinary CI uploads the same verified artifact set for review. Forks can run this credential-free verification without hosting Fleet or deploying it. Production deployment is separately opt-in through the protected job described above; database migration and rollback remain explicit operator actions. Release automation consumes a successful `main` run but does not add deployment authority to it.
+
+The manual annotated-tag path remains an emergency fallback. Update both package version files, complete the full verification surface, merge the release-ready source, and run:
 
 ```sh
 release_version="$(node -p 'require("./package.json").version')"
 git tag -a "v$release_version" -m "Cloudflare Fleet v$release_version"
 git push origin "v$release_version"
 ```
+
+Pushing a maintainer-created tag runs the complete release gate again and publishes only the artifacts built and verified in that tag workflow. The tag must exactly equal `v` followed by the package version. Tagged releases do not trigger production deployment, and deploying `main` does not create or replace a public release unless that commit introduces a newer package version through the reviewed release-PR flow.
 
 ## Pull requests
 

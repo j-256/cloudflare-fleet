@@ -10,6 +10,7 @@ const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DOCS_ROOT = path.join(PROJECT_ROOT, "docs")
 const REQUIRED_FILES = Object.freeze([
   ".github/workflows/ci.yml",
+  ".github/workflows/prepare-release.yml",
   ".github/workflows/release.yml",
   "AGENTS.md",
   "CLAUDE.md",
@@ -23,6 +24,10 @@ const REQUIRED_FILES = Object.freeze([
   "scripts/check-install.mjs",
   "scripts/check-public-documentation.mjs",
   "scripts/check-release-tag.mjs",
+  "scripts/prepare-release.mjs",
+  "scripts/publish-release.mjs",
+  "scripts/start-cover-checks.mjs",
+  "scripts/start-release-checks.mjs",
   "scripts/build-self-hosted-release.mjs",
   "scripts/check-hosted-release.mjs",
   "scripts/check-self-hosted-release.mjs",
@@ -350,6 +355,20 @@ export async function checkPublication() {
     errors.push("Production deployment must not bypass verification or automate migrations, secret uploads, or rollback")
   }
   const artifactFiles = packedFiles()
+  const prepareReleaseWorkflow = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/prepare-release.yml"), "utf8")
+  for (const required of [
+    "workflow_dispatch:", "version:", "contents: write", "pull-requests: write", "actions: write",
+    "test \"$GITHUB_REF\" = refs/heads/main", "prepare-release.yml@refs/heads/main",
+    "node scripts/prepare-release.mjs --version \"$RELEASE_VERSION\"",
+    "expected_paths=\"$(printf '%s\\n' package-lock.json package.json)\"",
+    "branch=\"automation/release-$tag\"", "git push origin \"HEAD:$RELEASE_BRANCH\"",
+    "gh pr create --base main", "node scripts/start-release-checks.mjs \"$PR_NUMBER\"",
+  ]) {
+    if (!prepareReleaseWorkflow.includes(required)) errors.push(`Release preparation lacks its reviewed-PR contract: ${required}`)
+  }
+  if (/gh pr merge|--auto|push --force|gh release create|git tag/u.test(prepareReleaseWorkflow)) {
+    errors.push("Release preparation must not merge, tag, publish, or rewrite its candidate")
+  }
   const releaseWorkflow = await fs.readFile(path.join(PROJECT_ROOT, ".github/workflows/release.yml"), "utf8")
   for (const [name, workflow] of [["CI", ciWorkflow], ["Release", releaseWorkflow]]) {
     for (const required of [
@@ -364,6 +383,23 @@ export async function checkPublication() {
   }
   if (!releaseWorkflow.includes('gh release create "$GITHUB_REF_NAME" self-hosted-dist/*')) {
     errors.push("Release must publish the already-verified artifacts")
+  }
+  const automatedReleaseJob = releaseWorkflow.match(/\n  automated-release:[\s\S]*$/u)?.[0] ?? ""
+  for (const required of [
+    "github.event_name == 'workflow_run'", "github.event.workflow_run.conclusion == 'success'",
+    "github.event.workflow_run.event == 'push'", "github.event.workflow_run.head_branch == 'main'",
+    "github.event.workflow_run.path == '.github/workflows/ci.yml'",
+    "github.event.workflow_run.head_repository.full_name == github.repository",
+    "actions: read", "contents: write", "persist-credentials: false", "name: self-hosted-release",
+    "node scripts/publish-release.mjs --check-candidate --source \"$SOURCE_SHA\" --run-id \"$SOURCE_RUN_ID\"",
+    "if: steps.candidate.outputs.release == 'true'",
+    "github-token: ${{ github.token }}", "run-id: ${{ github.event.workflow_run.id }}",
+    "node scripts/publish-release.mjs --directory self-hosted-dist --source \"$SOURCE_SHA\" --run-id \"$SOURCE_RUN_ID\"",
+  ]) {
+    if (!automatedReleaseJob.includes(required)) errors.push(`Automated release lacks its exact-CI-artifact contract: ${required}`)
+  }
+  if (/npm ci|npm install|npm run|github\.event\.workflow_run\.pull_requests|ref:\s*\$\{\{ github\.event\.workflow_run\.head_sha/u.test(automatedReleaseJob)) {
+    errors.push("Automated release must not install dependencies, rebuild artifacts, or execute the triggering checkout")
   }
   for (const required of [
     "README.md",

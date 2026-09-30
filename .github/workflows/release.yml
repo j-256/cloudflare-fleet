@@ -4,17 +4,25 @@ on:
   push:
     tags:
       - "v*"
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-publication
   cancel-in-progress: false
 
 jobs:
-  release:
+  manual-release:
     name: Verify and publish operator artifacts
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -84,3 +92,71 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" self-hosted-dist/* --generate-notes --title "$GITHUB_REF_NAME" --verify-tag
+
+  automated-release:
+    name: Publish exact verified main artifact
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.path == '.github/workflows/ci.yml' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted publication helper
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Identify version-only release candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          node scripts/publish-release.mjs --check-candidate --source "$SOURCE_SHA" --run-id "$SOURCE_RUN_ID" > "$RUNNER_TEMP/release-candidate.json"
+          printf 'release=%s\n' "$(jq -r .candidate "$RUNNER_TEMP/release-candidate.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact successful CI artifacts
+        if: steps.candidate.outputs.release == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: self-hosted-release
+          path: self-hosted-dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Create annotated tag and publish verified release
+        if: steps.candidate.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node scripts/publish-release.mjs --directory self-hosted-dist --source "$SOURCE_SHA" --run-id "$SOURCE_RUN_ID" > "$RUNNER_TEMP/release-result.json"
+
+      - name: Summarize published release
+        if: steps.candidate.outputs.release == 'true'
+        run: |
+          tag="$(jq -r .tag "$RUNNER_TEMP/release-result.json")"
+          status="$(jq -r .status "$RUNNER_TEMP/release-result.json")"
+          url="$(jq -r .url "$RUNNER_TEMP/release-result.json")"
+          source="$(jq -r .sourceRevision "$RUNNER_TEMP/release-result.json")"
+          printf "Release [%s](%s) is %s from source \`%s\`.\n" "$tag" "$url" "$status" "$source" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize non-release main run
+        if: steps.candidate.outputs.release != 'true'
+        run: |
+          printf 'No release candidate: the verified main run did not increase the package version.\n' >> "$GITHUB_STEP_SUMMARY"
