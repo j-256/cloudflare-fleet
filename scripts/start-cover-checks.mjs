@@ -8,25 +8,30 @@ const COVER = "docs/screenshots/cover.png";
 const WAIT_MS = 120_000;
 const POLL_MS = 2_000;
 
-export async function startCoverChecks({ repository, sourceSha, number, workflows, api, now = Date.now, sleep = delay, log = console.log }) {
+export async function startAutomationChecks({ repository, sourceSha, number, workflows, branch, files, purpose, validate = async () => {}, api, now = Date.now, sleep = delay, log = console.log }) {
   assert.match(repository, /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/);
   assert.match(sourceSha, /^[a-f0-9]{40}$/);
   assert.ok(Number.isSafeInteger(number) && number > 0);
   assert.ok(workflows.length > 0 && workflows.every(name => /^[a-zA-Z0-9_-]+\.yml$/.test(name)));
+  assert.match(branch, /^automation\/[a-zA-Z0-9_.-]+$/);
+  assert.ok(files.length > 0 && files.every(([name, status]) => /^[a-zA-Z0-9_.\/-]+$/.test(name) && ["added", "modified"].includes(status)));
+  assert.match(purpose, /^[a-z]+$/);
   const expected = new Set(workflows.map(name => `.github/workflows/${name}`));
   const prefix = `repos/${repository}`;
   const pr = await api(`${prefix}/pulls/${number}`);
   assert.equal(pr.state, "open");
   assert.equal(pr.draft, false);
   assert.equal(pr.base.ref, "main");
-  assert.equal(pr.base.sha, sourceSha, "A newer source revision superseded this cover");
+  assert.equal(pr.base.sha, sourceSha, `A newer source revision superseded this ${purpose}`);
   assert.equal(pr.base.repo.full_name, repository);
   assert.equal(pr.head.repo.full_name, repository);
   assert.equal(pr.user.login, "github-actions[bot]");
-  assert.equal(pr.head.ref, `automation/project-cover-${sourceSha}`);
-  assert.equal(pr.changed_files, 1);
-  const files = await api(`${prefix}/pulls/${number}/files`);
-  assert.deepEqual(files.map(file => [file.filename, file.status]), [[COVER, "modified"]]);
+  assert.equal(pr.head.ref, branch);
+  assert.equal(pr.changed_files, files.length);
+  const changedFiles = await api(`${prefix}/pulls/${number}/files`);
+  const byName = (left, right) => left[0].localeCompare(right[0], "en");
+  assert.deepEqual(changedFiles.map(file => [file.filename, file.status]).sort(byName), [...files].sort(byName));
+  await validate({ prefix, pr, changedFiles });
   const started = new Set();
   const deadline = now() + WAIT_MS;
   while (now() < deadline) {
@@ -42,12 +47,21 @@ export async function startCoverChecks({ repository, sourceSha, number, workflow
         await api(`${prefix}/actions/runs/${run.id}/approve`, "POST");
       }
       started.add(run.path);
-      log(`Started ${run.path} for verified cover PR #${number}`);
+      log(`Started ${run.path} for verified ${purpose} PR #${number}`);
     }
     if (started.size === expected.size) return;
     await sleep(POLL_MS);
   }
-  throw new Error(`Timed out waiting for cover PR workflows: ${[...expected].filter(path => !started.has(path)).join(", ")}`);
+  throw new Error(`Timed out waiting for ${purpose} PR workflows: ${[...expected].filter(path => !started.has(path)).join(", ")}`);
+}
+
+export async function startCoverChecks(options) {
+  return startAutomationChecks({
+    ...options,
+    branch: `automation/project-cover-${options.sourceSha}`,
+    files: [[COVER, "modified"]],
+    purpose: "cover",
+  });
 }
 
 async function main() {
