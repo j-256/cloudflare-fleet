@@ -82,12 +82,12 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/client": "2.3.1",
     "@playwright/test": "1.63.0",
-    "wrangler": "4.145.0"
+    "wrangler": "4.147.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.2.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "jose": "6.2.12",
     "zod": "4.6.5"
   }
