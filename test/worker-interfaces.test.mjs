@@ -5,6 +5,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
 import { runFleetCommand, parseFleetArguments } from "../src/cli.mjs"
 import { createFleetMcpServer } from "../src/mcp.mjs"
 import { runFleetServiceCommand, validateFleetCommand } from "../src/fleet-command.mjs"
+import { workerReportOutputSchema } from "../src/interface-schemas.mjs"
 import { workerFixture, assetsOnlyVersionResources, disabledWorkerChange, WORKER_FIXTURE_SECRET } from "./worker.fixture.mjs"
 
 async function connection(context, fixture, handler) {
@@ -34,6 +35,48 @@ async function connection(context, fixture, handler) {
 }
 
 const approve = (request) => ({ action: "accept", content: Object.fromEntries(request.params.requestedSchema.required.map((key) => [key, "approve"])) })
+
+test("current invocation timings and effective logging reach MCP, CLI and hosted inspection", async (context) => {
+  const fixture = workerFixture({ now: Date.now(), observability: { enabled: false, logs: { enabled: true, persist: true, invocation_logs: true, head_sampling_rate: 1 } } })
+  const call = await connection(context, fixture)
+  const input = { worker: "example-worker", limit: 2 }
+  const report = await call("inspect_worker", input)
+  assert.equal(report.logs.value.invocations, 2)
+  assert.equal(report.logs.value.samples[0].cpuTimeMs, 4.5)
+  assert.equal(report.logs.value.samples[0].wallTimeMs, 120)
+  assert.equal(report.logging.value.enabled, true)
+  assert.equal(report.logging.value.observabilityEnabled, false)
+  assert.equal(report.logging.value.persist, true)
+  assert.equal(report.logs.value.nextCursor, "record-cron-error")
+  assert.equal(workerReportOutputSchema.safeParse(report).success, true)
+  const legacyReport = structuredClone(report)
+  delete legacyReport.logging.value.observabilityEnabled
+  delete legacyReport.logging.value.persist
+  for (const sample of legacyReport.logs.value.samples) {
+    delete sample.cpuTimeMs
+    delete sample.wallTimeMs
+  }
+  assert.equal(workerReportOutputSchema.safeParse(legacyReport).success, true)
+  const malformed = structuredClone(report)
+  malformed.logs.value.samples[0].cpuTimeMs = -1
+  assert.equal(workerReportOutputSchema.safeParse(malformed).success, false)
+  malformed.logs.value.samples[0].cpuTimeMs = 1
+  malformed.logging.value.headSamplingRate = 2
+  assert.equal(workerReportOutputSchema.safeParse(malformed).success, false)
+  const cli = await runFleetCommand({
+    argv: ["worker", "inspect", "--input", "-", "--format", "json"], stdin: Readable.from([JSON.stringify(input)]),
+    stdout: { write() {} }, stderr: { write() {} }, service: { workers: fixture.service }, environment: {},
+  })
+  const service = { accountId: fixture.api.accountId, workers: fixture.service }
+  const hosted = await runFleetServiceCommand(service, { version: 1, accountId: service.accountId, command: "worker-inspect", input })
+  assert.deepEqual(cli.logs, report.logs)
+  assert.deepEqual(hosted.logging, report.logging)
+  const next = await call("inspect_worker", { ...report.selector, cursor: report.logs.value.nextCursor })
+  assert.equal(next.selector.start, report.selector.start)
+  assert.equal(next.logs.value.invocations, 1)
+  const recorded = await call("record_worker_incident", input)
+  assert.deepEqual(recorded.record.report.logs, report.logs)
+})
 
 test("MCP rejects missing selectors at the tool boundary and publishes the requirement", async (context) => {
   const fixture = workerFixture()

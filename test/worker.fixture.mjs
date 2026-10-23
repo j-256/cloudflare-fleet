@@ -24,8 +24,8 @@ export function workerFixture(options = {}) {
     ...options,
   }
   const event = (key, type, outcome, version, offset, status) => ({
-    $metadata: { id: key, type: "cf-worker-event" },
-    $workers: { scriptName: "example-worker", requestId: key, eventType: type, outcome, scriptVersion: { id: version }, event: { response: { status }, request: { headers: { authorization: WORKER_FIXTURE_SECRET }, body: WORKER_FIXTURE_SECRET } } },
+    $metadata: { id: `record-${key}`, requestId: key, type: "cf-worker-event" },
+    $workers: { scriptName: "example-worker", eventType: type, outcome, scriptVersion: { id: version }, cpuTimeMs: 4.5, wallTimeMs: 120, event: { response: { status }, request: { headers: { authorization: WORKER_FIXTURE_SECRET }, body: WORKER_FIXTURE_SECRET } } },
     timestamp: now - offset,
     source: { message: WORKER_FIXTURE_SECRET },
   })
@@ -60,7 +60,7 @@ export function workerFixture(options = {}) {
         return { status: 200, result: { id: versionId, resources } }
       }
       if (path === `${base}subdomain`) return { status: 200, result: { enabled: true, previews_enabled: false } }
-      if (path === `${base}script-settings`) return { status: 200, result: { observability: { enabled: true, head_sampling_rate: 1, logs: { invocation_logs: true } } } }
+      if (path === `${base}script-settings`) return { status: 200, result: { observability: state.observability ?? { enabled: true, head_sampling_rate: 1, logs: { invocation_logs: true } } } }
       if (path === `accounts/${api.accountId}/workers/domains`) return { status: 200, result: [{ service: "example-worker", hostname: "api.example.com", zone_id: "example-zone" }] }
       if (path === "zones/example-zone") return { status: 200, result: { account: { id: state.routeAccount || api.accountId } } }
       if (path === "zones/example-zone/workers/routes") return { status: 200, result: [{ id: "example-route", script: "example-worker", pattern: "example.com/api/*" }] }

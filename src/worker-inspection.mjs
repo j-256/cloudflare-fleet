@@ -14,6 +14,8 @@ const OUTCOMES = new Set(["ok", "exception", "canceled", "exceededCpu", "exceede
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/
 const INVOCATION_TYPE = "cf-worker-event"
 const id = (value) => typeof value === "string" && ID_PATTERN.test(value) ? value : null
+const boolean = (value) => typeof value === "boolean" ? value : null
+const durationMs = (value) => Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER ? value : null
 const METADATA_REASONS = Object.freeze({
   "deployment-missing": "No deployed version metadata",
   "deployment-incomplete": "Deployment metadata is incomplete",
@@ -153,11 +155,15 @@ export async function readWorkerConfiguration(api, worker, options = {}) {
       return { workersDev: value.enabled, previews: typeof value.previews_enabled === "boolean" ? value.previews_enabled : null }
     }, now),
     observedRead(async () => {
-      const logs = (await read("script-settings")).result?.observability
+      const observability = (await read("script-settings")).result?.observability
+      const logs = observability?.logs
+      const samplingRate = logs?.head_sampling_rate === undefined ? observability?.head_sampling_rate : logs.head_sampling_rate
       return {
-        enabled: typeof logs?.enabled === "boolean" ? logs.enabled : null,
-        invocationLogs: typeof logs?.logs?.invocation_logs === "boolean" ? logs.logs.invocation_logs : null,
-        headSamplingRate: typeof logs?.head_sampling_rate === "number" ? logs.head_sampling_rate : null,
+        enabled: boolean(logs?.enabled === undefined ? observability?.enabled : logs.enabled),
+        observabilityEnabled: boolean(observability?.enabled),
+        persist: boolean(logs?.persist),
+        invocationLogs: boolean(logs?.invocation_logs),
+        headSamplingRate: Number.isFinite(samplingRate) && samplingRate >= 0 && samplingRate <= 1 ? samplingRate : null,
       }
     }, now),
   ])
@@ -213,14 +219,16 @@ export function projectInvocationEvidence(events, input, deployment) {
       || event.timestamp < Date.parse(input.start) || event.timestamp >= Date.parse(input.end)) { ignored += 1; continue }
     const signature = errorSignature(event)
     if (signature) signatures.set(signature, true)
-    if (event.$metadata?.type !== INVOCATION_TYPE || !id(workers.requestId)) { ignored += 1; continue }
+    const metadata = event.$metadata
+    const requestId = id(metadata && Object.hasOwn(metadata, "requestId") ? metadata.requestId : workers.requestId)
+    if (metadata?.type !== INVOCATION_TYPE || !requestId) { ignored += 1; continue }
     const version = id(workers.scriptVersion?.id)
     const eventType = workers.eventType === "cron" ? "scheduled" : EVENT_TYPES.has(workers.eventType) ? workers.eventType : "unknown"
     const status = workers.event?.response?.status
     const cron = workers.event?.cron
     const serving = deployment?.versions.filter((v) => v.percentage > 0).map((v) => v.id)
     const invocation = {
-      id: workers.requestId,
+      id: requestId,
       timestamp: new Date(event.timestamp).toISOString(),
       eventType,
       outcome: OUTCOMES.has(workers.outcome) ? workers.outcome : "unknown",
@@ -228,9 +236,11 @@ export function projectInvocationEvidence(events, input, deployment) {
       servingVersion: version && serving ? serving.includes(version) : null,
       httpStatus: eventType === "fetch" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
       cron: eventType === "scheduled" && typeof cron === "string" && cron.length <= WORKER_CRON_MAX_LENGTH && WORKER_CRON_PATTERN.test(cron) ? cron : null,
+      cpuTimeMs: durationMs(workers.cpuTimeMs),
+      wallTimeMs: durationMs(workers.wallTimeMs),
       truncated: workers.truncated === true,
     }
-    invocations.set(`${workers.requestId}:${version}`, invocation)
+    invocations.set(`${requestId}:${version}`, invocation)
   }
   const samples = [...invocations.values()]
   const groups = new Map()
@@ -302,6 +312,7 @@ export async function inspectWorker(api, value, options = {}) {
     summary: `${input.worker}: trigger compatibility ${config.assessment.status}; ${input.logs ? `${logs.value?.invocations ?? "unknown"} observed invocations on this evidence page` : "invocation logs not requested"}`,
     limitations: [
       "Evidence counts cover this page only; invocation records are counted once and console records do not increase invocation totals",
+      "CPU and wall time describe observed execution, not scheduler delay; unsupported or missing timing values remain unknown",
       "Retention, sampling, disabled invocation logging, ingestion delay and query limits can omit events; absence of events does not establish health",
       "Serving-version labels compare with the configuration read; an old-version HTTP status does not establish a serving-version failure or prove bootstrap as its cause",
       "Handler compatibility requires every serving version to export the handler; per-version metadata identifies partial deployment mismatches",

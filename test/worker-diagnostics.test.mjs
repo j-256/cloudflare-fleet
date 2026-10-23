@@ -139,6 +139,94 @@ test("sanitized upstream console reproduction has no required outcome or invocat
   assert.deepEqual(evidence.errorSignatures, ["missing-scheduled-handler"])
 })
 
+test("current and legacy request IDs deduplicate invocation records independently of log IDs", () => {
+  const fixture = workerFixture()
+  const current = fixture.event("same-request", "cron", "ok", "version-serving", 1000)
+  current.$workers.event.cron = "*/2 * * * *"
+  current.$workers.event.scheduledTime = 1788263998.5
+  const legacy = structuredClone(current)
+  legacy.$metadata = { id: "legacy-record", type: "cf-worker-event" }
+  legacy.$workers.requestId = "same-request"
+  const consoleRecord = structuredClone(current)
+  consoleRecord.$metadata = { ...current.$metadata, id: "console-record", type: "cf-worker-log" }
+  const other = fixture.event("other-request", "fetch", "ok", "version-serving", 2000, 204)
+  const evidence = projectInvocationEvidence([legacy, current, consoleRecord, other], normalizeWorkerInspection({ worker: "example-worker" }, WORKER_FIXTURE_TIME))
+  assert.equal(evidence.invocations, 2)
+  assert.equal(evidence.ignoredRecords, 1)
+  assert.deepEqual(evidence.samples.map((sample) => sample.id), ["same-request", "other-request"])
+  assert.equal(evidence.samples[0].eventType, "scheduled")
+  assert.equal(evidence.samples[0].cpuTimeMs, 4.5)
+  assert.equal(evidence.samples[0].wallTimeMs, 120)
+  assert.equal(evidence.groups.find((group) => group.eventType === "scheduled").count, 1)
+  assert.equal(evidence.httpStatuses[0].status, 204)
+  assert.doesNotMatch(JSON.stringify(evidence), new RegExp(WORKER_FIXTURE_SECRET))
+  assert.equal(Object.hasOwn(evidence.samples[0], "scheduledTime"), false)
+})
+
+test("malformed request identifiers cannot become invocation counts or escape the projection", () => {
+  const fixture = workerFixture()
+  const records = [undefined, null, "", 42, {}, "invalid.request", "a".repeat(257)].map((requestId, index) => {
+    const event = fixture.event(`bad-${index}`, "scheduled", "ok", "version-serving", 1000)
+    event.$metadata.requestId = requestId
+    return event
+  })
+  const current = fixture.event("canonical-request", "fetch", "ok", "version-serving", 1000, 200)
+  current.$workers.requestId = "legacy-other-request"
+  const malformedCurrent = fixture.event("bad-current", "fetch", "ok", "version-serving", 1000, 200)
+  malformedCurrent.$metadata.requestId = "invalid.request"
+  malformedCurrent.$workers.requestId = "legacy-fallback-request"
+  const evidence = projectInvocationEvidence([...records, current, malformedCurrent], normalizeWorkerInspection({ worker: "example-worker" }, WORKER_FIXTURE_TIME))
+  assert.deepEqual(evidence.samples.map((sample) => sample.id), ["canonical-request"])
+  assert.equal(evidence.ignoredRecords, 8)
+})
+
+test("invocation timing projection keeps zero and rejects invalid or unbounded durations", () => {
+  const fixture = workerFixture()
+  for (const [value, expected] of [[0, 0], [0.25, 0.25], [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER], [undefined, null], [null, null], ["120", null], [-1, null], [NaN, null], [Infinity, null], [Number.MAX_SAFE_INTEGER + 1, null], [{ secret: WORKER_FIXTURE_SECRET }, null]]) {
+    const event = fixture.event("timed-request", "fetch", "ok", "version-serving", 1000, 200)
+    event.$workers.cpuTimeMs = value
+    event.$workers.wallTimeMs = value
+    const evidence = projectInvocationEvidence([event], normalizeWorkerInspection({ worker: "example-worker" }, WORKER_FIXTURE_TIME))
+    assert.equal(evidence.samples[0]?.cpuTimeMs, expected)
+    assert.equal(evidence.samples[0]?.wallTimeMs, expected)
+    assert.doesNotMatch(JSON.stringify(evidence), new RegExp(WORKER_FIXTURE_SECRET))
+  }
+})
+
+test("logging projects nested enablement and sampling while preserving legacy settings and unknowns", async () => {
+  const cases = [
+    [{ enabled: false, head_sampling_rate: 0.5, logs: { enabled: true, persist: true, invocation_logs: true, head_sampling_rate: 0.25 } }, { enabled: true, observabilityEnabled: false, persist: true, invocationLogs: true, headSamplingRate: 0.25 }],
+    [{ enabled: true, head_sampling_rate: 1, logs: { enabled: false, persist: false, invocation_logs: false, head_sampling_rate: 0 } }, { enabled: false, observabilityEnabled: true, persist: false, invocationLogs: false, headSamplingRate: 0 }],
+    [{ enabled: true, head_sampling_rate: 1, logs: { invocation_logs: true } }, { enabled: true, observabilityEnabled: true, persist: null, invocationLogs: true, headSamplingRate: 1 }],
+    [{}, { enabled: null, observabilityEnabled: null, persist: null, invocationLogs: null, headSamplingRate: null }],
+    [{ enabled: true, head_sampling_rate: 0.5, logs: { enabled: "true", persist: 1, invocation_logs: "true", head_sampling_rate: 2 } }, { enabled: null, observabilityEnabled: true, persist: null, invocationLogs: null, headSamplingRate: null }],
+  ]
+  for (const [observability, expected] of cases) {
+    const fixture = workerFixture({ observability })
+    const report = await fixture.service.inspect({ worker: "example-worker", logs: false })
+    assert.deepEqual(report.logging.value, expected)
+  }
+})
+
+test("evidence page limits use record IDs rather than request IDs and reject malformed cursors", async () => {
+  const fixture = workerFixture()
+  fixture.state.events = ["first", "second", "third"].map((requestId) => fixture.event(requestId, "fetch", "ok", "version-serving", 1000, 200))
+  const first = await fixture.service.inspect({ worker: "example-worker", limit: 2 })
+  assert.equal(first.logs.value.invocations, 2)
+  assert.equal(first.logs.value.nextCursor, "record-second")
+  assert.equal(first.logs.value.limitReached, true)
+  const next = await fixture.service.inspect({ ...first.selector, cursor: first.logs.value.nextCursor })
+  assert.deepEqual(next.logs.value.samples.map((sample) => sample.id), ["third"])
+  assert.equal(next.logs.value.limitReached, false)
+  assert.equal(next.logs.value.nextCursor, null)
+  fixture.state.events[1].$metadata.id = "invalid.cursor"
+  const malformed = await fixture.service.inspect({ worker: "example-worker", limit: 2 })
+  assert.equal(malformed.logs.value.limitReached, true)
+  assert.equal(malformed.logs.value.nextCursor, null)
+  const input = normalizeWorkerInspection({ worker: "example-worker", limit: 1 }, WORKER_FIXTURE_TIME)
+  assert.equal(projectInvocationEvidence(fixture.state.events, input).invocations, 1)
+})
+
 test("inspection remains useful after log denial and does not invent metadata coverage", async () => {
   const fixture = workerFixture({ logDenied: true })
   const report = await fixture.service.inspect({ findingId: "deep.worker-scheduled-handler-missing:example-worker" })
