@@ -158,6 +158,8 @@ const workerSampleSchema = z.strictObject({
   servingVersion: z.boolean().nullable(),
   httpStatus: z.number().int().nullable(),
   cron: z.string().max(256).nullable(),
+  cpuTimeMs: z.number().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional().describe("Observed invocation CPU time in milliseconds; unavailable or invalid values are null, older saved reports may omit it"),
+  wallTimeMs: z.number().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional().describe("Observed invocation wall time in milliseconds, separate from scheduler delay; older saved reports may omit it"),
   truncated: z.boolean(),
 })
 export const workerReportOutputSchema = z.looseObject({
@@ -173,7 +175,13 @@ export const workerReportOutputSchema = z.looseObject({
   schedules: workerReadSchema(z.array(z.string())),
   versions: z.array(workerVersionSchema).max(10),
   ingress: workerReadSchema(z.json()),
-  logging: workerReadSchema(z.json()),
+  logging: workerReadSchema(z.strictObject({
+    enabled: z.boolean().nullable().describe("Effective logs enablement: nested logs.enabled takes precedence over legacy observability.enabled; unknown stays null"),
+    observabilityEnabled: z.boolean().nullable().optional().describe("Unmodified legacy observability.enabled setting, which may differ from nested logs.enabled"),
+    persist: z.boolean().nullable().optional().describe("Explicit logs.persist setting; missing values remain unknown"),
+    invocationLogs: z.boolean().nullable(),
+    headSamplingRate: z.number().min(0).max(1).nullable().describe("Nested log sampling rate, with legacy fallback only when omitted; missing or invalid values remain null"),
+  })),
   domains: workerReadSchema(z.json()),
   routes: z.array(z.json()).max(20),
   logs: workerReadSchema(z.strictObject({
