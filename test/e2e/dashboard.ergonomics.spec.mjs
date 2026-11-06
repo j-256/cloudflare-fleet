@@ -38,12 +38,12 @@ test("cautious reviewer understands a scalar difference without decoding a merge
     persona: "Cautious reviewer",
     task: "Understand one ungoverned scalar difference",
   })
-  const review = page.locator("#review-ungoverned-differences")
-  await expect(review).toContainText("ungoverned differences")
+  const review = page.getByRole("button", { name: /^Decisions needed/ })
+  await expect(review).toContainText("Decisions needed")
   await journey.requireInViewport(review, "Ungoverned differences task")
   await journey.click(review, "Review ungoverned differences")
-  await journey.click(page.getByRole("button", {
-    name: `Compare 2 values: Observed values for ${SETTING_ID}`,
+  await journey.click(page.locator(".review-queue-item").filter({ hasText: SETTING_ID }).getByRole("button", {
+    name: /^Compare values/,
   }), "Compare always_use_https values")
 
   const comparison = page.getByRole("dialog", { name: SETTING_ID })
@@ -70,7 +70,7 @@ test("returning operator verifies a known setting change without opening raw JSO
     persona: "Returning operator",
     task: "Change always_use_https from off to on",
   })
-  const browse = page.getByRole("button", { name: "Browse matrix change paths" })
+  const browse = page.getByRole("navigation", { name: "Fleet sections" }).getByRole("link", { name: "Configuration", exact: true })
   await journey.requireInViewport(browse, "Supported changes task")
   await journey.click(browse, "Browse supported changes")
   await journey.fill(
@@ -103,7 +103,7 @@ test("returning operator verifies a known setting change without opening raw JSO
   await expect.poll(() => settingValue(targetZone, SETTING_ID)).toBe("on")
   await journey.finish({
     automaticHorizontalViewport: 0,
-    automaticVerticalViewport: 1.2,
+    automaticVerticalViewport: 2.8,
     disclosures: 0,
     inputs: 2,
     manualHorizontalViewport: 0,
@@ -249,10 +249,11 @@ test("reviewer reaches unexpected API read issues from Start Here", async ({ das
     persona: "Coverage reviewer",
     task: "Inspect unexpected API read issues",
   })
-  const review = page.locator("#review-coverage-issues")
+  const review = page.getByRole("button", { name: /^Read health/ })
   await journey.requireInViewport(review, "Unexpected read issues task")
   await journey.capture("operational-review-entry-points")
   await journey.click(review, "Review unexpected read issues")
+  await journey.click(page.locator(".review-queue-item").first().getByRole("button", { name: /^Inspect read health/ }), "Inspect read evidence")
   await expect(page.locator("#coverage-unexpected-toggle")).toHaveAttribute(
     "aria-expanded",
     "true",
@@ -261,12 +262,12 @@ test("reviewer reaches unexpected API read issues from Start Here", async ({ das
   await journey.capture("unexpected-read-issues")
   await journey.finish({
     automaticHorizontalViewport: 0,
-    automaticVerticalViewport: 2,
+    automaticVerticalViewport: 3.5,
     disclosures: 0,
     manualHorizontalViewport: 0,
     manualVerticalViewport: 0,
     reversals: 0,
-    totalInteractions: 1,
+    totalInteractions: 2,
   })
 })
 
@@ -276,9 +277,10 @@ test("large-fleet reviewer compares one rule across many zones without horizonta
     persona: "Large fleet reviewer",
     task: "Compare one rule with many fleet variants",
   })
-  const review = page.locator("#review-ungoverned-differences")
+  const review = page.getByRole("navigation", { name: "Fleet sections" }).getByRole("link", { name: "Configuration", exact: true })
   await journey.requireInViewport(review, "Ungoverned differences task")
   await journey.click(review, "Review ungoverned differences")
+  await journey.click(page.locator("#filter-panel-toggle"), "Open configuration filters")
   await journey.select(
     page.locator("#category"),
     "Ruleset rules",
@@ -322,6 +324,6 @@ test("large-fleet reviewer compares one rule across many zones without horizonta
     manualHorizontalViewport: 0,
     manualVerticalViewport: 0,
     reversals: 0,
-    totalInteractions: 4,
+    totalInteractions: 5,
   })
 })

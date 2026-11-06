@@ -26,7 +26,6 @@
     <header class="hero">
       <div class="hero-heading">
         <div>
-          <p class="eyebrow">Cloudflare control plane / protected live session</p>
           <h1>Cloudflare Fleet</h1>
         </div>
         <div class="session-state" role="status" aria-live="polite" aria-atomic="true">
@@ -42,20 +41,11 @@
         <div class="summary-card" role="listitem"><strong id="intent-zone-match-count">Waiting</strong><span>Zones match intent</span></div>
         <div class="summary-card" role="listitem"><strong id="ungoverned-count">0</strong><span>Not governed</span></div>
       </div>
-      <section class="intent-verdict intent-verdict-main" id="intent-verdict" data-status="review" aria-labelledby="intent-verdict-title" aria-describedby="intent-verdict-detail" aria-live="polite" aria-atomic="true">
-        <span class="intent-verdict-mark" aria-hidden="true"></span>
-        <div class="intent-verdict-copy">
-          <span class="intent-verdict-label">Fleet intent status</span>
-          <strong id="intent-verdict-title">Evaluating fleet intent</strong>
-          <span id="intent-verdict-detail">Waiting for fleet inventory.</span>
-        </div>
-        <button class="button button-quiet intent-verdict-action" id="intent-verdict-action" type="button">View intent</button>
-      </section>
       <progress class="load-progress" id="load-progress" max="100" value="0" aria-label="Fleet loading progress" hidden></progress>
     </header>
 
     <nav class="workspace-nav" aria-label="Fleet sections">
-      <a href="#start-here-heading">Overview</a>
+      <a href="#start-here-heading">Review queues</a>
       <a href="#configuration-heading">Configuration</a>
       <a href="#workflow-heading">Workflows</a>
       <a href="#coverage-heading">Read health</a>
@@ -63,87 +53,64 @@
 
     <main id="main-content">
       <section class="task-hub" id="start-here" aria-labelledby="start-here-heading">
-        <div class="section-introduction">
-          <p class="policy-kicker">Start here</p>
-          <h2 id="start-here-heading" tabindex="-1">What do you want to do?</h2>
-          <p>Review differences, manage expected state, or find a setting to change. Changes are checked live and require confirmation.</p>
-        </div>
-        <div class="task-grid">
-          <article class="task-card review-task-card">
-            <div class="task-card-heading">
-              <span class="task-number" aria-hidden="true">1</span>
-              <div>
-                <p class="task-kind">Observe</p>
-                <h3>Review fleet differences</h3>
-              </div>
-            </div>
-            <p>Intent mismatches need action. Ungoverned differences need a decision about whether they should become policy. Allowed differences stay out of this queue.</p>
-            <div class="task-card-status-grid" role="group" aria-label="Review queue summary">
-              <span class="task-card-status-metric intent"><strong id="review-intent-count">0</strong><span id="review-intent-label">Intent mismatches</span></span>
-              <span class="task-card-status-metric"><strong id="review-ungoverned-count">0</strong><span>Not governed</span></span>
-            </div>
-            <div class="review-task-actions">
-              <button class="button button-primary" id="review-intent-drift" type="button">Review intent mismatches</button>
-              <button class="button" id="review-ungoverned-differences" type="button">Review ungoverned differences</button>
-            </div>
-          </article>
-
-          <article class="task-card intent-task-card">
-            <div class="task-card-heading">
-              <span class="task-number" aria-hidden="true">2</span>
-              <div>
-                <p class="task-kind">Decide</p>
-                <h3>Define expected state</h3>
-              </div>
-            </div>
-            <p>Record where facets are required, optional, or forbidden, then define how present values relate. Saving intent evaluates drift but does not itself change Cloudflare.</p>
-            <p class="task-card-detail" id="intent-policy-detail">No facets governed yet</p>
-            <div class="task-card-actions">
-              <div class="policy-badges">
-                <span class="intent-save-status unsaved" data-intent-save-status role="status" aria-live="polite" aria-atomic="true">Not saved yet</span>
-                <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
-                <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
-              </div>
-              <div class="intent-task-controls">
-                <button class="button button-quiet" type="button" data-intent-undo disabled>Undo</button>
-                <button class="button button-accent" id="manage-intent" type="button">Manage fleet intent</button>
-              </div>
-            </div>
-          </article>
-
-          <article class="task-card change-task-card">
-            <div class="task-card-heading">
-              <span class="task-number" aria-hidden="true">3</span>
-              <div>
-                <p class="task-kind">Change</p>
-                <h3>Make supported changes</h3>
-              </div>
-            </div>
-            <p>Find editable settings, DNS records, and rules. Use the Workflows section for Email Routing, Shared WAF, and DNSSEC alignment.</p>
-            <div class="task-card-status"><strong id="supported-change-count">0</strong><span id="supported-change-label">facets have a matrix change path</span></div>
-            <div class="change-readiness" id="write-panel">
-              <span>Write readiness</span>
-              <strong id="write-readiness" role="status" aria-live="polite">Loading live state; writes are locked</strong>
-            </div>
-            <button class="button button-primary" id="show-supported-changes" type="button">Browse matrix change paths</button>
-          </article>
-        </div>
-        <nav class="operational-review" aria-label="Operational review">
-          <div class="operational-review-copy">
-            <p class="task-kind">Operational review</p>
-            <strong>Inspect read health and recorded changes</strong>
-            <span>These review surfaces do not change Cloudflare.</span>
+        <div class="review-heading">
+          <div>
+            <h2 id="start-here-heading" tabindex="-1">Review queues</h2>
+            <p id="review-queue-status" role="status" aria-live="polite">Loading fleet evidence</p>
           </div>
-          <div class="operational-review-actions">
-            <button class="button button-quiet" id="review-coverage-issues" type="button" disabled><span id="review-coverage-count">0</span> unexpected read issues</button>
+          <div class="review-heading-actions">
+            <span class="intent-save-status unsaved" data-intent-save-status role="status" aria-live="polite" aria-atomic="true">Not saved yet</span>
+            <button class="button button-quiet" type="button" data-intent-undo disabled>Undo</button>
+            <button class="button" id="manage-intent" type="button">Manage fleet intent</button>
             <button class="button button-quiet" id="review-operation-activity" type="button" aria-haspopup="dialog"><span id="review-operation-count">0</span> recorded operations</button>
           </div>
+        </div>
+        <div class="review-queue-tabs" role="group" aria-label="Review queues">
+          <button type="button" class="queue-selector" data-review-queue="misalignments" aria-pressed="true">Misalignments <span class="queue-count">0</span></button>
+          <button type="button" class="queue-selector" data-review-queue="decisions" aria-pressed="false">Decisions needed <span class="queue-count">0</span></button>
+          <button type="button" class="queue-selector" data-review-queue="reads" aria-pressed="false">Read health <span class="queue-count">0</span></button>
+        </div>
+        <p class="queue-context" id="review-queue-context">Misalignments need correction. Ungoverned differences need a decision. Incomplete reads limit what can be concluded.</p>
+        <ol class="review-queue-list" id="review-queue-list" aria-label="Outstanding fleet work"></ol>
+        <nav class="queue-pagination" aria-label="Review queue pages">
+          <span id="review-queue-page" role="status" aria-live="polite"></span>
+          <button class="button button-quiet" id="review-queue-previous" type="button" disabled>Previous</button>
+          <button class="button button-quiet" id="review-queue-next" type="button" disabled>Next</button>
         </nav>
+        <div class="queue-utilities">
+          <button class="button button-quiet" id="review-intent-drift" type="button">Review intent mismatches</button>
+          <button class="button button-quiet" id="review-ungoverned-differences" type="button">Review ungoverned differences</button>
+          <button class="button button-quiet" id="review-coverage-issues" type="button" disabled><span id="review-coverage-count">0</span> unexpected read issues</button>
+        </div>
+        <details class="review-tools">
+          <summary>Fleet intent and change tools</summary>
+          <section class="intent-verdict intent-verdict-main" id="intent-verdict" data-status="review" aria-labelledby="intent-verdict-title" aria-describedby="intent-verdict-detail" aria-live="polite" aria-atomic="true">
+            <span class="intent-verdict-mark" aria-hidden="true"></span>
+            <div class="intent-verdict-copy">
+              <span class="intent-verdict-label">Fleet intent status</span>
+              <strong id="intent-verdict-title">Evaluating fleet intent</strong>
+              <span id="intent-verdict-detail">Waiting for fleet inventory.</span>
+            </div>
+            <button class="button button-quiet intent-verdict-action" id="intent-verdict-action" type="button">View intent</button>
+          </section>
+          <div class="review-tools-content">
+            <div>
+              <p id="intent-policy-detail">No facets governed yet</p>
+              <span class="drift-badge" id="intent-policy-drift">0 actionable</span>
+              <span class="intent-review-badge" id="intent-policy-review" hidden>0 need review</span>
+            </div>
+            <div>
+              <p><strong id="supported-change-count">0</strong> <span id="supported-change-label">facets have a matrix change path</span></p>
+              <button class="button" id="show-supported-changes" type="button">Browse matrix change paths</button>
+            </div>
+          </div>
+        </details>
+        <div class="queue-write-status" id="write-panel"><strong id="write-readiness" role="status" aria-live="polite">Loading live state; writes are locked</strong></div>
+        <div class="sr-only" role="group" aria-label="Review queue summary"><span id="review-intent-count">0</span> <span id="review-intent-label">Intent mismatches</span><span id="review-ungoverned-count">0</span> ungoverned differences</div>
       </section>
 
       <section class="configuration-explorer" aria-labelledby="configuration-heading">
         <div class="section-introduction explorer-introduction">
-          <p class="policy-kicker">Detailed workspace</p>
           <h2 id="configuration-heading" tabindex="-1">Explore all configuration</h2>
           <p>Compare readable configuration across zones, define expected state, and use only the change paths Fleet supports.</p>
         </div>
@@ -442,11 +409,10 @@
       <button class="dialog-close" type="button" data-dialog-close aria-label="Close value comparison">&times;</button>
       <header class="value-comparison-heading">
         <div>
-          <p class="dialog-kicker">Fleet value comparison</p>
           <h2 id="value-comparison-title">Competing values</h2>
           <p id="value-comparison-summary"></p>
         </div>
-        <div class="value-comparison-metrics" id="value-comparison-metrics" aria-label="Value comparison summary"></div>
+        <div class="value-comparison-metrics" id="value-comparison-metrics" role="group" aria-label="Value comparison summary"></div>
       </header>
       <section class="value-comparison-section" aria-labelledby="value-comparison-groups-title">
         <div class="value-comparison-section-heading">
@@ -1081,7 +1047,6 @@
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-summary confirm-note">
     <form method="dialog">
       <button class="dialog-close" id="confirm-close" type="button" data-dialog-close aria-label="Close write confirmation">&times;</button>
-      <p class="dialog-kicker">Explicit Cloudflare write</p>
       <h2 id="confirm-title">Review changes</h2>
       <div class="confirm-facts" id="confirm-facts" role="list" aria-label="Live validation and write summary"></div>
       <p class="sr-only" id="confirm-summary"></p>

@@ -186,6 +186,7 @@ export function createRemoteFleetService(options = {}) {
     planFacetIntent: (request, context) => command("facet-intent-plan", { request }, context),
     applyFacetIntent: (request, planDigest, context) => command("facet-intent-apply", { request, planDigest }, context),
     listAlignments: (context) => command("alignment-list", {}, context),
+    listReviewQueue: (input, context) => command("review-queue", input, context),
     planAlignment: (selector, context) => command("alignment-plan", { selector: wireSelector(selector) }, context),
     applyAlignment: (selector, planDigest, context) => command("alignment-apply", { selector: wireSelector(selector), planDigest }, context),
     planAlignments: (selectors, context) => command("alignments-plan", { selectors: selectors.map(wireSelector) }, context),

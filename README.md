@@ -86,6 +86,14 @@ Use `cloudflare-fleet dashboard --write` only when you intend to review and appl
 
 Use `cloudflare-fleet dashboard --fresh` to bypass the inventory cache for one launch. Debug mode is intentionally separate: `cloudflare-fleet dashboard --debug-port 9224` creates an isolated browser profile with direct Cloudflare transport for development and browser automation; it cannot persist intent or activity through the broker.
 
+## Review queues
+
+The dashboard starts with outstanding work. Misalignments are saved expectations that need alignment review, including unresolved intent that needs evidence or policy review. Decisions needed contains observed differences without saved intent. Read health keeps unexpected read issues separate from configuration differences. Acknowledged exact exceptions stay out of the misalignment queue.
+
+Each item shows representative observed values, expected state, affected scope, and contextual comparison or review actions. DNS destinations are visible directly. Saving intent can create or clear review work without changing Cloudflare; applying a correction still requires the existing fresh plan, confirmation, durable activity, and authoritative verification. An empty queue establishes satisfaction only within configured, successfully checked intent. Undefined expectations and read gaps never become an unqualified success message.
+
+The MCP `list_review_queue` tool uses the same projection. Select `misalignments`, `decisions`, or `reads`; `limit` defaults to 10 and accepts at most 50 items. The response includes total items, representative evidence, coverage qualifications, the inventory time, and a revision. Continue with the same queue, an increased `offset`, and that revision; restart at offset 0 without a revision if the queue changes. Inventory is read across the configured account on each query; only the returned page is bounded. Use `inspect_facet` for complete focused evidence, existing alignment tools for corrections, and intent or adoption tools for governance decisions. Queue discovery performs no persistence or Cloudflare mutations.
+
 ## Read-only audit
 
 The CLI reads live Cloudflare inventory and configured Fleet state without sending mutations. Progress goes to stderr so stdout remains pipeable.

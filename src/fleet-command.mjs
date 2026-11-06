@@ -7,6 +7,7 @@ import { normalizeAlignmentSelector, normalizeAlignmentSelectors } from "./align
 import { runWorkerCommand, WORKER_COMMANDS, WORKER_READ_COMMANDS } from "./worker-command.mjs"
 import { FleetCommandError } from "./command-diagnostics.mjs"
 import { retrievalInputSchemas } from "./retrieval-schemas.mjs"
+import { reviewQueueInputSchema } from "./review-queue-schemas.mjs"
 
 export const FLEET_COMMAND_VERSION = 1
 export const FLEET_COMMAND_TIMEOUT_MS = 90000
@@ -24,6 +25,7 @@ const schemas = {
   "facet-intent-plan": z.strictObject({ request: facetIntentRequestSchema }),
   "facet-intent-apply": z.strictObject({ request: facetIntentRequestSchema, planDigest: digestSchema }),
   "alignment-list": empty,
+  "review-queue": reviewQueueInputSchema,
   "alignment-plan": z.strictObject({ selector }),
   "alignment-apply": z.strictObject({ selector, planDigest: digestSchema }),
   "alignments-plan": z.strictObject({ selectors: z.array(selector).min(1).max(20) }),
@@ -114,6 +116,7 @@ async function dispatchFleetServiceCommand(service, command, accountId, input, c
     case "facet-intent-plan": return service.planFacetIntent(input.request, context)
     case "facet-intent-apply": return service.applyFacetIntent(input.request, input.planDigest, context)
     case "alignment-list": return service.listAlignments(context)
+    case "review-queue": return service.listReviewQueue(input, context)
     case "alignment-plan": return service.planAlignment(normalizeAlignmentSelector(input.selector), context)
     case "alignment-apply": return service.applyAlignment(normalizeAlignmentSelector(input.selector), input.planDigest, context)
     case "alignments-plan": return service.planAlignments(normalizeAlignmentSelectors(input.selectors), context)

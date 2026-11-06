@@ -243,10 +243,9 @@ test("facet intent can build an arbitrary zone scope without requiring a name", 
   )
 })
 
-test("intent health is prominent and policy review precedes group administration", () => {
+test("intent health remains available and policy review precedes group administration", () => {
   assert.match(html, /id="intent-verdict"/)
   assert.match(html, /id="intent-dialog-verdict"/)
-  assert.ok(html.indexOf("id=\"intent-verdict\"") < html.indexOf("id=\"start-here\""))
   assert.ok(html.indexOf("id=\"intent-policies-title\"") < html.indexOf("id=\"intent-groups-title\""))
   assert.match(appSource, /INTENT_POLICY_STATUS_PRIORITY/)
 })

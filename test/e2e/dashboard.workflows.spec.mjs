@@ -1,6 +1,7 @@
 import {
   expect,
   test,
+  openMatrixFilters,
 } from "./dashboard.fixture.mjs"
 import {
   createHostnameScopedFreeRateLimitIntentValue,
@@ -142,6 +143,7 @@ test("reviews and applies exact intent alignment from a drifting cell", async ({
     "always_use_https",
   )).toBe("on")
   await expect(page.locator("#review-intent-count")).toHaveText("0")
+  await openMatrixFilters(page)
   await page.locator("#intent-status").selectOption("")
   await page.locator("#difference-toggle").click()
   await expect(page.locator(
@@ -178,6 +180,7 @@ test("uses the typed alias template and reviewed alignment in the dashboard", as
     requests,
   } = zoneAliasDashboard
 
+  await openMatrixFilters(page)
   await page.locator("#category").selectOption("Zone aliases")
   await page.locator("#scope").selectOption("all")
   await page.locator("#difference-toggle").click()
@@ -251,6 +254,7 @@ test("keeps hostname-scoped rate limits and their WAF skip in one reviewed postu
     skipDescription: "[fleet] Skip API rate limit on other hosts",
   })
 
+  await openMatrixFilters(page)
   await page.locator("#category").selectOption("Rate limiting")
   await page.locator("#scope").selectOption("all")
   await page.locator("#difference-toggle").click()
@@ -331,6 +335,7 @@ test("aligns Email Routing settings and shows unsupported reasons", async ({ ema
     zoneNames,
   } = emailIntentDashboard
 
+  await openMatrixFilters(page)
   await page.locator("#category").selectOption("Email")
   await page.getByPlaceholder("Search facets, values, or zones").fill(
     "support_subaddress",
@@ -354,7 +359,7 @@ test("aligns Email Routing settings and shows unsupported reasons", async ({ ema
   await expect(matchingCell.locator(
     ".cell-comparison-status > span:not(.tooltip)",
   )).toHaveText(
-    "Consensus",
+    "Common value",
   )
   await expect(matchingCell.locator(
     ".cell-intent-status > span:not(.tooltip)",
@@ -444,6 +449,7 @@ test("confirms rules individually without exposing a parent ruleset facet", asyn
   const { page, zoneNames } = dashboard
 
   await expect(page.locator('#category option[value="Rulesets"]')).toHaveCount(0)
+  await openMatrixFilters(page)
   await page.locator("#category").selectOption("Ruleset rules")
 
   const rows = page.locator("#matrix-body tr")

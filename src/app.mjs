@@ -1,4 +1,7 @@
 import { openFacetIntentEditor } from "./intent-quick-editor.mjs"
+import { materializeValue } from "./normalize.mjs"
+import { buildReviewQueues, reviewQueuePage, summarizeReviewValue } from "./review-queues.mjs"
+import { renderReviewQueue, reviewQueueStatus } from "./review-workspace.mjs"
 import { facetIntentReadRequirements, FACET_INTENT_MODE, FACET_INTENT_LIMIT } from "./intent-shortcuts.mjs"
 import { contextualActionLabel } from "./accessibility.mjs"
 import {
@@ -349,6 +352,11 @@ const ZONE_ALIAS_INTENT_POLICY_CONSTRAINT_HELP = "Canonical passthrough intent i
 const RATE_LIMIT_INTENT_POLICY_CONSTRAINT_HELP = "Hostname-scoped Free rate-limit intent is always Required and Exact because the rate rule and its earlier WAF skip are one safety posture."
 const LIVE_PLAN_SET = Symbol("live-plan-set")
 const MATRIX_CONTROL_SELECTOR = ".matrix-zone-select, summary, .cell-action"
+const REVIEW_WORKSPACE_PAGE_SIZE = 5
+let currentReviewQueues = null
+let activeReviewQueue = "misalignments"
+let reviewQueueOffset = 0
+let reviewQueueInitialized = false
 const CATEGORY_CHANGE_CAPABILITY_ORDER = Object.freeze([
   MATRIX_CAPABILITY.DIRECT_EDIT,
   MATRIX_CAPABILITY.WORKSPACE_EDIT,
@@ -3193,12 +3201,15 @@ function valueComparisonPathLabel(path) {
 
 function valueComparisonTable(comparison) {
   const table = createElement("table", { className: "value-comparison-table" })
+  table.setAttribute("role", "table")
   const caption = createElement("caption", {
     className: "sr-only",
     text: "Fields that differ between the observed fleet values",
   })
   const head = document.createElement("thead")
+  head.setAttribute("role", "rowgroup")
   const headingRow = document.createElement("tr")
+  headingRow.setAttribute("role", "row")
   const fieldHeading = createElement("th", {
     className: "value-comparison-field-heading",
     text: "Differing field",
@@ -3218,11 +3229,13 @@ function valueComparisonTable(comparison) {
   head.append(headingRow)
 
   const body = document.createElement("tbody")
+  body.setAttribute("role", "rowgroup")
   const referenceIndex = comparison.variants.findIndex(
     (variant) => variant.canonical === comparison.referenceCanonical,
   )
   for (const difference of comparison.differences) {
     const row = document.createElement("tr")
+    row.setAttribute("role", "row")
     const field = createElement("th", {
       className: "value-comparison-field-heading",
       text: valueComparisonPathLabel(difference.path),
@@ -3231,6 +3244,8 @@ function valueComparisonTable(comparison) {
     row.append(field)
     for (const index of comparison.variants.keys()) {
       const cell = document.createElement("td")
+      cell.setAttribute("role", "cell")
+      cell.dataset.variantLabel = `${valueComparisonVariantLabel(comparison, comparison.variants[index], index)} / ${comparison.variants[index].count} zones`
       cell.append(valueComparisonFieldValue(
         difference,
         index,
@@ -3264,7 +3279,7 @@ function renderValueComparison() {
   const comparison = row
     ? compareFleetRowValues(row, state.inventory?.zones || [])
     : null
-  if (!row || !comparison || comparison.variantCount < 2) {
+  if (!row || !comparison) {
     if (elements.valueComparisonDialog.open) elements.valueComparisonDialog.close()
     return
   }
@@ -3275,11 +3290,11 @@ function renderValueComparison() {
     ? ` ${comparison.missingZones.length} zone${comparison.missingZones.length === 1 ? " is" : "s are"} missing this facet.`
     : ""
   elements.valueComparisonTitle.textContent = row.label
-  elements.valueComparisonSummary.textContent = `${comparison.variantCount} normalized values are present. ${leadingSummary}${missingSummary}`
+  elements.valueComparisonSummary.textContent = `${comparison.variantCount} normalized value${comparison.variantCount === 1 ? " is" : "s are"} present. ${leadingSummary}${missingSummary}`
   elements.valueComparisonMetrics.replaceChildren(
-    rulesetBadge(`${comparison.variantCount} values`, "outlier"),
+    rulesetBadge(`${comparison.variantCount} value${comparison.variantCount === 1 ? "" : "s"}`, "outlier"),
     comparison.hasUniqueConsensus
-      ? rulesetBadge(`${comparison.consensusCount} consensus`, "baseline")
+      ? rulesetBadge(`${comparison.consensusCount} share the common value`, "baseline")
       : rulesetBadge("Tied values", "outlier"),
     rulesetBadge(
       `${comparison.differences.length} differing field${comparison.differences.length === 1 ? "" : "s"}`,
@@ -4257,6 +4272,63 @@ function renderTaskSummaries() {
   elements.supportedChangeLabel.textContent = capabilityCounts.changeableRows === 1
     ? "facet has a matrix change path"
     : "facets have a matrix change path"
+  renderReviewWorkspace()
+}
+
+function reviewItemActions(item) {
+  if (item.kind === "read") return [{ label: "Inspect read health", run: () => elements.reviewCoverageIssues.click() }]
+  const row = state.matrix.rows.find((entry) => entry.category === item.facet.category && entry.key === item.facet.key)
+  if (!row || item.kind === "unresolved") return [{ label: "Review saved intent", run: () => elements.manageIntent.click() }]
+  const actions = [{ label: "Compare values", primary: item.kind === "decision" || readOnly, run: () => showValueComparison(row) }]
+  if (!readOnly && item.kind === "misalignment") {
+    const assessment = assessIntentAlignment(row)
+    actions.unshift({
+      label: assessment.available ? "Review alignment" : "Alignment blocked",
+      primary: true,
+      disabled: state.busy || !state.transportAvailable || !assessment.available,
+      reason: assessment.available ? "" : assessment.reason,
+      run: () => reviewIntentAlignment(intentAlignmentAction(row)),
+    })
+  }
+  if (!readOnly && item.kind === "decision") actions.push({
+    label: "Set intent", disabled: !intentWritable(),
+    run: () => openQuickIntent([row]),
+  })
+  return actions
+}
+
+function renderReviewWorkspace(rebuild = true) {
+  if (!state.matrix || !state.inventory || !state.intentEvaluation) return
+  if (rebuild || !currentReviewQueues) currentReviewQueues = buildReviewQueues({
+    inventory: state.inventory, intent: state.intent,
+    matrix: state.matrix, evaluation: state.intentEvaluation,
+  })
+  if (!reviewQueueInitialized) {
+    if (!currentReviewQueues.misalignments.length && currentReviewQueues.decisions.length) activeReviewQueue = "decisions"
+    reviewQueueInitialized = true
+  }
+  const maxOffset = Math.max(0, Math.floor((currentReviewQueues[activeReviewQueue].length - 1) / REVIEW_WORKSPACE_PAGE_SIZE) * REVIEW_WORKSPACE_PAGE_SIZE)
+  reviewQueueOffset = Math.min(reviewQueueOffset, maxOffset)
+  const page = reviewQueuePage(currentReviewQueues, { queue: activeReviewQueue, offset: reviewQueueOffset, limit: REVIEW_WORKSPACE_PAGE_SIZE })
+  const status = document.querySelector("#review-queue-status")
+  status.textContent = reviewQueueStatus(currentReviewQueues)
+  status.dataset.status = currentReviewQueues.status
+  for (const button of document.querySelectorAll("[data-review-queue]")) {
+    const key = button.dataset.reviewQueue
+    button.setAttribute("aria-pressed", String(key === activeReviewQueue))
+    button.querySelector(".queue-count").textContent = String(currentReviewQueues.summary[key])
+  }
+  document.querySelector("#review-queue-context").textContent = activeReviewQueue === "misalignments"
+    ? "Saved intent is the expectation. Acknowledged exceptions stay out of this queue."
+    : activeReviewQueue === "decisions"
+      ? "These observed differences have no saved intent. Decide what should be true; saving intent does not change Cloudflare."
+      : "Incomplete reads limit the alignment verdict. Expected read gaps remain recorded separately."
+  renderReviewQueue(document.querySelector("#review-queue-list"), page, reviewItemActions)
+  document.querySelector("#review-queue-page").textContent = page.total
+    ? `${page.offset + 1}\u2013${Math.min(page.offset + page.limit, page.total)} of ${page.total} items`
+    : "Queue empty"
+  document.querySelector("#review-queue-previous").disabled = page.offset === 0
+  document.querySelector("#review-queue-next").disabled = !page.hasMore
 }
 
 function renderScopes() {
@@ -4815,12 +4887,11 @@ function installIntentWorkflowDialogs() {
 }
 
 function syncResponsiveFilterPanel() {
-  const compact = compactFilterMedia.matches
-  elements.filterPanelToggle.hidden = !compact
-  elements.toolbarSecondary.hidden = compact && !state.filterPanelExpanded
+  elements.filterPanelToggle.hidden = false
+  elements.toolbarSecondary.hidden = !state.filterPanelExpanded
   elements.filterPanelToggle.setAttribute(
     "aria-expanded",
-    String(!compact || state.filterPanelExpanded),
+    String(state.filterPanelExpanded),
   )
 }
 
@@ -7707,7 +7778,7 @@ function groupIntentPolicyCards(fragment, policyEntries) {
     }
     const actions = intentItemActions()
     actions.append(intentActionButton("Edit coverage", () => openQuickIntent([row], { policy: preferredIntentPolicy(policies) }), { context: row.label, icon: "edit", write: true }))
-    actions.append(intentActionButton("Current is good", () => openQuickIntent([row], { mode: FACET_INTENT_MODE.CURRENT }), { context: row.label, icon: "ok", write: true }))
+    actions.append(intentActionButton("Record intent", () => openQuickIntent([row], { mode: FACET_INTENT_MODE.CURRENT }), { context: row.label, icon: "ok", write: true }))
     actions.append(intentPolicyMatrixButton(policies[0], row, row.label))
     const alignment = assessIntentAlignment(row)
     if (alignment.available && alignment.targets.length) actions.append(intentActionButton(`Align ${alignment.targets.length}`, () => reviewIntentAlignment(intentAlignmentAction(row)), { context: row.label, icon: "align", write: true }))
@@ -9205,22 +9276,22 @@ function cellComparisonStatus(row, cell) {
   const status = matchesConsensus
     ? {
         className: MATRIX_COMPARISON_STATE.MATCH,
-        label: "Consensus",
+        label: "Common value",
         title: "Matches the unique row consensus",
       }
     : hasConsensus
       ? {
           className: MATRIX_COMPARISON_STATE.VARIANT,
-          label: "Variant",
+          label: "Different value",
           title: "Differs from the unique row consensus",
         }
       : {
           className: MATRIX_COMPARISON_STATE.NO_CONSENSUS,
-          label: "No consensus",
+          label: "No common value",
           title: "The most common present values are tied",
         }
   const element = matrixStatusChip(
-    status.className === MATRIX_COMPARISON_STATE.MATCH ? "ok" : "drift",
+    "matrix",
     status.label,
     status.title,
     `cell-comparison-status ${status.className}`,
@@ -9592,7 +9663,7 @@ function matrixCell(row, zone) {
     && typeof cell.inspectionValue === "object"
   td.append(createElement("span", {
     className: `cell-display${directlyEditable ? " editable" : ""}`,
-    text: cell.display,
+    text: summarizeReviewValue(materializeValue(cell.inspectionValue, zone.meta.name)),
   }))
 
   if (directlyEditable) {
@@ -9828,7 +9899,7 @@ function renderMatrix() {
         row,
       })
       facetActions.append(intentButton)
-      const currentButton = matrixActionButton("Current is good", "intent-accept-current", {
+      const currentButton = matrixActionButton("Record intent", "intent-accept-current", {
         accessibleName: `Accept current state for ${row.label}`, icon: "ok",
         title: "Keep each selected zone's current value or absence as its exact intent",
       })
@@ -10558,6 +10629,7 @@ function updateActionButtons() {
     elements.intentAdoptionSave.disabled = intentLocked
       || !state.intentAdoptionDraft?.preview
   }
+  renderReviewWorkspace(false)
   syncMatrixControlTabStop()
 }
 
@@ -14131,6 +14203,21 @@ elements.matrixChooseTargets.addEventListener("click", showTargetDialog)
 elements.selectedColumnsOnly.addEventListener("click", () => {
   state.selectedColumnsOnly = !state.selectedColumnsOnly
   updateSelectionStyles()
+})
+for (const button of document.querySelectorAll("[data-review-queue]")) {
+  button.addEventListener("click", () => {
+    activeReviewQueue = button.dataset.reviewQueue
+    reviewQueueOffset = 0
+    renderReviewWorkspace(false)
+  })
+}
+document.querySelector("#review-queue-previous").addEventListener("click", () => {
+  reviewQueueOffset = Math.max(0, reviewQueueOffset - REVIEW_WORKSPACE_PAGE_SIZE)
+  renderReviewWorkspace(false)
+})
+document.querySelector("#review-queue-next").addEventListener("click", () => {
+  reviewQueueOffset += REVIEW_WORKSPACE_PAGE_SIZE
+  renderReviewWorkspace(false)
 })
 elements.reviewIntentDrift.addEventListener("click", showIntentDrift)
 elements.reviewUngovernedDifferences.addEventListener("click", showUngovernedDifferences)

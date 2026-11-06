@@ -804,6 +804,11 @@ export async function closeDashboardSession(session) {
   })
 }
 
+export async function openMatrixFilters(page) {
+  const toggle = page.locator("#filter-panel-toggle")
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click()
+}
+
 export async function waitForDashboard(page) {
   await page.locator("#application").waitFor({ state: "visible" })
   await page.waitForFunction(() => (

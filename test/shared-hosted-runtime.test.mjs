@@ -52,6 +52,12 @@ test("actual Worker runtime shares command persistence, browser reads and recove
     },
   })
   assert.equal((await remote.status()).backend, "hosted")
+  const reviewQueue = await remote.listReviewQueue({ queue: "reads", limit: 1 })
+  assert.equal(reviewQueue.accountId, "account-one")
+  assert.equal(reviewQueue.status, "not-configured")
+  assert.equal(reviewQueue.items.length, 1)
+  assert.equal(reviewQueue.hasMore, true)
+  assert.ok(reviewQueue.summary.reads > 1)
   const original = await remote.getState()
   const input = { state: structuredClone(original.state), intentSource: "incoming" }
   input.state.intent.groups.push({

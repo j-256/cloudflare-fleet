@@ -11,6 +11,8 @@ import {
 import { stableString } from "./normalize.mjs"
 import { readInventoryPages } from "./inventory-pagination.mjs"
 
+const READABLE_RULESET_KINDS = new Set(["zone", "custom"])
+
 async function runPool(tasks, worker, concurrency, onProgress) {
   let cursor = 0
   let completed = 0
@@ -212,7 +214,7 @@ export async function loadInventory(api, options = {}) {
         const phases = options.ruleDetailPhases ? new Set(options.ruleDetailPhases) : null
         const kinds = options.ruleDetailKinds ? new Set(options.ruleDetailKinds) : null
         return rulesets
-          .filter((ruleset) => ruleset.kind === "zone" || ruleset.kind === "custom")
+          .filter((ruleset) => READABLE_RULESET_KINDS.has(ruleset.kind))
           .filter((ruleset) => phases === null || phases.has(ruleset.phase))
           .filter((ruleset) => kinds === null || kinds.has(ruleset.kind))
           .map((ruleset) => ({ zone, ruleset }))
@@ -299,7 +301,28 @@ export function coverageFor(inventory) {
       ok: failed.length === 0,
     }
   })
-  return [...zoneCoverage, ...accountCoverage]
+  const detailCoverage = inventory.zones.flatMap((zone) => {
+    if (!zone.surfaces.rulesets?.ok) return []
+    return zone.surfaces.rulesets.result.filter((ruleset) => READABLE_RULESET_KINDS.has(ruleset.kind)).map((ruleset) => {
+      const response = zone.ruleDetails?.find((entry) => (entry.rulesetId || entry.result?.id) === ruleset.id)
+      const complete = response?.ok === true && response.result?.id === ruleset.id
+      const error = response?.error || { message: "No matching ruleset detail was read" }
+      const id = `ruleset-${ruleset.id}`
+      const label = `Ruleset detail: ${ruleset.name || ruleset.id}`
+      return {
+        id, label, ok: complete,
+        detail: complete ? `Read successfully for ${zone.meta.name}` : coverageErrorDetail(error),
+        failed: complete ? [] : [{
+          detail: coverageErrorDetail(error), error,
+          kind: INVENTORY_COVERAGE_KIND.SURFACE,
+          observedCanonical: coverageIssueCanonical(error),
+          subjectId: id, subjectLabel: label,
+          zoneId: zone.meta.id, zoneName: zone.meta.name,
+        }],
+      }
+    })
+  })
+  return [...zoneCoverage, ...accountCoverage, ...detailCoverage]
 }
 
 export function coverageErrorDetail(error) {
