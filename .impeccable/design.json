@@ -1,0 +1,514 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T20:09:07.816683Z",
+  "title": "Design System: Cloudflare Fleet",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Mint",
+        "tonalRamp": [
+          "oklch(15% 0.0345 181.76)",
+          "oklch(26% 0.0667 181.76)",
+          "oklch(37% 0.0943 181.76)",
+          "oklch(49% 0.1150 181.76)",
+          "oklch(61% 0.1150 181.76)",
+          "oklch(73% 0.0943 181.76)",
+          "oklch(85% 0.0575 181.76)",
+          "oklch(95% 0.0207 181.76)"
+        ]
+      },
+      "blue": {
+        "role": "primary",
+        "displayName": "Operational Blue",
+        "tonalRamp": [
+          "oklch(15% 0.0445 252.28)",
+          "oklch(26% 0.0860 252.28)",
+          "oklch(37% 0.1215 252.28)",
+          "oklch(49% 0.1482 252.28)",
+          "oklch(61% 0.1482 252.28)",
+          "oklch(73% 0.1215 252.28)",
+          "oklch(85% 0.0741 252.28)",
+          "oklch(95% 0.0267 252.28)"
+        ]
+      },
+      "accent-2": {
+        "role": "secondary",
+        "displayName": "Attention Amber",
+        "tonalRamp": [
+          "oklch(15% 0.0422 70.17)",
+          "oklch(26% 0.0817 70.17)",
+          "oklch(37% 0.1155 70.17)",
+          "oklch(49% 0.1408 70.17)",
+          "oklch(61% 0.1408 70.17)",
+          "oklch(73% 0.1155 70.17)",
+          "oklch(85% 0.0704 70.17)",
+          "oklch(95% 0.0253 70.17)"
+        ]
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Drift Rose",
+        "tonalRamp": [
+          "oklch(15% 0.0541 17.61)",
+          "oklch(26% 0.1046 17.61)",
+          "oklch(37% 0.1479 17.61)",
+          "oklch(49% 0.1804 17.61)",
+          "oklch(61% 0.1804 17.61)",
+          "oklch(73% 0.1479 17.61)",
+          "oklch(85% 0.0902 17.61)",
+          "oklch(95% 0.0325 17.61)"
+        ]
+      },
+      "green": {
+        "role": "secondary",
+        "displayName": "Verified Green",
+        "tonalRamp": [
+          "oklch(15% 0.0380 151.25)",
+          "oklch(26% 0.0735 151.25)",
+          "oklch(37% 0.1039 151.25)",
+          "oklch(49% 0.1268 151.25)",
+          "oklch(61% 0.1268 151.25)",
+          "oklch(73% 0.1039 151.25)",
+          "oklch(85% 0.0634 151.25)",
+          "oklch(95% 0.0228 151.25)"
+        ]
+      },
+      "purple": {
+        "role": "secondary",
+        "displayName": "Intent Violet",
+        "tonalRamp": [
+          "oklch(15% 0.0446 295.40)",
+          "oklch(26% 0.0862 295.40)",
+          "oklch(37% 0.1218 295.40)",
+          "oklch(49% 0.1486 295.40)",
+          "oklch(61% 0.1486 295.40)",
+          "oklch(73% 0.1218 295.40)",
+          "oklch(85% 0.0743 295.40)",
+          "oklch(95% 0.0267 295.40)"
+        ]
+      },
+      "pink": {
+        "role": "secondary",
+        "displayName": "Reference Pink",
+        "tonalRamp": [
+          "oklch(15% 0.0454 344.27)",
+          "oklch(26% 0.0877 344.27)",
+          "oklch(37% 0.1240 344.27)",
+          "oklch(49% 0.1512 344.27)",
+          "oklch(61% 0.1512 344.27)",
+          "oklch(73% 0.1240 344.27)",
+          "oklch(85% 0.0756 344.27)",
+          "oklch(95% 0.0272 344.27)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Midnight Ground",
+        "tonalRamp": [
+          "oklch(15% 0.0055 248.92)",
+          "oklch(26% 0.0106 248.92)",
+          "oklch(37% 0.0149 248.92)",
+          "oklch(49% 0.0182 248.92)",
+          "oklch(61% 0.0182 248.92)",
+          "oklch(73% 0.0149 248.92)",
+          "oklch(85% 0.0091 248.92)",
+          "oklch(95% 0.0033 248.92)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "tonalRamp": [
+          "oklch(15% 0.0070 254.32)",
+          "oklch(26% 0.0135 254.32)",
+          "oklch(37% 0.0191 254.32)",
+          "oklch(49% 0.0233 254.32)",
+          "oklch(61% 0.0233 254.32)",
+          "oklch(73% 0.0191 254.32)",
+          "oklch(85% 0.0116 254.32)",
+          "oklch(95% 0.0042 254.32)"
+        ]
+      },
+      "panel-raised": {
+        "role": "neutral",
+        "displayName": "Raised Panel",
+        "tonalRamp": [
+          "oklch(15% 0.0095 252.84)",
+          "oklch(26% 0.0184 252.84)",
+          "oklch(37% 0.0260 252.84)",
+          "oklch(49% 0.0317 252.84)",
+          "oklch(61% 0.0317 252.84)",
+          "oklch(73% 0.0260 252.84)",
+          "oklch(85% 0.0159 252.84)",
+          "oklch(95% 0.0057 252.84)"
+        ]
+      },
+      "well": {
+        "role": "neutral",
+        "displayName": "Evidence Well",
+        "tonalRamp": [
+          "oklch(15% 0.0068 249.05)",
+          "oklch(26% 0.0131 249.05)",
+          "oklch(37% 0.0186 249.05)",
+          "oklch(49% 0.0227 249.05)",
+          "oklch(61% 0.0227 249.05)",
+          "oklch(73% 0.0186 249.05)",
+          "oklch(85% 0.0113 249.05)",
+          "oklch(95% 0.0041 249.05)"
+        ]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field Ground",
+        "tonalRamp": [
+          "oklch(15% 0.0067 251.94)",
+          "oklch(26% 0.0129 251.94)",
+          "oklch(37% 0.0182 251.94)",
+          "oklch(49% 0.0222 251.94)",
+          "oklch(61% 0.0222 251.94)",
+          "oklch(73% 0.0182 251.94)",
+          "oklch(85% 0.0111 251.94)",
+          "oklch(95% 0.0040 251.94)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Pale Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0010 247.86)",
+          "oklch(26% 0.0020 247.86)",
+          "oklch(37% 0.0028 247.86)",
+          "oklch(49% 0.0034 247.86)",
+          "oklch(61% 0.0034 247.86)",
+          "oklch(73% 0.0028 247.86)",
+          "oklch(85% 0.0017 247.86)",
+          "oklch(95% 0.0006 247.86)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0085 251.75)",
+          "oklch(26% 0.0164 251.75)",
+          "oklch(37% 0.0232 251.75)",
+          "oklch(49% 0.0282 251.75)",
+          "oklch(61% 0.0282 251.75)",
+          "oklch(73% 0.0232 251.75)",
+          "oklch(85% 0.0141 251.75)",
+          "oklch(95% 0.0051 251.75)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Structural Line",
+        "tonalRamp": [
+          "oklch(15% 0.0114 251.85)",
+          "oklch(26% 0.0220 251.85)",
+          "oklch(37% 0.0312 251.85)",
+          "oklch(49% 0.0380 251.85)",
+          "oklch(61% 0.0380 251.85)",
+          "oklch(73% 0.0312 251.85)",
+          "oklch(85% 0.0190 251.85)",
+          "oklch(95% 0.0068 251.85)"
+        ]
+      },
+      "slate": {
+        "role": "neutral",
+        "displayName": "Slate",
+        "tonalRamp": [
+          "oklch(15% 0.0124 248.45)",
+          "oklch(26% 0.0240 248.45)",
+          "oklch(37% 0.0339 248.45)",
+          "oklch(49% 0.0413 248.45)",
+          "oklch(61% 0.0413 248.45)",
+          "oklch(73% 0.0339 248.45)",
+          "oklch(85% 0.0207 248.45)",
+          "oklch(95% 0.0074 248.45)"
+        ]
+      },
+      "ink-on-accent": {
+        "role": "neutral",
+        "displayName": "Dark Accent Ink",
+        "tonalRamp": [
+          "oklch(15% 0.0059 171.13)",
+          "oklch(26% 0.0114 171.13)",
+          "oklch(37% 0.0161 171.13)",
+          "oklch(49% 0.0197 171.13)",
+          "oklch(61% 0.0197 171.13)",
+          "oklch(73% 0.0161 171.13)",
+          "oklch(85% 0.0098 171.13)",
+          "oklch(95% 0.0035 171.13)"
+        ]
+      },
+      "primary-fill": {
+        "role": "primary",
+        "displayName": "Primary Tint",
+        "tonalRamp": [
+          "oklch(15% 0.0445 252.28)",
+          "oklch(26% 0.0860 252.28)",
+          "oklch(37% 0.1215 252.28)",
+          "oklch(49% 0.1482 252.28)",
+          "oklch(61% 0.1482 252.28)",
+          "oklch(73% 0.1215 252.28)",
+          "oklch(85% 0.0741 252.28)",
+          "oklch(95% 0.0267 252.28)"
+        ]
+      },
+      "accent-fill": {
+        "role": "primary",
+        "displayName": "Accent Tint",
+        "tonalRamp": [
+          "oklch(15% 0.0345 181.76)",
+          "oklch(26% 0.0667 181.76)",
+          "oklch(37% 0.0943 181.76)",
+          "oklch(49% 0.1150 181.76)",
+          "oklch(61% 0.1150 181.76)",
+          "oklch(73% 0.0943 181.76)",
+          "oklch(85% 0.0575 181.76)",
+          "oklch(95% 0.0207 181.76)"
+        ]
+      },
+      "danger-fill": {
+        "role": "secondary",
+        "displayName": "Danger Tint",
+        "tonalRamp": [
+          "oklch(15% 0.0541 17.61)",
+          "oklch(26% 0.1046 17.61)",
+          "oklch(37% 0.1479 17.61)",
+          "oklch(49% 0.1804 17.61)",
+          "oklch(61% 0.1804 17.61)",
+          "oklch(73% 0.1479 17.61)",
+          "oklch(85% 0.0902 17.61)",
+          "oklch(95% 0.0325 17.61)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "product-title": {
+        "displayName": "Product Title",
+        "purpose": "Compact identity in the application header."
+      },
+      "headline": {
+        "displayName": "Queue Headline",
+        "purpose": "Primary review section heading."
+      },
+      "dialog-title": {
+        "displayName": "Dialog Title",
+        "purpose": "Comparison and reviewed-change headings."
+      },
+      "item-title": {
+        "displayName": "Item Title",
+        "purpose": "Exact resource or facet identity in a review row."
+      },
+      "body": {
+        "displayName": "Evidence Body",
+        "purpose": "Queue observations and expectations."
+      },
+      "body-small": {
+        "displayName": "Readable Detail",
+        "purpose": "Essential reviewed deltas, matrix values, reasons, and context."
+      },
+      "label": {
+        "displayName": "Evidence Label",
+        "purpose": "Observed/expected labels and zone context."
+      },
+      "metadata": {
+        "displayName": "Technical Metadata",
+        "purpose": "Supporting scope and status badges."
+      }
+    },
+    "shadows": [
+      {
+        "name": "dialog",
+        "value": "0 28px 100px rgba(0, 0, 0, 0.48)",
+        "purpose": "Modal separation from the dimmed page."
+      },
+      {
+        "name": "tooltip",
+        "value": "0 10px 30px rgba(0, 0, 0, 0.5)",
+        "purpose": "Floating help context."
+      },
+      {
+        "name": "guide",
+        "value": "0 14px 34px rgba(0, 0, 0, 0.38)",
+        "purpose": "Local matrix help overlay."
+      }
+    ],
+    "motion": [
+      {
+        "name": "short-ease",
+        "value": "120ms ease",
+        "purpose": "Background, outline, selection, and disclosure affordance transitions."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "Transition and animation duration under prefers-reduced-motion; scrolling becomes immediate."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "workflow-wide",
+        "value": "1100px"
+      },
+      {
+        "name": "header-compact",
+        "value": "960px"
+      },
+      {
+        "name": "queue-compact",
+        "value": "900px"
+      },
+      {
+        "name": "dialog-compact",
+        "value": "760px"
+      },
+      {
+        "name": "worker-compact",
+        "value": "640px"
+      },
+      {
+        "name": "phone",
+        "value": "620px"
+      },
+      {
+        "name": "queue-narrow",
+        "value": "380px"
+      },
+      {
+        "name": "dialog-narrow",
+        "value": "359px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "Bordered operational control with explicit hover, focus, and disabled states.",
+      "html": "<button type=\"button\" class=\"ds-button\">Manage fleet intent</button>",
+      "css": ".ds-button{min-height:34px;padding:6px 10px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);background:var(--panel-raised,#162230);cursor:pointer;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-button:hover:not(:disabled){border-color:var(--slate,#7f95ab);transform:translateY(-1px)}.ds-button:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-button:disabled{opacity:.42;cursor:not-allowed}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Bordered operational control with explicit hover, focus, and disabled states.",
+      "html": "<button type=\"button\" class=\"ds-button\">Review alignment</button>",
+      "css": ".ds-button{min-height:34px;padding:6px 10px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);background:var(--panel-raised,#162230);cursor:pointer;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-button:hover:not(:disabled){border-color:var(--slate,#7f95ab);transform:translateY(-1px)}.ds-button:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-button:disabled{opacity:.42;cursor:not-allowed}.ds-button{border-color:rgba(90,169,255,.56);background:rgba(90,169,255,.17)}"
+    },
+    {
+      "name": "Accent Button",
+      "kind": "button",
+      "refersTo": "button-accent",
+      "description": "Bordered operational control with explicit hover, focus, and disabled states.",
+      "html": "<button type=\"button\" class=\"ds-button\">Save intent</button>",
+      "css": ".ds-button{min-height:34px;padding:6px 10px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);background:var(--panel-raised,#162230);cursor:pointer;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-button:hover:not(:disabled){border-color:var(--slate,#7f95ab);transform:translateY(-1px)}.ds-button:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-button:disabled{opacity:.42;cursor:not-allowed}.ds-button{border-color:rgba(89,215,196,.56);background:rgba(89,215,196,.14)}"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "Bordered operational control with explicit hover, focus, and disabled states.",
+      "html": "<button type=\"button\" class=\"ds-button\">Compare values</button>",
+      "css": ".ds-button{min-height:34px;padding:6px 10px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);background:var(--panel-raised,#162230);cursor:pointer;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-button:hover:not(:disabled){border-color:var(--slate,#7f95ab);transform:translateY(-1px)}.ds-button:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-button:disabled{opacity:.42;cursor:not-allowed}.ds-button{min-height:28px;padding:3px 7px;color:var(--muted,#96a4b4);background:transparent}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Bordered operational control with explicit hover, focus, and disabled states.",
+      "html": "<button type=\"button\" class=\"ds-button\">Apply and verify</button>",
+      "css": ".ds-button{min-height:34px;padding:6px 10px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);background:var(--panel-raised,#162230);cursor:pointer;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-button:hover:not(:disabled){border-color:var(--slate,#7f95ab);transform:translateY(-1px)}.ds-button:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-button:disabled{opacity:.42;cursor:not-allowed}.ds-button{border-color:rgba(255,107,120,.7);background:rgba(255,107,120,.16)}"
+    },
+    {
+      "name": "Dialog Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Labeled full-width entry field on a dark well.",
+      "html": "<label class=\"ds-field-label\" for=\"ds-intent-name\">Intent name</label><input class=\"ds-field\" id=\"ds-intent-name\" type=\"text\" value=\"Require HTTPS\">",
+      "css": ".ds-field-label{display:block;margin:0 0 7px;color:var(--muted,#96a4b4);font-size:13px;font-weight:700;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-field{width:100%;min-height:42px;padding:11px;border:1px solid var(--line,#2b3b4d);border-radius:9px;color:var(--ink,#f5f7f9);background:#0b131c;caret-color:var(--accent,#59d7c4);font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-field:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}"
+    },
+    {
+      "name": "Section Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-link",
+      "description": "Wrapping bordered section links with mint interaction cues.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Fleet sections\"><a href=\"#ds-review\">Review queues</a><a href=\"#ds-configuration\">Configuration</a><a href=\"#ds-health\">Read health</a></nav>",
+      "css": ".ds-nav{display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:var(--panel,#111923);font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-nav a{padding:7px 12px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);font-size:13px;text-decoration:none}.ds-nav a:hover,.ds-nav a:focus-visible{border-color:var(--accent,#59d7c4);color:var(--accent,#59d7c4)}.ds-nav a:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}@media(max-width:620px){.ds-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}"
+    },
+    {
+      "name": "Neutral Status Chip",
+      "kind": "chip",
+      "refersTo": "status-chip",
+      "description": "Supporting monospace scope or state metadata with explicit text.",
+      "html": "<span class=\"ds-chip\">3 zones</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:3px;width:fit-content;padding:2px 7px;border:1px solid var(--line,#2b3b4d);border-radius:99px;color:var(--muted,#96a4b4);font:700 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace}"
+    },
+    {
+      "name": "Value Evidence Card",
+      "kind": "card",
+      "refersTo": "evidence-card",
+      "description": "Neutral comparison evidence with a slate leading edge and readable value.",
+      "html": "<article class=\"ds-card\"><h4>Alternate value</h4><p>Value: off</p><span class=\"ds-card-zone\">bravo.example</span><div class=\"ds-card-actions\"><button type=\"button\" class=\"ds-card-button\">Use as exact intent</button></div></article>",
+      "css": ".ds-card{display:grid;gap:8px;min-width:0;padding:10px;border:1px solid rgba(43,60,75,.72);border-left-color:var(--slate,#7f95ab);border-radius:9px;color:var(--ink,#f5f7f9);background:#0d161f;font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-card h4{margin:0;font-size:14px;overflow-wrap:anywhere}.ds-card p{margin:0;color:var(--muted,#96a4b4);font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;overflow-wrap:anywhere}.ds-card-zone{width:fit-content;padding:3px 6px;border:1px solid rgba(43,60,75,.68);border-radius:99px;color:var(--muted,#96a4b4);font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace}.ds-card-actions{display:flex;justify-content:flex-end;padding-top:7px;border-top:1px solid var(--line,#2b3b4d)}.ds-card-button{min-height:28px;padding:4px 8px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);background:var(--panel-raised,#162230);font:inherit;font-size:12px;cursor:pointer}.ds-card-button:hover{border-color:var(--slate,#7f95ab);transform:translateY(-1px)}.ds-card-button:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}"
+    },
+    {
+      "name": "Review Queue",
+      "kind": "custom",
+      "refersTo": "queue-item",
+      "description": "A pressed queue selector and a responsive evidence row with a reviewed action.",
+      "html": "<section class=\"ds-queue\"><div class=\"ds-selectors\" role=\"group\" aria-label=\"Review queues\"><button class=\"ds-selector\" type=\"button\" aria-pressed=\"true\">Misalignments <span>1</span></button><button class=\"ds-selector\" type=\"button\" aria-pressed=\"false\">Decisions needed <span>6</span></button><button class=\"ds-selector\" type=\"button\" aria-pressed=\"false\">Read health <span>3</span></button></div><ol class=\"ds-rows\"><li class=\"ds-row\"><div class=\"ds-identity\"><h3>always_use_https</h3><p>Zone settings / 1 zone</p></div><div class=\"ds-evidence\"><div><span class=\"ds-label\">Observed</span><dl><dt>bravo.example</dt><dd>off</dd></dl></div><div><span class=\"ds-label\">Expected</span><p>on</p></div></div><div class=\"ds-actions\"><button class=\"ds-review\" type=\"button\">Review alignment</button></div></li></ol></section>",
+      "css": ".ds-queue{color:var(--ink,#f5f7f9);font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-selectors{display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--line,#2b3b4d)}.ds-selector{display:inline-flex;gap:12px;align-items:center;min-height:48px;margin-bottom:-1px;padding:10px 16px;border:1px solid transparent;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;color:var(--muted,#96a4b4);background:transparent;font:inherit;font-size:16px;cursor:pointer}.ds-selector span{font-variant-numeric:tabular-nums}.ds-selector:hover{color:var(--ink,#f5f7f9);background:var(--panel,#111923)}.ds-selector[aria-pressed=\"true\"]{border-bottom-color:var(--accent,#59d7c4);color:var(--ink,#f5f7f9);background:var(--panel,#111923)}.ds-selector:focus-visible,.ds-review:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-rows{margin:20px 0 0;padding:0;list-style:none;border-top:1px solid var(--line,#2b3b4d)}.ds-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(240px,1.3fr) minmax(150px,auto);gap:28px;align-items:start;padding:24px 0;border-bottom:1px solid var(--line,#2b3b4d)}.ds-identity,.ds-evidence,.ds-evidence>div{min-width:0}.ds-identity h3{margin:0;font-size:18px;line-height:1.4;overflow-wrap:anywhere}.ds-identity p{margin:7px 0 0;color:var(--muted,#96a4b4);font-size:14px;line-height:1.5}.ds-evidence{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.ds-label,.ds-evidence dt{color:var(--muted,#96a4b4);font-size:14px;overflow-wrap:anywhere}.ds-evidence dl{margin:8px 0 0}.ds-evidence dt{margin:10px 0 3px}.ds-evidence dd,.ds-evidence p{margin:6px 0 0;font-size:15px;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap}.ds-actions{display:grid;gap:8px;min-width:0}.ds-review{min-height:40px;padding:6px 10px;border:1px solid rgba(90,169,255,.56);border-radius:7px;color:var(--ink,#f5f7f9);background:rgba(90,169,255,.17);font:inherit;font-size:14px;white-space:normal;cursor:pointer}.ds-review:hover{border-color:var(--slate,#7f95ab);transform:translateY(-1px)}@media(max-width:900px){.ds-row{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px}.ds-actions{display:flex;grid-column:1/-1;flex-wrap:wrap}}@media(max-width:620px){.ds-selectors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px}.ds-selector{min-width:0;gap:4px;justify-content:space-between;padding:10px 6px;font-size:14px;text-align:left}.ds-row{grid-template-columns:minmax(0,1fr);gap:18px;padding:22px 0}.ds-review{flex:1 1 auto}}@media(max-width:380px){.ds-selectors{grid-template-columns:repeat(2,minmax(0,1fr))}.ds-selector:first-child{grid-column:1/-1}.ds-selector{min-height:44px;padding:10px 12px}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Fleet Review Workspace",
+    "overview": "Cloudflare Fleet uses a dark, restrained operating environment that keeps exact configuration and review decisions readable. Near-black ground, blue-gray containers, pale text, mint interaction cues, and drawn outline icons establish a continuous tool surface.\n\nDensity follows the task: short controls and compact metadata surround larger values, useful headings, and clearly separated evidence. Observation, saved intent, proposed change, and verified outcome remain distinguishable in both wording and visual emphasis. The implementation uses a local system font stack without a bundled display face or decorative imagery.",
+    "keyCharacteristics": [
+      "Dark tonal layers with restrained, thin borders",
+      "Readable values supported by compact technical metadata",
+      "Mint selection and focus cues with explicit semantic status labels",
+      "Responsive rows, wrapping identifiers, and bounded data workspaces"
+    ],
+    "rules": [
+      {
+        "name": "The Observation and Intent Rule",
+        "body": "Observed sameness and difference do not establish correctness. Use neutral observation text and borders; reserve alignment meaning for evaluated saved intent and verified outcomes, always with explicit labels.",
+        "section": "colors"
+      },
+      {
+        "name": "The Evidence Reading Rule",
+        "body": "Keep queue values at the body scale and reviewed deltas at the body-small scale or larger. Compact metadata is a supporting layer, not a substitute for the value an operator must assess.",
+        "section": "typography"
+      },
+      {
+        "name": "The Bounded Workspace Rule",
+        "body": "Let page content wrap and stack. Keep wide data inside its own scrollable matrix or comparison region, with its controls reachable outside that region.",
+        "section": "layout"
+      },
+      {
+        "name": "The Surface Before Shadow Rule",
+        "body": "Use tonal fills and thin borders for persistent structure. Reserve deep soft shadows and dimming for overlaid context such as dialogs and tooltips.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep observed values, expected values, and the resulting action visibly distinct.",
+      "Do preserve exact identifiers and source-value access while wrapping long content within its container.",
+      "Do pair status color with words or drawn icons and retain visible keyboard focus.",
+      "Do use larger evidence text and heading hierarchy to make dense operational work readable.",
+      "Do let rows and controls reflow before adding horizontal page scrolling."
+    ],
+    "donts": [
+      "Don't interpret a common observed value as approved intent or verified alignment.",
+      "Don't use compact metadata styles for the essential values or deltas being reviewed.",
+      "Don't add introductory kickers or decorative display typography to operational sections.",
+      "Don't imply that an empty queue proves alignment outside configured, successfully checked scope.",
+      "Don't replace a concrete blocked or incomplete state with color-only reassurance."
+    ]
+  }
+}

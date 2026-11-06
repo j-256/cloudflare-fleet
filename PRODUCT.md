@@ -16,7 +16,9 @@ Open decision: the primary audience's Cloudflare experience level and the relati
 
 Cloudflare Fleet is a self-hosted control plane for auditing and safely aligning Cloudflare zones. It brings observed configuration, saved expectations, read coverage, reviewed changes, and recorded outcomes into a common operating workflow.
 
-Success means an operator can explain a difference, distinguish an intentional exception from actionable drift or missing evidence, review the exact proposed correction, and inspect the verified result or recovery options.
+The desired operating state is an empty misalignment queue. Fleet leads with outstanding misalignments, ungoverned decisions, and read health as distinct queues. Comparison is evidence inside the path from an outstanding item to a reviewed correction, verification, and completion; the full matrix supports investigation.
+
+Success means an operator can explain a difference, distinguish an intentional exception from actionable drift or missing evidence, review the exact proposed correction, and inspect the verified result or recovery options. An empty queue establishes alignment only within successfully checked, configured intent; undefined expectations and incomplete evidence remain explicit.
 
 ## Positioning
 

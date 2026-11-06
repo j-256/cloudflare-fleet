@@ -2,6 +2,9 @@ import { buildFacetIntentDocument, facetIntentReadRequirements } from "./intent-
 import { composeReadPlan } from "./read-composer.mjs"
 import { facetIntentRequestSchema } from "./interface-schemas.mjs"
 import { createFleetRetrievalService } from "./retrieval.mjs"
+import { buildReviewQueues, reviewQueuePage } from "./review-queues.mjs"
+import { reviewQueueInputSchema } from "./review-queue-schemas.mjs"
+import { compareIds, retrievalDigest } from "./retrieval-values.mjs"
 import {
   appendOperationActivity,
   FleetIntentRevisionConflictError,
@@ -468,6 +471,27 @@ export function createFleetService(options) {
   async function planChanges(changes, commandOptions = {}) {
     const preparation = await prepareChanges(changes, commandOptions)
     return changeBatchPreparationResult(accountId, preparation)
+  }
+
+  async function listReviewQueue(input = {}, commandOptions = {}) {
+    const query = reviewQueueInputSchema.parse(input)
+    commandOptions.signal?.throwIfAborted()
+    const state = await dependencies.readState(stateFile, accountId)
+    const inventory = await dependencies.loadInventory(api, {
+      onProgress: commandOptions.onProgress, signal: commandOptions.signal,
+    })
+    const queues = buildReviewQueues({ inventory, intent: state.intent })
+    const revision = await retrievalDigest({
+      accountId, account: inventory.account,
+      zones: inventory.zones.map((zone) => ({ ...zone, ruleDetails: [...zone.ruleDetails].sort((a, b) => compareIds(a.rulesetId || a.result?.id || "", b.rulesetId || b.result?.id || "")) })),
+      intentRevision: state.intent.revision,
+    })
+    if (query.revision && query.revision !== revision) throw new TypeError("Review queue changed; restart from offset 0 without a revision")
+    return {
+      ...reviewQueuePage(queues, query), accountId,
+      schemaVersion: FLEET_SERVICE_SCHEMA_VERSION,
+      intentRevision: state.intent.revision || null, revision,
+    }
   }
 
   async function listAlignments(commandOptions = {}) {
@@ -994,6 +1018,7 @@ export function createFleetService(options) {
     listActivity,
     listAdoptionCandidates,
     listAlignments,
+    listReviewQueue,
     planActivityUndo,
     planAdoption,
     planAlignment,

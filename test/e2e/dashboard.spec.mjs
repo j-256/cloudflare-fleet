@@ -1,6 +1,7 @@
 import {
   expect,
   test,
+  openMatrixFilters,
 } from "./dashboard.fixture.mjs"
 import {
   createAuthoredFleetIntentExpected,
@@ -52,7 +53,7 @@ test("loads the cached fleet into a useful review surface", async ({ dashboard }
   await expect(page).toHaveTitle("Cloudflare Fleet | Read/write")
   await expect(page.locator("#status-text")).toHaveText("Cached fleet ready")
   await expect(page.locator("#zone-count")).toHaveText("3")
-  await expect(page.getByRole("heading", { name: "What do you want to do?" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Review queues", exact: true })).toBeVisible()
   await expect(page.locator("#visible-count")).toContainText("facets")
   await expect.poll(() => page.locator("#matrix-body tr").count()).toBeGreaterThan(0)
   await expect(page.locator("#write-readiness")).toHaveText(
@@ -86,6 +87,7 @@ test("section links reach configuration before specialized workflows and keep he
 
 test("matrix focus keeps search recovery and the table inside the viewport", async ({ dashboard }) => {
   const { page } = dashboard
+  await openMatrixFilters(page)
   await page.locator("#scope").selectOption("zone-specific")
   await page.locator("#search").fill("always_use_https")
   await page.locator("#matrix-focus").click()
@@ -158,6 +160,7 @@ test("filters the matrix and preserves the view in the address bar", async ({ da
     "always_use_https",
   )
 
+  await openMatrixFilters(page)
   await page.getByRole("button", { name: "Reset matrix filters and sort" }).click()
 
   await expect(matrixRows).toHaveCount(initialCount)
@@ -167,6 +170,7 @@ test("filters the matrix and preserves the view in the address bar", async ({ da
 test("search reveals matching configuration hidden by filters without changing targets", async ({ dashboard }) => {
   const { page } = dashboard
   await page.locator("#matrix-head input").first().check()
+  await openMatrixFilters(page)
   await page.locator("#scope").selectOption("zone-specific")
   await page.locator("#search").fill("always_use_https")
   await expect(page.locator("#matrix-body tr")).toHaveCount(0)
@@ -463,6 +467,7 @@ test("applies and verifies a setting change through the reviewed write flow", as
 test("keeps the ruleset workspace and desired-state editor legible", async ({ dashboard }) => {
   const { page } = dashboard
 
+  await openMatrixFilters(page)
   await page.locator("#category").selectOption("Ruleset rules")
   await page.getByRole("button", {
     name: /^Open the parent ruleset for Protect service on /,

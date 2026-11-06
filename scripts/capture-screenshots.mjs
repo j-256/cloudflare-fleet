@@ -10,6 +10,7 @@ import {
   closeDashboardSession,
   createDashboardSession,
   dashboardInventory,
+  openMatrixFilters,
   waitForDashboard,
 } from "../test/e2e/dashboard.fixture.mjs"
 
@@ -106,17 +107,6 @@ export async function capturePublicationScreenshots(options = {}) {
       DESKTOP_VIEWPORT,
       browserErrors,
     )
-    screenshots.push(await capture(
-      overview,
-      outputDirectory,
-      "cover.png",
-    ))
-    screenshots.push(await capture(
-      overview,
-      outputDirectory,
-      "dashboard-overview.png",
-    ))
-
     await overview.getByPlaceholder("Search facets, values, or zones").fill("Protect service")
     await overview.getByRole("button", { name: "Accept current state for Protect service", exact: true }).click()
     const currentIntent = overview.locator("#facet-intent-dialog")
@@ -144,6 +134,18 @@ export async function capturePublicationScreenshots(options = {}) {
     const policy = overview.getByRole("dialog", { name: "Set facet intent" })
     await policy.locator("#intent-policy-save").click()
     await overview.locator("#toast-dismiss").click()
+    await overview.getByRole("button", { name: /^Misalignments/ }).click()
+    await overview.evaluate(() => scrollTo(0, 0))
+    screenshots.push(await capture(
+      overview,
+      outputDirectory,
+      "cover.png",
+    ))
+    screenshots.push(await capture(
+      overview,
+      outputDirectory,
+      "dashboard-overview.png",
+    ))
 
     await overview.getByRole("button", { name: "Manage fleet intent" }).click()
     await overview.getByRole("dialog", { name: "Fleet intent" }).waitFor()
@@ -168,6 +170,7 @@ export async function capturePublicationScreenshots(options = {}) {
     ))
     await alignmentReview.getByRole("button", { name: "Cancel" }).click()
 
+    await openMatrixFilters(overview)
     await overview.locator("#category").selectOption("Email")
     await overview.getByPlaceholder("Search facets, values, or zones").fill(
       "status",
@@ -223,7 +226,8 @@ export async function capturePublicationScreenshots(options = {}) {
       MOBILE_VIEWPORT,
       browserErrors,
     )
-    await mobile.getByRole("button", { name: /Filters & sort/ }).click()
+    await mobile.getByRole("button", { name: /^Misalignments/ }).click()
+    await mobile.evaluate(() => scrollTo(0, 0))
     screenshots.push(await capture(
       mobile,
       outputDirectory,

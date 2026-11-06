@@ -130,6 +130,7 @@ const TOOL_NAMES = Object.freeze([
   "list_adoption_candidates",
   "plan_fleet_adoption",
   "apply_fleet_adoption",
+  "list_review_queue",
   "list_alignment_candidates",
   "plan_alignment",
   "apply_alignment",
