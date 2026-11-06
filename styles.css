@@ -569,7 +569,7 @@ h1 {
   white-space: nowrap;
 }
 
-.activity-button span {
+.activity-button #activity-count {
   display: inline-grid;
   min-width: 19px;
   min-height: 19px;
@@ -6882,7 +6882,7 @@ dialog details > summary {
     padding: 6px 8px;
   }
 
-  .session-state small {
+  .session-state .refresh-detail {
     display: none;
   }
 
@@ -6970,6 +6970,12 @@ dialog details > summary {
     grid-row: 1;
     width: 100%;
     max-width: none;
+  }
+
+  .toolbar .toggle {
+    align-self: stretch;
+    min-width: 0;
+    white-space: normal;
   }
 
   #difference-toggle {

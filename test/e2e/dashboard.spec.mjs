@@ -215,6 +215,53 @@ test("keeps secondary filters usable on a phone viewport", async ({ dashboard })
   await expect.poll(() => new URL(page.url()).searchParams.get("scope")).toBe("all")
 })
 
+test("keeps write-enabled session permissions visible on a narrow screen", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.setViewportSize({ height: 844, width: 320 })
+  await expect(page.locator("#session-mode")).toBeVisible()
+  await expect(page.locator("#session-mode")).toHaveText("Read/write session")
+})
+
+test("keeps read-only session permissions visible on a narrow screen", async ({ readOnlyDashboard }) => {
+  const { page } = readOnlyDashboard
+  await page.setViewportSize({ height: 844, width: 320 })
+  await expect(page.locator("#session-mode")).toBeVisible()
+  await expect(page.locator("#session-mode")).toHaveText("Read-only session")
+})
+
+test("keeps narrow-screen matrix action labels inside their buttons", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.setViewportSize({ height: 844, width: 320 })
+  const action = page.getByRole("button", { name: "Supported changes", exact: true })
+  const label = action.locator(".control-label")
+  const bounds = await label.evaluate((node) => {
+    const labelBounds = node.getBoundingClientRect()
+    const buttonBounds = node.closest("button").getBoundingClientRect()
+    return {
+      buttonRight: buttonBounds.right,
+      labelRight: labelBounds.right,
+    }
+  })
+  expect(bounds.labelRight).toBeLessThanOrEqual(bounds.buttonRight)
+  await action.focus()
+  await action.press("Enter")
+  await expect(action).toHaveAttribute("aria-pressed", "true")
+})
+
+test("keeps a hidden activity tooltip from widening the tablet page", async ({ dashboard }) => {
+  const { page } = dashboard
+  await page.setViewportSize({ height: 844, width: 768 })
+  await page.mouse.move(0, 0)
+  expect(await page.evaluate(() => (
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth
+  ))).toBe(true)
+  const activity = page.locator("#show-activity")
+  await activity.focus()
+  await expect(activity.locator(":scope > .tooltip")).toBeVisible()
+  await activity.press("Escape")
+  await expect(activity.locator(":scope > .tooltip")).toBeHidden()
+})
+
 test("keeps dense matrix controls legible and self-explanatory", async ({ dashboard }) => {
   const { page, zoneNames } = dashboard
   const capability = page.locator(".capability-key .capability-chip.observe")
