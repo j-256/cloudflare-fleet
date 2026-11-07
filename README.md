@@ -498,7 +498,15 @@ npm run deploy:docs:dry-run
 
 Automated documentation publication is not enabled by the source defaults. Repository maintainers can opt their fork into publishing through externally stored GitHub variables, environment configuration, and a Cloudflare token as described in [CONTRIBUTING.md](CONTRIBUTING.md#optional-documentation-publication).
 
-Public product screenshots are automated:
+Preview a representative synthetic fleet through the real read/write loopback broker:
+
+```sh
+npm run demo
+```
+
+Open the loopback URL printed by the command. The demo includes a larger Free-plan fleet with web, application, compatibility redirect, and mail zones; a broad setting catalog; varied DNS, mail, security, cache, redirect, and Worker configuration; and saved intent with scoped overrides and an acknowledged exception. It starts with multiple pages of misalignments and ungoverned decisions, plus unexpected read failures and separately recorded expected gaps. Refresh and reviewed corrections operate against the stateful fake transport. Demo state is isolated in a temporary directory and discarded when the broker closes; the small browser-test fixtures retain their focused scenarios.
+
+Public product screenshots use the same representative demo and are automated:
 
 ```sh
 npx playwright install chromium

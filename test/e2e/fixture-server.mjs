@@ -2,8 +2,10 @@ import {
   closeDashboardSession,
   createDashboardSession,
 } from "./dashboard.fixture.mjs"
+import { createDemoFleet } from "../demo-fleet.mjs"
 
-const session = await createDashboardSession()
+const demo = createDemoFleet()
+const session = await createDashboardSession({ inventory: demo.inventory, intentDocument: demo.intent })
 process.stdout.write(`${session.url}\n`)
 
 await new Promise((resolve) => {
