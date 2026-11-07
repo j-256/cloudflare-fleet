@@ -9,10 +9,10 @@ import { isMainModule } from "../src/entrypoint.mjs"
 import {
   closeDashboardSession,
   createDashboardSession,
-  dashboardInventory,
   openMatrixFilters,
   waitForDashboard,
 } from "../test/e2e/dashboard.fixture.mjs"
+import { createDemoFleet, DEMO_ZONE } from "../test/demo-fleet.mjs"
 
 const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DEFAULT_OUTPUT_DIRECTORY = path.join(PROJECT_ROOT, "docs", "screenshots")
@@ -79,16 +79,9 @@ export async function capturePublicationScreenshots(options = {}) {
   let browser
   let session
   try {
-    const inventory = dashboardInventory({ loadedAt: FIXED_TIME })
-    const statusDriftZone = inventory.zones.find(
-      (zone) => zone.meta.name === "bravo.example",
-    )
-    statusDriftZone.surfaces.email.result = {
-      ...statusDriftZone.surfaces.email.result,
-      status: "misconfigured",
-    }
+    const { inventory, intent } = createDemoFleet({ loadedAt: FIXED_TIME })
     session = await createDashboardSession({
-      inventory,
+      inventory, intentDocument: intent,
       now: Date.parse(FIXED_TIME),
     })
     browser = await chromium.launch({ headless: true })
@@ -115,7 +108,7 @@ export async function capturePublicationScreenshots(options = {}) {
     await currentIntent.getByRole("button", { name: "Cancel", exact: true }).click()
     await overview.getByRole("button", { name: "Copy Protect service between zones", exact: true }).click()
     const copyRule = overview.locator("#rule-copy-dialog")
-    await copyRule.getByRole("checkbox", { name: "bravo.example", exact: true }).check()
+    await copyRule.getByRole("checkbox", { name: DEMO_ZONE.DRIFT, exact: true }).check()
     screenshots.push(await capture(overview, outputDirectory, "rule-copy.png"))
     await copyRule.getByRole("button", { name: "Cancel", exact: true }).click()
 
@@ -131,7 +124,7 @@ export async function capturePublicationScreenshots(options = {}) {
     await comparison.getByRole("button", {
       name: "Use as exact intent: Fleet consensus for always_use_https",
     }).click()
-    const policy = overview.getByRole("dialog", { name: "Set facet intent" })
+    const policy = overview.getByRole("dialog", { name: /^(Set|Edit) facet intent$/ })
     await policy.locator("#intent-policy-save").click()
     await overview.locator("#toast-dismiss").click()
     await overview.getByRole("button", { name: /^Misalignments/ }).click()
@@ -157,7 +150,7 @@ export async function capturePublicationScreenshots(options = {}) {
     await overview.getByRole("button", { name: "Close fleet intent" }).click()
 
     await overview.getByRole("button", {
-      name: "Review alignment (1): Align always_use_https with fleet intent",
+      name: /^Review alignment \(\d+\): Align always_use_https with fleet intent$/,
     }).click()
     const alignmentReview = overview.getByRole("dialog", {
       name: "Align always_use_https with fleet intent",
@@ -172,17 +165,19 @@ export async function capturePublicationScreenshots(options = {}) {
 
     await openMatrixFilters(overview)
     await overview.locator("#category").selectOption("Email")
+    await overview.locator("#intent-status").selectOption("")
+    if (await overview.locator("#difference-toggle").getAttribute("aria-pressed") === "true") await overview.locator("#difference-toggle").click()
     await overview.getByPlaceholder("Search facets, values, or zones").fill(
       "status",
     )
     await overview.getByRole("button", {
-      name: "Compare 2 values: Observed values for status",
+      name: /^Compare \d+ values: Observed values for status$/,
     }).click()
     const statusComparison = overview.getByRole("dialog", { name: "status" })
     await statusComparison.getByRole("button", {
       name: "Use as exact intent: Fleet consensus for status",
     }).click()
-    const statusPolicy = overview.getByRole("dialog", { name: "Set facet intent" })
+    const statusPolicy = overview.getByRole("dialog", { name: /^(Set|Edit) facet intent$/ })
     await statusPolicy.locator("#intent-policy-save").click()
     await overview.locator("#toast-dismiss").click()
     screenshots.push(await capture(
@@ -196,7 +191,7 @@ export async function capturePublicationScreenshots(options = {}) {
       "always_use_https",
     )
     await overview.getByRole("button", {
-      name: "Edit always_use_https on bravo.example",
+      name: `Edit always_use_https on ${DEMO_ZONE.DRIFT}`,
     }).click()
     const editor = overview.locator("form.inline-value-editor")
     await editor.getByLabel("Desired value").fill("on")

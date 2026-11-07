@@ -21,6 +21,7 @@ import {
   prepareCacheScript,
 } from "../../src/cache-store.mjs"
 import {
+  persistFleetIntentDocument,
   prepareFleetIntentScript,
 } from "../../src/intent-store.mjs"
 import {
@@ -356,8 +357,13 @@ function fakeCloudflareTransport(inventory, options = {}) {
   const failures = []
   const settings = new Map()
   const rulesets = new Map()
+  const failedReads = new Map()
   let createdDnsRecord = 0
   for (const zone of inventory.zones) {
+    for (const surface of SURFACES) {
+      const response = zone.surfaces[surface.id]
+      if (response?.ok === false) failedReads.set(surface.path(zone.meta.id).split("?", 1)[0], response)
+    }
     dnsByZone.set(
       zone.meta.id,
       structuredClone(zone.surfaces.dns.result),
@@ -410,6 +416,11 @@ function fakeCloudflareTransport(inventory, options = {}) {
         success: false,
       }, failure.headers)
     }
+
+    const failedRead = method === "GET" ? failedReads.get(relativePath) : null
+    if (failedRead) return jsonResponse(failedRead.status || failedRead.error?.status || 503, {
+      errors: failedRead.error?.errors || [{ message: failedRead.error?.message || "Synthetic read failed" }], success: false,
+    })
 
     if (relativePath === ZONES_PATH && method === "GET") {
       return jsonResponse(200, {
@@ -705,6 +716,7 @@ async function copyRuntimeAssets(runtimeDir) {
 }
 
 export async function createDashboardSession(options = {}) {
+  if (options.intentDocument && options.stateSourceFile) throw new TypeError("Choose intentDocument or stateSourceFile for the dashboard fixture")
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "cloudflare-fleet-e2e."),
   )
@@ -731,6 +743,9 @@ export async function createDashboardSession(options = {}) {
   if (options.stateSourceFile) {
     await fs.copyFile(options.stateSourceFile, stateFile)
   }
+  if (options.intentDocument) await persistFleetIntentDocument(
+    stateFile, accountId, "", options.intentDocument, { now: options.now ?? Date.parse(inventory.loadedAt) },
+  )
   if (options.policyConfiguration) {
     await fs.writeFile(
       policyFile,
