@@ -6878,6 +6878,7 @@ dialog details > summary {
   }
 
   .hero {
+    grid-template-columns: max-content minmax(0, 1fr);
     padding-top: 8px;
     padding-bottom: 7px;
   }
@@ -6896,8 +6897,10 @@ dialog details > summary {
   }
 
   .session-state {
-    flex: 0 1 auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    justify-self: end;
     min-width: 0;
+    max-width: 100%;
     padding: 6px 8px;
   }
 
@@ -6907,7 +6910,7 @@ dialog details > summary {
 
   #status-text {
     font-size: var(--fs-xs);
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   .summary-grid {
