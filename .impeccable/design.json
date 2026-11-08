@@ -300,19 +300,19 @@
       },
       "item-title": {
         "displayName": "Item Title",
-        "purpose": "Exact resource or facet identity in a review row."
+        "purpose": "Readable resource or facet identity in a review row; exact API keys remain accessible through comparison."
       },
       "body": {
         "displayName": "Evidence Body",
-        "purpose": "Queue observations and expectations."
+        "purpose": "Longer supporting prose."
       },
       "body-small": {
         "displayName": "Readable Detail",
-        "purpose": "Essential reviewed deltas, matrix values, reasons, and context."
+        "purpose": "Paired queue evidence, zone names, essential reviewed deltas, matrix values, reasons, and context."
       },
       "label": {
         "displayName": "Evidence Label",
-        "purpose": "Observed/expected labels and zone context."
+        "purpose": "Supporting fields; queue headings use compact neutral metadata."
       },
       "metadata": {
         "displayName": "Technical Metadata",
@@ -460,9 +460,9 @@
       "name": "Review Queue",
       "kind": "custom",
       "refersTo": "queue-item",
-      "description": "A pressed queue selector and a responsive evidence row with a reviewed action.",
-      "html": "<section class=\"ds-queue\"><div class=\"ds-selectors\" role=\"group\" aria-label=\"Review queues\"><button class=\"ds-selector\" type=\"button\" aria-pressed=\"true\">Misalignments <span>1</span></button><button class=\"ds-selector\" type=\"button\" aria-pressed=\"false\">Decisions needed <span>6</span></button><button class=\"ds-selector\" type=\"button\" aria-pressed=\"false\">Read health <span>3</span></button></div><ol class=\"ds-rows\"><li class=\"ds-row\"><div class=\"ds-identity\"><h3>always_use_https</h3><p>Zone settings / 1 zone</p></div><div class=\"ds-evidence\"><div><span class=\"ds-label\">Observed</span><dl><dt>bravo.example</dt><dd>off</dd></dl></div><div><span class=\"ds-label\">Expected</span><p>on</p></div></div><div class=\"ds-actions\"><button class=\"ds-review\" type=\"button\">Review alignment</button></div></li></ol></section>",
-      "css": ".ds-queue{color:var(--ink,#f5f7f9);font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;}.ds-selectors{display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--line,#2b3b4d)}.ds-selector{display:inline-flex;gap:12px;align-items:center;min-height:48px;margin-bottom:-1px;padding:10px 16px;border:1px solid transparent;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;color:var(--muted,#96a4b4);background:transparent;font:inherit;font-size:16px;cursor:pointer}.ds-selector span{font-variant-numeric:tabular-nums}.ds-selector:hover{color:var(--ink,#f5f7f9);background:var(--panel,#111923)}.ds-selector[aria-pressed=\"true\"]{border-bottom-color:var(--accent,#59d7c4);color:var(--ink,#f5f7f9);background:var(--panel,#111923)}.ds-selector:focus-visible,.ds-review:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px;}.ds-rows{margin:20px 0 0;padding:0;list-style:none;border-top:1px solid var(--line,#2b3b4d)}.ds-row{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(240px,1.3fr) minmax(150px,auto);gap:28px;align-items:start;padding:24px 0;border-bottom:1px solid var(--line,#2b3b4d)}.ds-identity,.ds-evidence,.ds-evidence>div{min-width:0}.ds-identity h3{margin:0;font-size:18px;line-height:1.4;overflow-wrap:anywhere}.ds-identity p{margin:7px 0 0;color:var(--muted,#96a4b4);font-size:14px;line-height:1.5}.ds-evidence{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.ds-label,.ds-evidence dt{color:var(--muted,#96a4b4);font-size:14px;overflow-wrap:anywhere}.ds-evidence dl{margin:8px 0 0}.ds-evidence dt{margin:10px 0 3px}.ds-evidence dd,.ds-evidence p{margin:6px 0 0;font-size:15px;line-height:1.5;overflow-wrap:anywhere;white-space:pre-wrap}.ds-actions{display:grid;gap:8px;min-width:0}.ds-review{min-height:40px;padding:6px 10px;border:1px solid rgba(90,169,255,.56);border-radius:7px;color:var(--ink,#f5f7f9);background:rgba(90,169,255,.17);font:inherit;font-size:14px;white-space:normal;cursor:pointer}.ds-review:hover{border-color:var(--slate,#7f95ab);transform:translateY(-1px)}@media(max-width:900px){.ds-row{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:16px}.ds-actions{display:flex;grid-column:1/-1;flex-wrap:wrap}}@media(max-width:620px){.ds-selectors{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px}.ds-selector{min-width:0;gap:4px;justify-content:space-between;padding:10px 6px;font-size:14px;text-align:left}.ds-row{grid-template-columns:minmax(0,1fr);gap:18px;padding:22px 0}.ds-review{flex:1 1 auto}}@media(max-width:380px){.ds-selectors{grid-template-columns:repeat(2,minmax(0,1fr))}.ds-selector:first-child{grid-column:1/-1}.ds-selector{min-height:44px;padding:10px 12px}}"
+      "description": "Readable facet identity, zone-specific paired evidence, a labeled review action, and an accessible comparison icon.",
+      "html": "<section class=\"ds-queue\"><div class=\"ds-selectors\" role=\"group\" aria-label=\"Review queues\"><button class=\"ds-selector\" type=\"button\" aria-pressed=\"true\">Misalignments <span>1</span></button><button class=\"ds-selector\" type=\"button\" aria-pressed=\"false\">Decisions needed <span>6</span></button><button class=\"ds-selector\" type=\"button\" aria-pressed=\"false\">Read health <span>3</span></button></div><ol class=\"ds-rows\"><li class=\"ds-row\"><div class=\"ds-identity\"><h3>Always use HTTPS</h3><p>Zone settings / 1 zone</p></div><table class=\"ds-evidence\" aria-label=\"Evidence for Always use HTTPS\"><thead><tr><th scope=\"col\">Zone</th><th scope=\"col\">Observed</th><th scope=\"col\">Expected</th></tr></thead><tbody><tr><th scope=\"row\">bravo.example</th><td data-label=\"Observed\">off</td><td data-label=\"Expected\">on</td></tr></tbody></table><div class=\"ds-actions\"><button class=\"ds-review\" type=\"button\">Review alignment</button><button class=\"ds-compare\" type=\"button\" aria-label=\"Compare values: always_use_https\"><svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><circle cx=\"6.75\" cy=\"6.75\" r=\"4.25\"/><path d=\"M10 10 13.5 13.5\"/></svg><span class=\"ds-tip\" aria-hidden=\"true\">Compare values</span></button></div></li></ol></section>",
+      "css": ".ds-queue{color:var(--ink,#f5f7f9);font-family:Inter,ui-sans-serif,system-ui,sans-serif}.ds-selectors{display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--line,#2b3b4d)}.ds-selector{display:inline-flex;gap:12px;align-items:center;min-height:48px;padding:10px 16px;border:0;border-bottom:2px solid transparent;color:var(--muted,#96a4b4);background:transparent;font:inherit;font-size:14px}.ds-selector[aria-pressed=\"true\"]{border-bottom-color:var(--accent,#59d7c4);color:var(--ink,#f5f7f9);background:var(--panel,#111923)}.ds-rows{margin:20px 0 0;padding:0;list-style:none;border-top:1px solid var(--line,#2b3b4d)}.ds-row{display:grid;grid-template-columns:minmax(170px,.8fr) minmax(0,2.6fr) 200px;gap:20px;padding:16px 0;border-bottom:1px solid var(--line,#2b3b4d)}.ds-identity{min-width:0}.ds-identity h3{margin:0;font-size:15px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}.ds-identity p{margin:4px 0 0;color:var(--muted,#96a4b4);font-size:12px}.ds-evidence{width:100%;min-width:0;table-layout:fixed;border-collapse:collapse}.ds-evidence th,.ds-evidence td{padding:0 16px 6px 0;text-align:left;vertical-align:top;line-height:1.5;overflow-wrap:anywhere;font-size:14px}.ds-evidence thead th{font-weight:400;font-size:12px;color:var(--muted,#96a4b4)}.ds-evidence tbody th{font-weight:500}.ds-actions{display:flex;gap:8px;justify-content:flex-end;align-items:flex-start;flex-wrap:wrap}.ds-review,.ds-compare{min-height:44px;padding:6px 10px;border:1px solid var(--line,#2b3b4d);border-radius:7px;color:var(--ink,#f5f7f9);font:inherit;font-size:14px;background:transparent}.ds-review{border-color:#387cc0;background:rgba(90,169,255,.17)}.ds-compare{position:relative;min-width:44px;display:grid;place-items:center}.ds-compare svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}.ds-tip{display:none;position:absolute;bottom:100%;right:0;padding:6px;background:var(--panel,#111923);white-space:nowrap}.ds-compare:hover .ds-tip,.ds-compare:focus-visible .ds-tip{display:block}.ds-selector:focus-visible,.ds-review:focus-visible,.ds-compare:focus-visible{outline:2px solid var(--accent,#59d7c4);outline-offset:2px}@media(max-width:900px){.ds-row{grid-template-columns:minmax(0,1fr) auto}.ds-identity{grid-column:1;grid-row:1}.ds-evidence{grid-column:1/-1}.ds-actions{grid-column:2;grid-row:1}}@media(max-width:620px){.ds-row{grid-template-columns:minmax(0,1fr)}.ds-actions{grid-column:1;grid-row:auto;justify-content:flex-start}.ds-evidence,.ds-evidence tbody{display:block}.ds-evidence thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.ds-evidence tbody tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}.ds-evidence tbody th{grid-column:1/-1}.ds-evidence td::before{display:block;content:attr(data-label);color:var(--muted,#96a4b4);font-size:12px}}"
     }
   ],
   "narrative": {
@@ -482,7 +482,7 @@
       },
       {
         "name": "The Evidence Reading Rule",
-        "body": "Keep queue values at the body scale and reviewed deltas at the body-small scale or larger. Compact metadata is a supporting layer, not a substitute for the value an operator must assess.",
+        "body": "Align each zone's observed and expected values at the body-small scale or larger. Use grouping, position, and restrained weight to establish hierarchy before increasing size. Compact metadata supports the evidence an operator must assess.",
         "section": "typography"
       },
       {
@@ -500,7 +500,7 @@
       "Do keep observed values, expected values, and the resulting action visibly distinct.",
       "Do preserve exact identifiers and source-value access while wrapping long content within its container.",
       "Do pair status color with words or drawn icons and retain visible keyboard focus.",
-      "Do use larger evidence text and heading hierarchy to make dense operational work readable.",
+      "Do use aligned evidence, concise summaries, and restrained type hierarchy to make dense operational work readable.",
       "Do let rows and controls reflow before adding horizontal page scrolling."
     ],
     "donts": [

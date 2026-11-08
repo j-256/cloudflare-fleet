@@ -8,6 +8,7 @@ import { runFleetServiceCommand } from "../src/fleet-command.mjs"
 import { makeInventory, makeZone } from "./fixtures.mjs"
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
 import { createFleetMcpServer } from "../src/mcp.mjs"
+import { createDemoFleet } from "./demo-fleet.mjs"
 
 test("bounded queue discovery is read-only and pagination rejects a changed queue", async () => {
   const inventory = makeInventory([
@@ -39,8 +40,7 @@ test("bounded queue discovery is read-only and pagination rejects a changed queu
 })
 
 test("MCP exposes the same bounded queues and rejects oversized discovery", async (context) => {
-  const inventory = makeInventory([makeZone("one.example")])
-  const intent = createEmptyFleetIntentDocument(inventory.account.id)
+  const { inventory, intent } = createDemoFleet()
   let reads = 0
   const service = createFleetService({
     accountId: inventory.account.id, api: { accountId: inventory.account.id }, stateFile: path.join(os.tmpdir(), "fleet-review-unused.json"),
@@ -58,8 +58,10 @@ test("MCP exposes the same bounded queues and rejects oversized discovery", asyn
   assert.equal(reads, 0)
   const result = await client.callTool({ name: "list_review_queue", arguments: { queue: "misalignments", limit: 1 } })
   assert.notEqual(result.isError, true)
-  assert.equal(result.structuredContent.summary.configured, false)
-  assert.equal(result.structuredContent.items.length, 0)
+  assert.equal(result.structuredContent.summary.configured, true)
+  assert.equal(result.structuredContent.items.length, 1)
+  assert.equal(result.structuredContent.items[0].observed[0].expected, "on")
+  assert.equal(result.structuredContent.items[0].observed[0].value, "off")
   assert.ok(result.structuredContent.summary.reads > 0)
   assert.equal(reads, 1)
 })

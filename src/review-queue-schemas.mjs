@@ -24,7 +24,7 @@ export const reviewQueueOutputSchema = z.strictObject({
     id: z.string(), kind: z.enum(["misalignment", "decision", "read", "unresolved"]), label: z.string(),
     facet: z.strictObject({ category: z.string(), key: z.string(), label: z.string(), phase: z.string() }).nullable(),
     policyId: z.string().nullable(), expected: z.string().max(240), reason: z.string(), zoneCount: z.number().int().nonnegative(),
-    observed: z.array(z.strictObject({ zoneId: z.string(), zoneName: z.string(), value: z.string().max(240) })).max(3),
+    observed: z.array(z.strictObject({ zoneId: z.string(), zoneName: z.string(), value: z.string().max(240), expected: z.string().max(240).optional() })).max(3),
   })).max(REVIEW_PAGE_LIMIT.MAX),
   total: z.number().int().nonnegative(), offset: z.number().int().nonnegative(),
   limit: z.number().int().positive(), hasMore: z.boolean(),
