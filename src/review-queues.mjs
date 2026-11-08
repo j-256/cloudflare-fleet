@@ -36,7 +36,7 @@ function observations(row, zones, expectedCells) {
     const policies = expectedCells?.get(zone.meta.id)?.policies
     const expectation = policies ? policies.map((policy) => [policy.presenceConstraint, policy.valueConstraint, policy.expected?.canonical]) : null
     const signature = JSON.stringify([canonical, expectation])
-    if (seen.has(signature)) continue
+    if (zones.length > ITEM_OBSERVATION_LIMIT && seen.has(signature)) continue
     seen.add(signature)
     representatives.push(zone)
     if (representatives.length === ITEM_OBSERVATION_LIMIT) break
@@ -74,6 +74,7 @@ export function buildReviewQueues({ inventory, intent, matrix = buildMatrix(inve
   const misalignments = []
   const decisions = []
   let incompleteFacetCount = 0
+  let decisionsAwaitingReads = 0
   for (const row of matrix.rows) {
     const rowState = evaluation.rowStates.get(fleetIntentFacetId(row.category, row.key))
     if (!rowState) continue
@@ -92,6 +93,7 @@ export function buildReviewQueues({ inventory, intent, matrix = buildMatrix(inve
           ? "Observed differences have no saved intent; they are not failures"
           : "Known values differ; additional reads are incomplete",
       }))
+      else decisionsAwaitingReads += 1
     }
   }
   const seenUnresolved = new Set()
@@ -130,6 +132,8 @@ export function buildReviewQueues({ inventory, intent, matrix = buildMatrix(inve
       misalignments: misalignments.length,
       mismatchCells: misalignments.reduce((total, item) => total + (item.kind === "misalignment" ? item.zoneCount : 0), 0),
       decisions: decisions.length,
+      ungovernedFacets: decisions.length + decisionsAwaitingReads,
+      decisionsAwaitingReads,
       reads: reads.length,
       unresolvedPolicies: evaluation.summary.unresolvedPolicies,
       acknowledgedCells: evaluation.summary.acknowledgedCells,

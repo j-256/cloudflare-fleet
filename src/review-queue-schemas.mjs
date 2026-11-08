@@ -11,6 +11,7 @@ export const reviewQueueInputSchema = z.strictObject({
 const summarySchema = z.strictObject({
   misalignments: z.number().int().nonnegative(), mismatchCells: z.number().int().nonnegative(),
   decisions: z.number().int().nonnegative(), reads: z.number().int().nonnegative(),
+  ungovernedFacets: z.number().int().nonnegative(), decisionsAwaitingReads: z.number().int().nonnegative(),
   unresolvedPolicies: z.number().int().nonnegative(), acknowledgedCells: z.number().int().nonnegative(),
   expectedReadGaps: z.number().int().nonnegative(), configured: z.boolean(), complete: z.boolean(),
 })

@@ -29,6 +29,60 @@ test("representative demo opens populated queues and pages through distinct work
   await expect(page.locator(".queue-expected-value").first()).toContainText("on")
 })
 
+for (const dismiss of ["Escape", "Cancel"]) {
+  test(`alignment review restores its queue action after ${dismiss}`, async ({ demo }) => {
+    const { page } = demo
+    const item = page.locator(".review-queue-item").filter({ hasText: "always_use_https" })
+    const action = item.getByRole("button", { name: /^Review alignment/ })
+    await action.focus()
+    await action.press("Enter")
+    const confirmation = page.locator("#confirm-dialog")
+    await expect(confirmation).toBeVisible()
+    if (dismiss === "Escape") await page.keyboard.press("Escape")
+    else await confirmation.getByRole("button", { name: "Cancel", exact: true }).click()
+    await expect(confirmation).not.toBeVisible()
+    await expect(action).toBeFocused()
+    await page.keyboard.press("Tab")
+    await expect(item.getByRole("button", { name: /^Compare values/ })).toBeFocused()
+    expect(demo.requests.filter((request) => request.method === "PATCH")).toHaveLength(0)
+  })
+}
+
+test("decision counts explain the unread remainder and alignment names its full target scope", async ({ demo }) => {
+  const { page } = demo
+  const dns = page.locator(".review-queue-item").filter({ hasText: "CNAME www" })
+  await expect(dns).toContainText("inbox.example")
+  await expect(dns).toContainText("archive.example")
+  await expect(dns.getByRole("button", { name: /^Review alignment/ })).toContainText("2 zones")
+  await page.getByRole("button", { name: /^Decisions needed/ }).click()
+  await expect(page.locator("#review-queue-context")).toContainText("17 of 18")
+  await expect(page.locator("#review-queue-context")).toContainText("1 needs reads")
+})
+
+test("ungoverned redirect decisions stay compact on phones with full evidence in Compare", async ({ page }) => {
+  const session = await createDashboardSession({ inventory: createDemoFleet().inventory })
+  try {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(session.url)
+    await waitForDashboard(page)
+    const first = page.locator(".review-queue-item").first()
+    await expect(first).toContainText("Canonical alias")
+    await expect(first.getByText("No expected state saved", { exact: true })).toHaveCount(1)
+    expect((await first.boundingBox()).height).toBeLessThan(422)
+    await expect(first.getByRole("button", { name: /^Set intent/ })).toBeInViewport({ ratio: 1 })
+    await first.getByRole("button", { name: /^Compare/ }).click()
+    const dialog = page.locator("#value-comparison-dialog")
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText("http.host")
+    await expect(dialog).toContainText("concat(")
+    await page.keyboard.press("Escape")
+    await expect(first.getByRole("button", { name: /^Compare/ })).toBeFocused()
+  } finally {
+    await page.close()
+    await closeDashboardSession(session)
+  }
+})
+
 test("demo refresh preserves seeded intent and specific simulated read failures", async ({ demo }) => {
   const { page } = demo
   await page.getByRole("button", { name: /^Read health/ }).click()
@@ -57,6 +111,7 @@ test("demo corrects one reviewed mismatch while preserving its acknowledged exce
   await confirmation.getByRole("checkbox", { name: "I reviewed the targets, value changes, and API writes above" }).check()
   await confirmation.getByRole("button", { name: "Apply and verify" }).click()
   await expect(item).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "Review queues", exact: true })).toBeFocused()
   expect(demo.settingValue(DEMO_ZONE.DRIFT, "always_use_https")).toBe("on")
   expect(demo.settingValue(DEMO_ZONE.EXCEPTION, "always_use_https")).toBe("off")
   const writes = demo.requests.filter((request) => request.method === "PATCH")

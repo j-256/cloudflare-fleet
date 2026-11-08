@@ -28,9 +28,15 @@ function element(tag, className, text) {
   return node
 }
 
+function queueActionFocus(container, id, action) {
+  return [...container.querySelectorAll("button")].find((button) => (
+    button.dataset.reviewItem === id && button.dataset.reviewAction === action && !button.disabled
+  )) || document.querySelector("#start-here-heading")
+}
+
 export function reviewQueueStatus(queues) {
   if (queues.status === "not-configured") return "Define intent to evaluate alignment"
-  if (queues.status === "attention") return `${queues.summary.misalignments} item${queues.summary.misalignments === 1 ? " needs" : "s need"} alignment review`
+  if (queues.status === "attention") return `${queues.summary.misalignments} facet${queues.summary.misalignments === 1 ? " needs" : "s need"} alignment review`
   if (queues.status === "incomplete") return "Read gaps limit the alignment verdict"
   return "No misalignments in the checked scope"
 }
@@ -60,14 +66,14 @@ export function renderReviewQueue(container, page, actionsForItem) {
     const title = element("h3", "", itemTitle(item))
     identity.append(title)
     identity.append(element("p", "queue-item-scope", item.facet ? `${item.facet.category}${item.zoneCount ? ` / ${item.zoneCount} zone${item.zoneCount === 1 ? "" : "s"}` : ""}` : "Read coverage"))
+    if (item.kind === "decision") identity.append(element("p", "queue-decision-intent", "No expected state saved"))
     if (item.kind !== "decision" && item.reason !== DEFAULT_REVIEW_REASON) identity.append(element("p", "queue-item-reason", item.reason))
     const evidence = element("div", "queue-evidence")
     const table = element("table", "queue-evidence-table")
     table.setAttribute("aria-label", `Evidence for ${itemTitle(item)}`)
     const head = element("thead")
     const headings = element("tr")
-    const expectedLabel = item.kind === "decision" ? "Intent" : "Expected"
-    for (const label of ["Zone", "Observed", expectedLabel]) {
+    for (const label of item.kind === "decision" ? ["Zone", "Observed"] : ["Zone", "Observed", "Expected"]) {
       const th = element("th", "queue-value-label", label)
       th.scope = "col"
       headings.append(th)
@@ -82,19 +88,31 @@ export function renderReviewQueue(container, page, actionsForItem) {
       const observed = element("td", "queue-observed")
       observed.dataset.label = "Observed"
       observed.append(element("p", "queue-observed-value", sample.value))
-      const expected = element("td", "queue-expected")
-      expected.dataset.label = expectedLabel
-      expected.append(element("p", "queue-expected-value", sample.expected ?? item.expected))
-      tr.append(zone, observed, expected)
+      tr.append(zone, observed)
+      if (item.kind !== "decision") {
+        const expected = element("td", "queue-expected")
+        expected.dataset.label = "Expected"
+        expected.append(element("p", "queue-expected-value", sample.expected ?? item.expected))
+        tr.append(expected)
+      }
       body.append(tr)
     }
     table.append(head, body)
     evidence.append(table)
-    if (item.zoneCount > item.observed.length) evidence.append(element("p", "queue-sampling-note", `${item.zoneCount - item.observed.length} more zones; compare for full scope`))
+    if (item.zoneCount > item.observed.length) evidence.append(element("p", "queue-sampling-note", `Examples from ${item.observed.length} of ${item.zoneCount} zones; compare for full scope`))
     if (item.kind === "misalignment" && item.observed.some((sample) => sample.value === (sample.expected ?? item.expected))) evidence.append(element("p", "queue-sampling-note", "Other fields differ; compare full values"))
     const actions = element("div", "queue-item-actions")
     for (const [index, action] of actionsForItem(item).entries()) {
-      const button = actionButton(action.label, action.run, {
+      const fallbackFocus = () => queueActionFocus(container, item.id, String(index))
+      const button = actionButton(action.label, async () => {
+        try {
+          await action.run({ fallbackFocus })
+        } finally {
+          if (document.activeElement === document.body && !document.querySelector("dialog[open]")) {
+            fallbackFocus().focus({ preventScroll: true })
+          }
+        }
+      }, {
         context: item.label, disabled: action.disabled, icon: action.icon,
         iconOnly: action.iconOnly, tooltipAlign: "end",
       })
