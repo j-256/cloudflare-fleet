@@ -5,40 +5,39 @@ import { STATIC_LIMITATIONS } from "./constants.mjs"
 import { materializeValue } from "./normalize.mjs"
 import { facetReadRequirement } from "./facet-read-requirements.mjs"
 import { alignmentCoverage } from "./alignment-coverage.mjs"
+import { summarizeReviewValue, VALUE_SUMMARY_LENGTH } from "./review-value-summary.mjs"
+
+export { summarizeReviewValue } from "./review-value-summary.mjs"
 
 export const REVIEW_QUEUE = Object.freeze({ MISALIGNMENTS: "misalignments", DECISIONS: "decisions", READS: "reads" })
 export const REVIEW_PAGE_LIMIT = Object.freeze({ DEFAULT: 10, MAX: 50, MAX_OFFSET: 100000 })
-const VALUE_SUMMARY_LENGTH = 240
+export const DEFAULT_REVIEW_REASON = "Observed configuration differs from saved intent"
 const ITEM_OBSERVATION_LIMIT = 3
 
-export function summarizeReviewValue(value) {
-  let text
-  if (value === undefined || value === null) text = "Not observed"
-  else if (Array.isArray(value)) text = value.length ? value.slice(0, ITEM_OBSERVATION_LIMIT).map(summarizeReviewValue).join("; ") : "None observed"
-  else if (typeof value === "object") {
-    if (Object.hasOwn(value, "content")) text = `${value.type || ""} ${value.content}${typeof value.proxied === "boolean" ? value.proxied ? " (proxied)" : " (DNS only)" : ""}`.trim()
-    else if (value.expression) text = `${value.action || "Rule"}: ${value.expression}${value.enabled === false ? " (disabled)" : ""}`
-    else text = JSON.stringify(value)
-  } else text = String(value)
-  return text.length > VALUE_SUMMARY_LENGTH ? `${text.slice(0, VALUE_SUMMARY_LENGTH - 1)}\u2026` : text
+function expectedValue(policy) {
+  try { return JSON.parse(policy.expected.canonical) } catch { return policy.expected?.value ?? policy.expected?.display }
 }
 
-function expectedSummary(policies) {
+function expectedSummary(policies, zoneName) {
   return [...new Set(policies.map((policy) => {
     if (policy.presenceConstraint === "forbidden") return "Must be absent"
-    const value = policy.expected?.value ?? policy.expected?.display
-    if (value !== undefined) return summarizeReviewValue(value)
-    return `${policy.presenceConstraint || "Required"}; ${policy.valueConstraint || "review saved expectation"}`
+    const value = expectedValue(policy)
+    if (value !== undefined) return summarizeReviewValue(zoneName ? materializeValue(value, zoneName) : value)
+    const presence = policy.presenceConstraint === "optional" ? "Optional" : "Required"
+    return `${presence}; ${policy.valueConstraint === "may-differ" ? "values may differ" : policy.valueConstraint === "must-differ" ? "distinct value per zone" : "review saved expectation"}`
   }))].join("; ").slice(0, VALUE_SUMMARY_LENGTH) || "Review saved intent"
 }
 
-function observations(row, zones) {
+function observations(row, zones, expectedCells) {
   const seen = new Set()
   const representatives = []
   for (const zone of zones) {
     const canonical = row.cells.get(zone.meta.name)?.canonical ?? "not-observed"
-    if (seen.has(canonical)) continue
-    seen.add(canonical)
+    const policies = expectedCells?.get(zone.meta.id)?.policies
+    const expectation = policies ? policies.map((policy) => [policy.presenceConstraint, policy.valueConstraint, policy.expected?.canonical]) : null
+    const signature = JSON.stringify([canonical, expectation])
+    if (seen.has(signature)) continue
+    seen.add(signature)
     representatives.push(zone)
     if (representatives.length === ITEM_OBSERVATION_LIMIT) break
   }
@@ -48,6 +47,7 @@ function observations(row, zones) {
       zoneId: zone.meta.id,
       zoneName: zone.meta.name,
       value: summarizeReviewValue(cell ? materializeValue(cell.inspectionValue ?? cell.normalized, zone.meta.name) : undefined),
+      ...(expectedCells ? { expected: expectedSummary(expectedCells.get(zone.meta.id)?.policies || [], zone.meta.name) } : {}),
     }
   })
 }
@@ -58,10 +58,10 @@ function facetItem(row, zones, options = {}) {
     kind: options.kind || "misalignment",
     label: row.label,
     facet: { category: row.category, key: row.key, label: row.label, phase: row.phase || "" },
-    observed: observations(row, zones),
+    observed: observations(row, zones, options.expectedCells),
     zoneCount: zones.length,
     expected: options.expected || "No expected state saved",
-    reason: options.reason || "Observed configuration differs from saved intent",
+    reason: options.reason || DEFAULT_REVIEW_REASON,
     policyId: options.policyId || null,
   }
 }
@@ -82,7 +82,8 @@ export function buildReviewQueues({ inventory, intent, matrix = buildMatrix(inve
     if (rowState.actionableCells.length) {
       misalignments.push(facetItem(row, rowState.actionableCells.map((cell) => cell.zone), {
         kind: readable ? "misalignment" : "unresolved",
-        expected: expectedSummary(rowState.policies),
+        expected: expectedSummary([...new Map(rowState.actionableCells.flatMap((cell) => cell.policies).map((policy) => [policy.id, policy])).values()]),
+        expectedCells: rowState.cells,
         ...(readable ? {} : { reason: "Required reads are incomplete; absence and full-facet alignment cannot be established" }),
       }))
     } else if (!rowState.governed && rowState.actionable) {

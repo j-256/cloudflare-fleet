@@ -964,6 +964,7 @@ const elements = {
 
 decorateMatrixOverview()
 decorateRemainingDialogs()
+decorateReviewControls()
 decorateConfirmationDialog()
 elements.intentGroupName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
 elements.intentPolicyScopeName.maxLength = FLEET_INTENT_LABEL_MAX_LENGTH
@@ -4279,7 +4280,7 @@ function reviewItemActions(item) {
   if (item.kind === "read") return [{ label: "Inspect read health", run: () => elements.reviewCoverageIssues.click() }]
   const row = state.matrix.rows.find((entry) => entry.category === item.facet.category && entry.key === item.facet.key)
   if (!row || item.kind === "unresolved") return [{ label: "Review saved intent", run: () => elements.manageIntent.click() }]
-  const actions = [{ label: "Compare values", primary: item.kind === "decision" || readOnly, run: () => showValueComparison(row) }]
+  const actions = [{ label: "Compare values", icon: "inspect", iconOnly: true, run: () => showValueComparison(row) }]
   if (!readOnly && item.kind === "misalignment") {
     const assessment = assessIntentAlignment(row)
     actions.unshift({
@@ -4295,6 +4296,13 @@ function reviewItemActions(item) {
     run: () => openQuickIntent([row]),
   })
   return actions
+}
+
+function decorateReviewControls() {
+  for (const direction of ["previous", "next"]) {
+    decorateLabeledControl(document.querySelector(`#review-queue-${direction}`), "chevron", `${direction === "previous" ? "Previous" : "Next"} queue page`, { iconOnly: true, align: "end" })
+  }
+  decorateLabeledControl(document.querySelector("#review-operation-activity"), "history", "Recorded operations and recovery", { preserveChildren: true, className: "button-icon", align: "end" })
 }
 
 function renderReviewWorkspace(rebuild = true) {

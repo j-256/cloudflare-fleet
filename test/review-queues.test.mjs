@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { buildReviewQueues, reviewQueuePage, summarizeReviewValue } from "../src/review-queues.mjs"
 import { buildMatrix } from "../src/matrix.mjs"
-import { createEmptyFleetIntentDocument, replaceFleetIntentPolicy, replaceFleetIntentAcknowledgement, FLEET_INTENT_ALL_ZONES_GROUP_ID } from "../src/fleet-intent.mjs"
+import { createEmptyFleetIntentDocument, createAuthoredFleetIntentExpected, replaceFleetIntentGroup, replaceFleetIntentPolicy, replaceFleetIntentAcknowledgement, FLEET_INTENT_ALL_ZONES_GROUP_ID } from "../src/fleet-intent.mjs"
 import { makeInventory, makeZone } from "./fixtures.mjs"
+import { createDemoFleet } from "./demo-fleet.mjs"
 
 function fixture() {
   const inventory = makeInventory([
@@ -107,6 +108,87 @@ test("value summaries expose DNS destinations and keep long evidence bounded", (
   assert.match(summarizeReviewValue([{ type: "A", content: "192.0.2.10", proxied: true }]), /192\.0\.2\.10/)
   assert.match(summarizeReviewValue({ action: "block", expression: "http.host eq service.example" }), /service\.example/)
   assert.ok(summarizeReviewValue("x".repeat(10000)).length <= 240)
+})
+
+test("sampled expectations belong to the affected zone rather than other policy scopes", () => {
+  const queues = buildReviewQueues(createDemoFleet())
+  const setting = (key) => queues.misalignments.find((item) => item.facet.key === key)
+  assert.equal(setting("min_tls_version").observed[0].expected, "1.3")
+  assert.equal(setting("ssl").observed[0].expected, "strict")
+  const dns = queues.misalignments.find((item) => item.label === "CNAME www")
+  assert.equal(dns.expected, "Must be absent")
+  assert.equal(dns.observed[0].expected, "Must be absent")
+  const rule = queues.misalignments.find((item) => item.label === "Protect service")
+  assert.match(rule.observed[0].expected, /service\.harbor-app\.example/)
+})
+
+test("compound evidence exposes redirect and rate differences without raw JSON", () => {
+  const queues = buildReviewQueues(createDemoFleet())
+  const alias = queues.misalignments.find((item) => item.facet.category === "Zone aliases")
+  assert.match(alias.observed[0].value, /302.*harbor\.example/)
+  assert.match(alias.observed[0].expected, /307.*harbor\.example/)
+  const rate = queues.misalignments.find((item) => item.facet.category === "Rate limiting")
+  assert.match(rate.observed[0].value, /100 requests \/ 10s/)
+  assert.match(rate.observed[0].expected, /60 requests \/ 10s/)
+  for (const item of [...queues.misalignments, ...queues.decisions]) {
+    for (const value of [item.expected, ...item.observed.flatMap((sample) => [sample.value, sample.expected].filter(Boolean))]) {
+      assert.ok(value.length <= 240)
+      assert.ok(!value.startsWith('{"'))
+    }
+  }
+})
+
+test("unsupported redirect expressions preserve unknown target and preservation semantics", () => {
+  const input = createDemoFleet()
+  const zone = input.inventory.zones.find((entry) => entry.meta.name === "legacy-harbor.example")
+  const detail = zone.ruleDetails.find((entry) => entry.result.phase === "http_request_dynamic_redirect")
+  const redirect = detail.result.rules[0].action_parameters.from_value
+  redirect.target_url.expression = 'concat("https://harbor.example", http.request.uri.path, "?source=alias")'
+  delete redirect.preserve_query_string
+  const item = buildReviewQueues(input).misalignments.find((entry) => entry.facet.category === "Zone aliases")
+  assert.match(item.observed[0].value, /unknown target/)
+  assert.match(item.observed[0].value, /path unknown, query unknown, subdomains unknown/)
+  assert.doesNotMatch(item.observed[0].value, /null|not preserved/)
+})
+
+test("unread alias DNS and redirect surfaces do not become confirmed absence in summaries", () => {
+  for (const surface of ["dns", "rulesets", "redirect-detail"]) {
+    const input = createDemoFleet()
+    const zone = input.inventory.zones.find((entry) => entry.meta.name === "legacy-harbor.example")
+    if (surface === "redirect-detail") {
+      const detail = zone.ruleDetails.find((entry) => entry.result.phase === "http_request_dynamic_redirect")
+      const summary = zone.surfaces.rulesets.result.find((entry) => entry.id === detail.result.id)
+      summary.id = "alias-redirect-ruleset"
+      detail.rulesetId = summary.id
+      Object.assign(detail, { ok: false, status: 403, error: { message: "Denied" } })
+      delete detail.result
+    } else zone.surfaces[surface] = { ok: false, status: 403, error: { message: "Denied" } }
+    const item = buildReviewQueues(input).misalignments.find((entry) => entry.facet.category === "Zone aliases")
+    const summary = item.observed[0].value
+    assert.match(summary, /unread surface/)
+    if (surface === "dns") assert.match(summary, /DNS: apex unknown, wildcard unknown/)
+    else assert.match(summary, /Canonical redirect unknown/)
+    assert.doesNotMatch(summary, /missing|No canonical redirect/)
+  }
+})
+
+test("equal observed values with distinct expected states remain separate samples", () => {
+  const input = fixture()
+  input.intent.policies = []
+  for (const [index, zone] of input.inventory.zones.entries()) {
+    zone.surfaces.settings.result[0].value = "unknown"
+    const groupId = `scope-${index}`
+    input.intent = replaceFleetIntentGroup(input.intent, { id: groupId, name: groupId, mode: "members", nameSource: "custom", members: [{ zoneId: zone.meta.id, zoneName: zone.meta.name }] })
+    input.intent = replaceFleetIntentPolicy(input.intent, {
+      id: `https-${index}`, groupId, facet: { category: "Zone settings", key: "always_use_https", label: "always_use_https" },
+      presenceConstraint: "required", valueConstraint: "exact", expected: createAuthoredFleetIntentExpected(index ? "off" : "on"),
+    })
+  }
+  input.matrix = buildMatrix(input.inventory)
+  const samples = buildReviewQueues(input).misalignments[0].observed
+  assert.equal(samples.length, 2)
+  assert.deepEqual(samples.map((sample) => sample.value), ["unknown", "unknown"])
+  assert.deepEqual(samples.map((sample) => sample.expected), ["on", "off"])
 })
 
 test("an acknowledged exact exception stays out of the misalignment queue", () => {

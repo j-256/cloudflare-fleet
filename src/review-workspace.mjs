@@ -1,3 +1,26 @@
+import { actionButton, attachTooltip } from "./ui-primitives.mjs"
+import { DEFAULT_REVIEW_REASON } from "./review-queues.mjs"
+
+const SETTING_LABELS = Object.freeze({
+  always_use_https: "Always use HTTPS",
+  automatic_https_rewrites: "Automatic HTTPS rewrites",
+  min_tls_version: "Minimum TLS version",
+  tls_1_3: "TLS 1.3",
+  tls_1_2_only: "TLS 1.2 only",
+  ssl: "SSL mode",
+  ipv6: "IPv6",
+  http2: "HTTP/2",
+  http3: "HTTP/3",
+  security_header: "Security headers",
+})
+
+function itemTitle(item) {
+  if (item.facet?.category !== "Zone settings" || item.label !== item.facet.key) return item.label
+  if (SETTING_LABELS[item.label]) return SETTING_LABELS[item.label]
+  const text = item.label.replaceAll("_", " ")
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 function element(tag, className, text) {
   const node = document.createElement(tag)
   if (className) node.className = className
@@ -34,32 +57,54 @@ export function renderReviewQueue(container, page, actionsForItem) {
     row.dataset.queueItem = item.id
     row.dataset.queueKind = item.kind
     const identity = element("div", "queue-item-identity")
-    identity.append(element("h3", "", item.label))
-    if (item.kind === "unresolved") identity.append(element("p", "queue-item-reason", "Needs evidence or policy review"))
+    const title = element("h3", "", itemTitle(item))
+    identity.append(title)
     identity.append(element("p", "queue-item-scope", item.facet ? `${item.facet.category}${item.zoneCount ? ` / ${item.zoneCount} zone${item.zoneCount === 1 ? "" : "s"}` : ""}` : "Read coverage"))
-    if (item.kind !== "decision") identity.append(element("p", "queue-item-reason", item.reason))
+    if (item.kind !== "decision" && item.reason !== DEFAULT_REVIEW_REASON) identity.append(element("p", "queue-item-reason", item.reason))
     const evidence = element("div", "queue-evidence")
-    const observed = element("div", "queue-observed")
-    observed.append(element("span", "queue-value-label", "Observed"))
-    const values = element("dl", "queue-observed-list")
-    for (const value of item.observed) {
-      values.append(element("dt", "", value.zoneName), element("dd", "queue-observed-value", value.value))
+    const table = element("table", "queue-evidence-table")
+    table.setAttribute("aria-label", `Evidence for ${itemTitle(item)}`)
+    const head = element("thead")
+    const headings = element("tr")
+    const expectedLabel = item.kind === "decision" ? "Intent" : "Expected"
+    for (const label of ["Zone", "Observed", expectedLabel]) {
+      const th = element("th", "queue-value-label", label)
+      th.scope = "col"
+      headings.append(th)
     }
-    if (!item.observed.length) observed.append(element("p", "queue-observed-value", "Evidence needs review"))
-    else observed.append(values)
-    if (item.zoneCount > item.observed.length) observed.append(element("small", "", `${item.zoneCount - item.observed.length} more zones; compare to inspect the full scope`))
-    const expected = element("div", "queue-expected")
-    expected.append(element("span", "queue-value-label", item.kind === "decision" ? "Intent" : "Expected"), element("p", "queue-expected-value", item.expected))
-    evidence.append(observed, expected)
+    head.append(headings)
+    const body = element("tbody")
+    const samples = item.observed.length ? item.observed : [{ zoneName: "Scope needs review", value: "Evidence needs review" }]
+    for (const sample of samples) {
+      const tr = element("tr")
+      const zone = element("th", "queue-zone", sample.zoneName)
+      zone.scope = "row"
+      const observed = element("td", "queue-observed")
+      observed.dataset.label = "Observed"
+      observed.append(element("p", "queue-observed-value", sample.value))
+      const expected = element("td", "queue-expected")
+      expected.dataset.label = expectedLabel
+      expected.append(element("p", "queue-expected-value", sample.expected ?? item.expected))
+      tr.append(zone, observed, expected)
+      body.append(tr)
+    }
+    table.append(head, body)
+    evidence.append(table)
+    if (item.zoneCount > item.observed.length) evidence.append(element("p", "queue-sampling-note", `${item.zoneCount - item.observed.length} more zones; compare for full scope`))
+    if (item.kind === "misalignment" && item.observed.some((sample) => sample.value === (sample.expected ?? item.expected))) evidence.append(element("p", "queue-sampling-note", "Other fields differ; compare full values"))
     const actions = element("div", "queue-item-actions")
     for (const [index, action] of actionsForItem(item).entries()) {
-      const button = element("button", `button ${action.primary ? "button-primary" : "button-quiet"}`, action.label)
-      button.type = "button"
-      button.disabled = Boolean(action.disabled)
-      button.setAttribute("aria-label", `${action.label}: ${item.label}`)
+      const button = actionButton(action.label, action.run, {
+        context: item.label, disabled: action.disabled, icon: action.icon,
+        iconOnly: action.iconOnly, tooltipAlign: "end",
+      })
+      if (action.primary) {
+        button.classList.remove("button-quiet")
+        button.classList.add("button-primary")
+      }
+      if (itemTitle(item) !== item.label && !action.iconOnly) attachTooltip(button, `${action.label}: ${item.label}`, { align: "end", dismissOnActivation: true })
       button.dataset.reviewItem = item.id
       button.dataset.reviewAction = String(index)
-      button.addEventListener("click", action.run)
       actions.append(button)
       if (action.reason) actions.append(element("p", "queue-action-reason", action.reason))
     }

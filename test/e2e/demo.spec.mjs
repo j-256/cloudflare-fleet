@@ -63,3 +63,64 @@ test("demo corrects one reviewed mismatch while preserving its acknowledged exce
   expect(writes).toHaveLength(1)
   expect(writes[0].path).toContain(`zone-${DEMO_ZONE.DRIFT}/settings/always_use_https`)
 })
+
+test("queue pairs zone evidence and exposes secondary icons through keyboard tooltips", async ({ demo }) => {
+  const { page } = demo
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const item = page.locator(".review-queue-item").filter({ hasText: "always_use_https" })
+  await expect(item.getByRole("heading", { name: "Always use HTTPS", exact: true })).toBeVisible()
+  const table = item.getByRole("table", { name: "Evidence for Always use HTTPS" })
+  await expect(table.getByRole("row", { name: /harbor-app.example off on/ })).toBeVisible()
+  const before = await item.locator(".queue-observed-value").boundingBox()
+  const after = await item.locator(".queue-expected-value").boundingBox()
+  expect(Math.abs(before.y - after.y)).toBeLessThan(1)
+  const compare = item.getByRole("button", { name: "Compare values: always_use_https", exact: true })
+  await expect(compare.locator("svg")).toHaveAttribute("aria-hidden", "true")
+  const size = await compare.boundingBox()
+  expect(size.width).toBeGreaterThanOrEqual(44)
+  expect(size.height).toBeGreaterThanOrEqual(44)
+  await compare.focus()
+  await expect(compare.locator(".tooltip")).toBeVisible()
+  await compare.press("Escape")
+  await expect(compare.locator(".tooltip")).toBeHidden()
+  await expect(compare).toBeFocused()
+  await compare.press("Enter")
+  await expect(page.getByRole("dialog", { name: "always_use_https", exact: true })).toBeVisible()
+})
+
+test("compound queue values stay readable and contained at narrow widths", async ({ demo }) => {
+  const { page } = demo
+  const alias = page.locator(".review-queue-item").filter({ hasText: "Canonical web passthrough" })
+  await expect(alias.locator(".queue-observed-value")).toContainText("302 to https://harbor.example")
+  await expect(alias.locator(".queue-expected-value")).toContainText("307 to https://harbor.example")
+  await expect(alias).toContainText("Required reads are incomplete")
+  for (const width of [1440, 960, 720, 620, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    expect(await alias.locator(".queue-evidence-table").evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+  }
+})
+
+test("long facet names stay contained when an icon tooltip receives keyboard focus", async ({ demo }) => {
+  const { page } = demo
+  await page.evaluate(async () => {
+    const { renderReviewQueue } = await import(new URL("src/review-workspace.mjs", location.href).href)
+    const label = `TXT ${"a".repeat(220)}.example`
+    renderReviewQueue(document.querySelector("#review-queue-list"), {
+      items: [{ id: "long-facet", kind: "misalignment", label, facet: { category: "DNS records", key: label }, zoneCount: 1, expected: "b".repeat(240), observed: [{ zoneName: `${"long-zone-".repeat(10)}.example`, value: "a".repeat(240) }], reason: "Observed configuration differs from saved intent; some saved intent also needs review" }],
+    }, () => [{ label: "Compare values", icon: "inspect", iconOnly: true, run() {} }])
+  })
+  const button = page.locator("#review-queue-list button")
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(page.locator(".queue-item-reason")).toBeVisible()
+    await button.focus()
+    const tooltip = button.locator(".tooltip")
+    await expect(tooltip).toBeVisible()
+    expect(await tooltip.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await button.press("Escape")
+    await expect(tooltip).toBeHidden()
+    await button.blur()
+  }
+})

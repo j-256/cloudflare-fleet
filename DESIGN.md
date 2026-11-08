@@ -30,9 +30,9 @@ typography:
     letterSpacing: "-0.03em"
   headline:
     fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
-    fontSize: "26px"
-    fontWeight: 650
-    letterSpacing: "-0.025em"
+    fontSize: "22px"
+    fontWeight: 600
+    letterSpacing: "-0.015em"
   dialog-title:
     fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
     fontSize: "24px"
@@ -40,7 +40,8 @@ typography:
     letterSpacing: "-0.02em"
   item-title:
     fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
-    fontSize: "18px"
+    fontSize: "15px"
+    fontWeight: 600
     lineHeight: 1.4
   body:
     fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif"
@@ -128,8 +129,8 @@ components:
     padding: "10px 16px"
   queue-item:
     textColor: "{colors.ink}"
-    typography: "{typography.body}"
-    padding: "24px 0"
+    typography: "{typography.body-small}"
+    padding: "16px 0"
 ---
 
 # Design System: Cloudflare Fleet
@@ -190,21 +191,21 @@ The hierarchy makes the operational heading and decision evidence easy to find w
 ### Hierarchy
 
 - **Product title:** a compact responsive product heading; the phone layout uses the dialog-title size
-- **Headline:** the queue section heading; it reduces to the dialog-title size on phones
+- **Headline:** the restrained queue section heading, fixed across viewport sizes
 - **Dialog title:** value-comparison and reviewed-change headings
-- **Item title:** resource or facet identity within a queue row
-- **Body:** queue observations and expectations; the adjacent status line uses the larger interface step (`16px`)
-- **Body-small:** queue context, action reasons, essential matrix values, and reviewed deltas
-- **Label:** readable supporting field and zone labels
+- **Item title:** readable resource or facet identity within a queue row, with semibold weight
+- **Body:** longer supporting prose
+- **Body-small:** queue observations, expectations, zone names, status, context, action reasons, essential matrix values, and reviewed deltas
+- **Label:** readable supporting fields; queue column headings and category metadata use a smaller (`12px`) neutral scale
 - **Metadata:** compact technical badges; legacy secondary controls also use the smaller interface steps (`12px` and `13px`), which do not define the evidence-reading scale
 
-**The Evidence Reading Rule.** Keep queue values at the body scale and reviewed deltas at the body-small scale or larger. Compact metadata is a supporting layer, not a substitute for the value an operator must assess.
+**The Evidence Reading Rule.** Align each zone's observed and expected values at the body-small scale or larger. Use grouping, position, and restrained weight to establish hierarchy before increasing size. Compact metadata supports the evidence an operator must assess.
 
 ## Layout
 
 The page uses a fluid gutter from the spacing tokens. The product/session header and section navigation form compact horizontal bands; navigation is sticky. On wide screens, a padded vertical divider separates the fleet summary from the product name. At the header breakpoint (`960px`), the summary moves to its own row and drops that divider. Main content spans the available width rather than sitting inside a marketing-width container. Repeated spacing favors small control gaps, medium section gaps, and generous row separation.
 
-Review rows align resource identity, observed/expected evidence, and actions in three columns. Evidence retains two equal columns with its own gap. At the queue breakpoint (`900px`), rows use two columns and actions move underneath. At the phone breakpoint (`620px`), rows become one column, actions wrap, and the queue selectors fit equal tracks. At the narrow breakpoint (`380px`), the first selector spans the full row and the remaining selectors share the next row; secondary summary and context content is reduced.
+Review rows align resource identity, zone/observed/expected evidence, and actions in three columns. Evidence uses native tables with each sampled zone's paired values on the same baseline. At the queue breakpoint (`900px`), identity and actions share the first row and evidence spans the next. At the phone breakpoint (`620px`), each zone sits above its two compared values, actions follow the evidence, and selectors fit equal tracks. At the narrow breakpoint (`380px`), the first selector spans the full row and the remaining selectors share the next row; secondary summary and context content is reduced.
 
 Configuration remains a bounded matrix with sticky structural columns. Category/facet widths are (`112px` / `248px`) on larger screens and (`96px` / `180px`) on phones. The comparison table becomes vertically stacked field/value blocks on phones, repeating the variant label for each value instead of requiring a wide comparison table. Long identifiers and values wrap within their own cells.
 
@@ -258,7 +259,9 @@ Section links are compact bordered rectangles with mint hover and keyboard-focus
 
 ### Review Evidence
 
-A queue item keeps identity, scope, observation, expectation, and action in a stable reading order. The title is stronger than supporting scope/reason text; observed and expected values share the same readable scale. Empty states retain the evidence qualifier rather than presenting unconditional success. Pagination and secondary tools follow the list.
+A queue item keeps readable setting identity, affected zone, paired observation/expectation, and action in a stable reading order. Scope metadata recedes while the zone name remains prominent. Structured previews summarize fields, redirect destinations, and rate thresholds instead of exposing truncated JSON. Repeated generic mismatch explanations are omitted; unresolved evidence, policy review, and blocked reasons remain explicit. Empty states retain the evidence qualifier rather than presenting unconditional success. Pagination and secondary tools follow the list.
+
+Comparison, history, and pagination use familiar outline icons with accessible names, hover/focus tooltips, Escape dismissal, and minimum (`44px`) targets. Guarded alignment review and unfamiliar intent actions retain visible text. Complete values and exact API keys remain accessible through comparison and saved-intent flows.
 
 Reviewed-change panels preserve exact targets and before/after values in bounded, wrapping regions. Essential deltas use the body-small scale. Raw request payloads remain available through disclosure without replacing the readable comparison.
 
@@ -269,7 +272,7 @@ Reviewed-change panels preserve exact targets and before/after values in bounded
 - **Do** keep observed values, expected values, and the resulting action visibly distinct.
 - **Do** preserve exact identifiers and source-value access while wrapping long content within its container.
 - **Do** pair status color with words or drawn icons and retain visible keyboard focus.
-- **Do** use larger evidence text and heading hierarchy to make dense operational work readable.
+- **Do** use aligned evidence, concise summaries, and restrained type hierarchy to make dense operational work readable.
 - **Do** let rows and controls reflow before adding horizontal page scrolling.
 
 ### Don't:
