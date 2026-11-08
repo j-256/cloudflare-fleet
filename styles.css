@@ -8337,6 +8337,7 @@ dialog details > summary {
 }
 
 .queue-item-scope,
+.queue-decision-intent,
 .queue-item-reason,
 .queue-action-reason,
 .queue-sampling-note {
@@ -8350,6 +8351,10 @@ dialog details > summary {
 .queue-item-scope {
   margin-top: 4px;
   font-size: 12px;
+}
+
+.queue-decision-intent {
+  margin-top: 4px;
 }
 
 .queue-evidence-table {
@@ -8649,6 +8654,19 @@ textarea {
     margin-bottom: 0;
   }
 
+  [data-queue-kind="decision"] .queue-evidence-table tbody tr {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .review-queue-item[data-queue-kind="decision"] {
+    gap: 8px;
+  }
+
+  [data-queue-kind="decision"] .queue-evidence-table td::before {
+    display: none;
+  }
+
   .queue-evidence-table .queue-zone {
     grid-column: 1 / -1;
     padding: 0;
@@ -8731,7 +8749,7 @@ textarea {
     padding: 10px 12px;
   }
 
-  .queue-context {
+  .queue-context:not([data-queue="decisions"]) {
     display: none;
   }
 

@@ -63,5 +63,7 @@ test("MCP exposes the same bounded queues and rejects oversized discovery", asyn
   assert.equal(result.structuredContent.items[0].observed[0].expected, "on")
   assert.equal(result.structuredContent.items[0].observed[0].value, "off")
   assert.ok(result.structuredContent.summary.reads > 0)
+  assert.equal(result.structuredContent.summary.ungovernedFacets, 18)
+  assert.equal(result.structuredContent.summary.decisionsAwaitingReads, 1)
   assert.equal(reads, 1)
 })

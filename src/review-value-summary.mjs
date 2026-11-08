@@ -1,3 +1,5 @@
+import { presentRedirect, REDIRECT_TARGET_KIND } from "./redirect-presentation.mjs"
+
 export const VALUE_SUMMARY_LENGTH = 240
 const SUMMARY_ENTRY_LIMIT = 3
 const STRUCTURED_FIELD_LIMIT = 4
@@ -59,6 +61,15 @@ export function summarizeReviewValue(value) {
     if (value.kind === "canonical-web-passthrough") text = aliasSummary(value)
     else if (value.kind === "hostname-scoped-free-rate-limit") text = rateSummary(value)
     else if (Object.hasOwn(value, "content")) text = `${value.type || ""} ${value.content}${typeof value.proxied === "boolean" ? value.proxied ? " (proxied)" : " (DNS only)" : ""}`.trim()
+    else if (value.action === "redirect") {
+      const redirect = presentRedirect(value)
+      const target = redirect.targetKind === REDIRECT_TARGET_KIND.DYNAMIC
+        ? "Dynamic target"
+        : redirect.targetKind === REDIRECT_TARGET_KIND.STATIC
+          ? redirect.target
+          : `${redirect.targetKindLabel}: ${redirect.target}`
+      text = `${redirect.statusCode ?? "Unknown status"} redirect${redirect.enabled ? "" : " (disabled)"}\n${target}; ${redirect.queryLabel.toLowerCase()}`
+    }
     else if (value.expression) {
       text = `${words(value.action || "Rule")}: ${value.expression}${value.enabled === false ? " (disabled)" : ""}`
       if (value.action_parameters) text += `\n${summarizeReviewValue(value.action_parameters)}`

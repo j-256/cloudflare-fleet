@@ -4267,8 +4267,8 @@ function renderTaskSummaries() {
     ),
   )
   elements.reviewUngovernedDifferences.textContent = ungovernedRows === 1
-    ? "Review 1 ungoverned difference"
-    : `Review ${ungovernedRows} ungoverned differences`
+    ? "View 1 ungoverned facet"
+    : `View all ${ungovernedRows} ungoverned facets`
   elements.supportedChangeCount.textContent = String(capabilityCounts.changeableRows)
   elements.supportedChangeLabel.textContent = capabilityCounts.changeableRows === 1
     ? "facet has a matrix change path"
@@ -4284,11 +4284,11 @@ function reviewItemActions(item) {
   if (!readOnly && item.kind === "misalignment") {
     const assessment = assessIntentAlignment(row)
     actions.unshift({
-      label: assessment.available ? "Review alignment" : "Alignment blocked",
+      label: assessment.available ? `Review alignment${assessment.targets.length > 1 ? ` (${assessment.targets.length} zones)` : ""}` : "Alignment blocked",
       primary: true,
       disabled: state.busy || !state.transportAvailable || !assessment.available,
       reason: assessment.available ? "" : assessment.reason,
-      run: () => reviewIntentAlignment(intentAlignmentAction(row)),
+      run: (options) => reviewIntentAlignment(intentAlignmentAction(row), options),
     })
   }
   if (!readOnly && item.kind === "decision") actions.push({
@@ -4326,14 +4326,16 @@ function renderReviewWorkspace(rebuild = true) {
     button.setAttribute("aria-pressed", String(key === activeReviewQueue))
     button.querySelector(".queue-count").textContent = String(currentReviewQueues.summary[key])
   }
-  document.querySelector("#review-queue-context").textContent = activeReviewQueue === "misalignments"
+  const context = document.querySelector("#review-queue-context")
+  context.dataset.queue = activeReviewQueue
+  context.textContent = activeReviewQueue === "misalignments"
     ? "Saved intent is the expectation. Acknowledged exceptions stay out of this queue."
     : activeReviewQueue === "decisions"
-      ? "These observed differences have no saved intent. Decide what should be true; saving intent does not change Cloudflare."
+      ? `${page.summary.decisions} of ${page.summary.ungovernedFacets} ungoverned facets.${page.summary.decisionsAwaitingReads ? ` ${page.summary.decisionsAwaitingReads} ${page.summary.decisionsAwaitingReads === 1 ? "needs" : "need"} reads.` : ""} Saving intent does not change Cloudflare.`
       : "Incomplete reads limit the alignment verdict. Expected read gaps remain recorded separately."
   renderReviewQueue(document.querySelector("#review-queue-list"), page, reviewItemActions)
   document.querySelector("#review-queue-page").textContent = page.total
-    ? `${page.offset + 1}\u2013${Math.min(page.offset + page.limit, page.total)} of ${page.total} items`
+    ? `${page.offset + 1}\u2013${Math.min(page.offset + page.limit, page.total)} of ${page.total} ${activeReviewQueue === "reads" ? "read issues" : "facets"}`
     : "Queue empty"
   document.querySelector("#review-queue-previous").disabled = page.offset === 0
   document.querySelector("#review-queue-next").disabled = !page.hasMore
@@ -11615,7 +11617,7 @@ function selectedLiveZones(inventory, zoneIds) {
   return zoneIds.map((zoneId) => byId.get(zoneId))
 }
 
-async function reviewIntentAlignment(action) {
+async function reviewIntentAlignment(action, options = {}) {
   if (!action || state.busy || readOnly || !state.transportAvailable) return false
   if (state.intentSaving || state.intentSyncing) {
     toast("Wait for the fleet intent document to finish saving or syncing", "error")
@@ -11647,6 +11649,7 @@ async function reviewIntentAlignment(action) {
       `Align ${action.label} with fleet intent`,
       acceptPreparedPlanSet(preparation.planSet),
       {
+        fallbackFocus: options.fallbackFocus,
         confirmationNote: [
           "Every unacknowledged drift cell in this action has a deterministic write plan; unsupported cells block the complete review before any write is sent.",
           dnssecNote,

@@ -35,6 +35,38 @@ test("review queues expose exact mismatching zones and readable before/expected 
   assert.equal(queues.status, "attention")
 })
 
+test("decision totals account for ungoverned facets awaiting readable evidence", () => {
+  const queues = buildReviewQueues(createDemoFleet())
+  assert.equal(queues.summary.ungovernedFacets, 18)
+  assert.equal(queues.summary.decisions, 17)
+  assert.equal(queues.summary.decisionsAwaitingReads, 1)
+  assert.equal(queues.summary.decisions + queues.summary.decisionsAwaitingReads, queues.summary.ungovernedFacets)
+  assert.ok(!queues.decisions.some((item) => item.facet.category === "Workers routes"))
+})
+
+test("small affected scopes name each zone even when their evidence is identical", () => {
+  const item = buildReviewQueues(createDemoFleet()).misalignments.find((entry) => entry.label === "CNAME www")
+  assert.equal(item.zoneCount, 2)
+  assert.deepEqual(item.observed.map((sample) => sample.zoneName).sort(), ["archive.example", "inbox.example"])
+})
+
+test("redirect previews retain behavior without dumping dynamic expressions", () => {
+  const rule = {
+    action: "redirect", enabled: false, expression: `http.host eq "${"long-".repeat(50)}example"`,
+    action_parameters: { from_value: { status_code: 302, target_url: { expression: 'concat("https://target.example", http.request.uri.path)' }, preserve_query_string: true } },
+  }
+  const dynamic = summarizeReviewValue(rule)
+  assert.match(dynamic, /302/)
+  assert.match(dynamic, /dynamic/i)
+  assert.match(dynamic, /disabled/i)
+  assert.match(dynamic, /query/i)
+  assert.doesNotMatch(dynamic, /http\.host|concat\(|from value/)
+  rule.action_parameters.from_value.target_url = { value: "https://target.example/new" }
+  assert.match(summarizeReviewValue(rule), /https:\/\/target\.example\/new/)
+  delete rule.action_parameters.from_value.preserve_query_string
+  assert.match(summarizeReviewValue(rule), /query.*unspecified/i)
+})
+
 test("undefined intent and incomplete reads never become an aligned empty queue", () => {
   const input = fixture()
   input.intent = createEmptyFleetIntentDocument(input.inventory.account.id)
