@@ -99,7 +99,7 @@ export function renderReviewQueue(container, page, actionsForItem) {
     }
     table.append(head, body)
     evidence.append(table)
-    if (item.zoneCount > item.observed.length) evidence.append(element("p", "queue-sampling-note", `Examples from ${item.observed.length} of ${item.zoneCount} zones; compare for full scope`))
+    if (item.zoneCount > item.observed.length) evidence.append(element("p", "queue-sampling-note", `Examples: ${item.observed.length} of ${item.zoneCount} zones. Compare all.`))
     if (item.kind === "misalignment" && item.observed.some((sample) => sample.value === (sample.expected ?? item.expected))) evidence.append(element("p", "queue-sampling-note", "Other fields differ; compare full values"))
     const actions = element("div", "queue-item-actions")
     for (const [index, action] of actionsForItem(item).entries()) {
