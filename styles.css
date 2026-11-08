@@ -8587,7 +8587,7 @@ textarea {
   }
 
   .review-heading {
-    margin: 12px 0 16px;
+    margin: 8px 0 12px;
   }
 
   .review-heading h2 {
@@ -8596,6 +8596,10 @@ textarea {
 
   .review-heading-actions {
     gap: 8px;
+  }
+
+  .queue-context {
+    margin: 10px 0 12px;
   }
 
   .review-queue-tabs {
