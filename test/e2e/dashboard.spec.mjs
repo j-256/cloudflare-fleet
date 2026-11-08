@@ -233,6 +233,30 @@ test("keeps read-only session permissions visible on a narrow screen", async ({ 
   await expect(page.locator("#session-mode")).toHaveText("Read-only session")
 })
 
+for (const mode of ["Hosted read/write deployment", "Hosted read-only deployment"]) {
+  test(`keeps ${mode} separate from the product title on phones`, async ({ dashboard }) => {
+    const { page } = dashboard
+    await page.locator("#session-mode").evaluate((node, label) => { node.textContent = label }, mode)
+    for (const width of [320, 360, 390, 620]) {
+      await page.setViewportSize({ width, height: 844 })
+      const layout = await page.evaluate(() => {
+        const titleRange = document.createRange()
+        titleRange.selectNodeContents(document.querySelector(".hero h1"))
+        const title = titleRange.getBoundingClientRect()
+        const session = document.querySelector(".session-state").getBoundingClientRect()
+        const label = document.querySelector("#session-mode")
+        return {
+          overlap: title.left < session.right && title.right > session.left && title.top < session.bottom && title.bottom > session.top,
+          titleContained: title.left >= 0 && title.right <= innerWidth,
+          sessionContained: session.left >= 0 && session.right <= innerWidth,
+          labelContained: label.scrollWidth <= label.clientWidth,
+        }
+      })
+      expect(layout, `${mode} at ${width}px`).toEqual({ overlap: false, titleContained: true, sessionContained: true, labelContained: true })
+    }
+  })
+}
+
 test("keeps narrow-screen matrix action labels inside their buttons", async ({ dashboard }) => {
   const { page } = dashboard
   await page.setViewportSize({ height: 844, width: 320 })
